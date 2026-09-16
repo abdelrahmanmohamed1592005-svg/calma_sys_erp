@@ -89,6 +89,27 @@ export async function adminResetPassword(targetUsername, newPassword) {
   return { data };
 }
 
+/*
+  مهم: دي الدالة اللي المفروض تُستخدم لإضافة موظف جديد من "إدارة المستخدمين"
+  (مش signUpUser). سبب وجودها: supabase.auth.signUp() لما بيتنفذ من متصفح
+  المدير العام نفسه بيستبدل جلسة دخوله بجلسة المستخدم الجديد فورًا، وده كان
+  بيسبب حسابات دخول من غير profile (المشكلة اللي حصلت مع "seif"). الدالة دي
+  بتنادي Edge Function بتشتغل بمفتاح service_role على السيرفر، فجلسة
+  المتصفح متتأثرش خالص.
+*/
+export async function adminCreateUser({ username, password, name, role }) {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) return { error: "لازم تكون مسجّل دخول" };
+  const { data, error } = await supabase.functions.invoke("create-user", {
+    body: { username, password, name, role },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (error) return { error: error.message || "تعذر إنشاء الحساب" };
+  if (data?.error) return { error: data.error };
+  return { data: data?.data };
+}
+
 function mapAuthError(error) {
   if (!error) return null;
   const msg = (error.message || "").toLowerCase();
