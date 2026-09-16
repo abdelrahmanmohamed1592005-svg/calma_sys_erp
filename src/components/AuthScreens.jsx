@@ -38,7 +38,15 @@ export function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState(""); const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   async function submit() {
     setErr(""); setBusy(true);
+    // حماية: لو الدخول نجح لكن التحقق من الـ profile بعده فشل بصمت (حساب من
+    // غير profile، أو معطّل)، الزرار متفضلش عالقة "بتحمّل" للأبد من غير أي
+    // توضيح - بعد 6 ثواني هيرجع قابل للدوس وهيوري رسالة واضحة.
+    const stuckTimer = setTimeout(() => {
+      setBusy(false);
+      setErr("تعذر الدخول - تأكد إن الحساب مفعّل وعنده بيانات كاملة، أو كلّم المدير العام");
+    }, 6000);
     const res = await onLogin({ username: username.trim(), password: pw });
+    clearTimeout(stuckTimer);
     if (res?.error) { setErr(res.error); setBusy(false); }
   }
   return (
