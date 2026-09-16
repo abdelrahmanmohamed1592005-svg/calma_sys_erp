@@ -3,7 +3,7 @@ import { Info, UserPlus, Key, Check } from "lucide-react";
 import { ROLES, SHIFTS } from "../domain/constants";
 import { todayStr } from "../domain/dates";
 import { getClaimsForDate, clearClaimRow } from "../data/shifts";
-import { signUpUser, setProfileActive, adminResetPassword } from "../lib/auth";
+import { adminCreateUser, setProfileActive, adminResetPassword } from "../lib/auth";
 
 export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog, showToast, dataVersion }) {
   const [form, setForm] = useState(null);
@@ -27,7 +27,7 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
     if (!form.name.trim() || !form.username.trim() || form.pw.length < 6) { showToast("املأ كل الحقول - كلمة المرور ٦ حروف على الأقل"); return; }
     const uname = form.username.trim().toLowerCase();
     if (users.some((u) => u.username === uname)) { showToast("اسم المستخدم موجود بالفعل"); return; }
-    const res = await signUpUser({ username: uname, password: form.pw, name: form.name.trim(), role: form.role });
+    const res = await adminCreateUser({ username: uname, password: form.pw, name: form.name.trim(), role: form.role });
     if (res.error) { showToast(res.error); return; }
     onRefresh(); onLog(`إضافة مستخدم جديد: ${uname} (${ROLES.find((r) => r.key === form.role)?.label})`);
     setForm(null); showToast("تم إنشاء الحساب");
