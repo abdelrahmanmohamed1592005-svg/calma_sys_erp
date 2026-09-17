@@ -76,8 +76,19 @@ export function PaymentDetailsInline({ method, details, onChange, disabled }) {
   );
 }
 
+/*
+  حماية من "CSV Formula Injection": لو اسم نزيل أو ملاحظة بدأت بـ = أو + أو -
+  أو @، برنامج زي Excel ممكن يتعامل معاها كصيغة (formula) بدل نص عادي لما
+  الموظف يفتح الملف المُصدَّر - ده ثغرة معروفة (CWE-1236). الحل: نحط علامة
+  اقتباس ' قدام أي قيمة بتبدأ بالحروف دي، فتتقرا كنص دايمًا مهما كان محتواها.
+*/
+function csvSafeCell(v) {
+  const s = String(v ?? "");
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+}
+
 export function downloadCSV(filename, headers, rows) {
-  const csv = [headers.join(","), ...rows.map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+  const csv = [headers.join(","), ...rows.map((r) => r.map((v) => `"${csvSafeCell(v).replace(/"/g, '""')}"`).join(","))].join("\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click();
