@@ -1,0 +1,27 @@
+# بيئة التشغيل ومفاتيح Supabase - أهم سطر في الملف ده، ده اللي بيمنع
+# secrets حقيقية إنها تترفع بالغلط على GitHub
+.env
+.env.local
+.env.*.local
+
+# اعتماديات المشروع - بتتبني من package.json، مش محتاجة تترفع
+node_modules
+
+# ناتج البناء - بيتعمل من الصفر بـ npm run build
+dist
+dist-ssr
+
+# ملفات محررات وأنظمة تشغيل
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.local
+
+# لوجات
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Supabase CLI المحلي
+.supabase
