@@ -84,7 +84,7 @@ export async function adminResetPassword(targetUsername, newPassword) {
     body: { username: targetUsername, newPassword },
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (error) return { error: error.message || "تعذر تغيير كلمة المرور" };
+  if (error) return { error: await extractFunctionError(error) };
   if (data?.error) return { error: data.error };
   return { data };
 }
@@ -105,9 +105,28 @@ export async function adminCreateUser({ username, password, name, role }) {
     body: { username, password, name, role },
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (error) return { error: error.message || "تعذر إنشاء الحساب" };
+  if (error) return { error: await extractFunctionError(error) };
   if (data?.error) return { error: data.error };
   return { data: data?.data };
+}
+
+/*
+  مكتبة Supabase بترجع رسالة عامة غير مفيدة زي "Edge Function returned a
+  non-2xx status code" وبتسيب الرسالة الحقيقية اللي احنا بنبعتها من جوه
+  الفنكشن (زي "اسم المستخدم موجود بالفعل") جوه error.context (وده Response
+  خام لازم تتقرا بـ .json()). الدالة دي بتحاول تجيب الرسالة الحقيقية، ولو
+  مقدرتش ترجع الرسالة العامة كحل احتياطي.
+*/
+async function extractFunctionError(error) {
+  try {
+    if (error?.context && typeof error.context.json === "function") {
+      const body = await error.context.clone().json();
+      if (body?.error) return body.error;
+    }
+  } catch (_) {
+    // تجاهل - هنرجع الرسالة العامة تحت
+  }
+  return error?.message || "حصل خطأ غير متوقع";
 }
 
 function mapAuthError(error) {
