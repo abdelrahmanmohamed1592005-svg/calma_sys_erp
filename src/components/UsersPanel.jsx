@@ -4,6 +4,7 @@ import { ROLES, SHIFTS } from "../domain/constants";
 import { todayStr } from "../domain/dates";
 import { getClaimsForDate, clearClaimRow } from "../data/shifts";
 import { adminCreateUser, setProfileActive, adminResetPassword } from "../lib/auth";
+import { validatePasswordStrength, validateUsername, sanitizeText } from "../domain/security";
 
 export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog, showToast, dataVersion }) {
   const [form, setForm] = useState(null);
@@ -24,10 +25,15 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
 
   function startNew() { setForm({ name: "", username: "", role: "staff", pw: "" }); }
   async function saveNew() {
-    if (!form.name.trim() || !form.username.trim() || form.pw.length < 6) { showToast("املأ كل الحقول - كلمة المرور ٦ حروف على الأقل"); return; }
+    const name = sanitizeText(form.name, 80);
+    if (!name) { showToast("اكتب الاسم"); return; }
+    const uCheck = validateUsername(form.username);
+    if (!uCheck.ok) { showToast(uCheck.message); return; }
+    const pCheck = validatePasswordStrength(form.pw);
+    if (!pCheck.ok) { showToast(pCheck.message); return; }
     const uname = form.username.trim().toLowerCase();
     if (users.some((u) => u.username === uname)) { showToast("اسم المستخدم موجود بالفعل"); return; }
-    const res = await adminCreateUser({ username: uname, password: form.pw, name: form.name.trim(), role: form.role });
+    const res = await adminCreateUser({ username: uname, password: form.pw, name, role: form.role });
     if (res.error) { showToast(res.error); return; }
     onRefresh(); onLog(`إضافة مستخدم جديد: ${uname} (${ROLES.find((r) => r.key === form.role)?.label})`);
     setForm(null); showToast("تم إنشاء الحساب");
@@ -39,7 +45,8 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
     onRefresh(); onLog(`${u.active ? "تعطيل" : "تفعيل"} حساب ${u.username}`); showToast("تم التحديث");
   }
   async function submitReset() {
-    if (resetPw.length < 6) { showToast("كلمة المرور ٦ حروف على الأقل"); return; }
+    const check = validatePasswordStrength(resetPw);
+    if (!check.ok) { showToast(check.message); return; }
     const res = await adminResetPassword(resetTarget, resetPw);
     if (res.error) { showToast(res.error); return; }
     onLog(`إعادة تعيين كلمة مرور ${resetTarget}`); setResetTarget(null); setResetPw(""); showToast("تم تغيير كلمة المرور");

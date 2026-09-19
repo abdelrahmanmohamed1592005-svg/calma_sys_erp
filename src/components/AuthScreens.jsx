@@ -2,11 +2,16 @@ import React, { useState } from "react";
 import { Info, Download } from "lucide-react";
 import { GlobalStyle, Logo, downloadCSV } from "./shared";
 import { arabicWeekday, arabicDateLong, todayStr } from "../domain/dates";
+import { validatePasswordStrength, validateUsername } from "../domain/security";
 
 export function SetupScreen({ onCreate }) {
   const [name, setName] = useState(""); const [username, setUsername] = useState(""); const [pw, setPw] = useState(""); const [pw2, setPw2] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   async function submit() {
-    if (!name.trim() || !username.trim() || pw.length < 6) { setErr("املأ كل الحقول - كلمة المرور ٦ حروف على الأقل"); return; }
+    if (!name.trim() || !username.trim()) { setErr("املأ كل الحقول"); return; }
+    const uCheck = validateUsername(username);
+    if (!uCheck.ok) { setErr(uCheck.message); return; }
+    const pCheck = validatePasswordStrength(pw);
+    if (!pCheck.ok) { setErr(pCheck.message); return; }
     if (pw !== pw2) { setErr("كلمتا المرور غير متطابقتين"); return; }
     setErr(""); setBusy(true);
     const res = await onCreate({ name: name.trim(), username: username.trim().toLowerCase(), pw });
@@ -24,7 +29,8 @@ export function SetupScreen({ onCreate }) {
         <label style={{ fontSize: 13, fontWeight: 700, display: "block", marginBottom: 4 }}>اسم المستخدم</label>
         <input className="cx-input" value={username} onChange={(e) => setUsername(e.target.value)} style={{ marginBottom: 12 }} placeholder="بالإنجليزي، بدون مسافات" />
         <label style={{ fontSize: 13, fontWeight: 700, display: "block", marginBottom: 4 }}>كلمة المرور</label>
-        <input className="cx-input" type="password" value={pw} onChange={(e) => setPw(e.target.value)} style={{ marginBottom: 12 }} />
+        <input className="cx-input" type="password" value={pw} onChange={(e) => setPw(e.target.value)} style={{ marginBottom: 4 }} />
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>٨ حروف على الأقل، وفيها حرف ورقم</div>
         <label style={{ fontSize: 13, fontWeight: 700, display: "block", marginBottom: 4 }}>تأكيد كلمة المرور</label>
         <input className="cx-input" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} style={{ marginBottom: 12 }} />
         {err && <div style={{ color: "var(--rust)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}

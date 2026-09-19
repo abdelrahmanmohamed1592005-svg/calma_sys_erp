@@ -3,6 +3,7 @@ import { LogOut, Key } from "lucide-react";
 import { Logo } from "./shared";
 import { arabicWeekday, arabicDateLong, todayStr } from "../domain/dates";
 import { ROLES, TAB_LABELS } from "../domain/constants";
+import { validatePasswordStrength } from "../domain/security";
 
 export function Header({ user, onLogout, onChangePassword }) {
   const date = todayStr();
@@ -24,7 +25,12 @@ export function Header({ user, onLogout, onChangePassword }) {
 
 function ChangePasswordBar({ onSubmit, onCancel }) {
   const [pw, setPw] = useState(""); const [pw2, setPw2] = useState(""); const [err, setErr] = useState("");
-  function submit() { if (pw.length < 6) { setErr("كلمة المرور ٦ حروف على الأقل"); return; } if (pw !== pw2) { setErr("كلمتا المرور غير متطابقتين"); return; } onSubmit(pw); }
+  function submit() {
+    const check = validatePasswordStrength(pw);
+    if (!check.ok) { setErr(check.message); return; }
+    if (pw !== pw2) { setErr("كلمتا المرور غير متطابقتين"); return; }
+    onSubmit(pw);
+  }
   return (
     <div style={{ background: "var(--paper2)", padding: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid var(--hair)" }}>
       <span style={{ fontSize: 12.5, fontWeight: 700 }}>كلمة مرور جديدة:</span>

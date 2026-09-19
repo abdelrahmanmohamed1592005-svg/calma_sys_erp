@@ -26,7 +26,11 @@ export async function signUpUser({ username, password, name, role }) {
     .from("profiles")
     .insert({ id: userId, username: username.trim().toLowerCase(), name, role, active: true });
 
-  if (profileError) return { error: profileError.message || "الاسم ده مستخدم بالفعل أو حصل خطأ" };
+  if (profileError) {
+    // eslint-disable-next-line no-console
+    console.error("[Calma] signUpUser profile insert error:", profileError);
+    return { error: "تعذر إنشاء الحساب - اسم المستخدم ممكن يكون مستخدم بالفعل" };
+  }
   return { data: { id: userId, username: username.trim().toLowerCase(), name, role, active: true } };
 }
 
@@ -134,7 +138,11 @@ function mapAuthError(error) {
   const msg = (error.message || "").toLowerCase();
   if (msg.includes("invalid login credentials")) return "بيانات الدخول غير صحيحة";
   if (msg.includes("already registered") || msg.includes("already exists")) return "اسم المستخدم ده موجود بالفعل";
-  if (msg.includes("password") && msg.includes("6")) return "كلمة المرور لازم تكون ٦ حروف على الأقل";
+  if (msg.includes("password")) return "كلمة المرور ٨ حروف على الأقل، وفيها حرف ورقم";
   if (msg.includes("email not confirmed")) return "لازم توقف خاصية Confirm Email من إعدادات Supabase Auth (README)";
-  return error.message || "حصل خطأ غير متوقع";
+  // رسالة غير متوقعة - نسجلها كاملة للمطوّر في الـ console، ونرجع للمستخدم
+  // رسالة عامة آمنة بدل ما نكشفله تفاصيل داخلية ممكن تكون حساسة
+  // eslint-disable-next-line no-console
+  console.error("[Calma] auth error:", error);
+  return "حصل خطأ غير متوقع، حاول تاني";
 }

@@ -6,19 +6,16 @@
 // قبل ما تنفذ أي حاجة.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { buildCorsHeaders, isRateLimited, validatePasswordStrength, safeServerError } from "../_shared/security.ts";
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
     const authHeader = req.headers.get("Authorization") || "";
     const jwt = authHeader.replace("Bearer ", "");
-    if (!jwt) return json({ error: "لازم تكون مسجّل دخول" }, 401);
+    if (!jwt) return json({ error: "لازم تكون مسجّل دخول" }, 401, corsHeaders);
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -28,7 +25,11 @@ Deno.serve(async (req) => {
       global: { headers: { Authorization: `Bearer ${jwt}` } },
     });
     const { data: callerData, error: callerErr } = await callerClient.auth.getUser();
-    if (callerErr || !callerData?.user) return json({ error: "جلسة غير صالحة" }, 401);
+    if (callerErr || !callerData?.user) return json({ error: "جلسة غير صالحة" }, 401, corsHeaders);
+
+    if (isRateLimited(`reset-password:${callerData.user.id}`)) {
+      return json({ error: "طلبات كتير قوي في وقت قصير، استنى شوية وجرّب تاني" }, 429, corsHeaders);
+    }
 
     const { data: callerProfile, error: profileErr } = await callerClient
       .from("profiles")
@@ -36,13 +37,14 @@ Deno.serve(async (req) => {
       .eq("id", callerData.user.id)
       .maybeSingle();
     if (profileErr || !callerProfile || callerProfile.role !== "gm" || !callerProfile.active) {
-      return json({ error: "الصلاحية دي للمدير العام بس" }, 403);
+      return json({ error: "الصلاحية دي للمدير العام بس" }, 403, corsHeaders);
     }
 
     const { username, newPassword } = await req.json();
-    if (!username || !newPassword || String(newPassword).length < 6) {
-      return json({ error: "بيانات ناقصة أو كلمة المرور أقل من ٦ حروف" }, 400);
-    }
+    if (!username) return json({ error: "بيانات ناقصة" }, 400, corsHeaders);
+
+    const pwCheck = validatePasswordStrength(newPassword);
+    if (!pwCheck.ok) return json({ error: pwCheck.message }, 400, corsHeaders);
 
     const adminClient = createClient(supabaseUrl, serviceKey);
 
@@ -51,20 +53,20 @@ Deno.serve(async (req) => {
       .select("id")
       .eq("username", String(username).toLowerCase())
       .maybeSingle();
-    if (targetErr || !targetProfile) return json({ error: "المستخدم مش موجود" }, 404);
+    if (targetErr || !targetProfile) return json({ error: "المستخدم مش موجود" }, 404, corsHeaders);
 
     const { error: updateErr } = await adminClient.auth.admin.updateUserById(targetProfile.id, {
       password: newPassword,
     });
-    if (updateErr) return json({ error: updateErr.message }, 500);
+    if (updateErr) return json({ error: safeServerError("reset-password:updateUser", updateErr) }, 500, corsHeaders);
 
-    return json({ success: true });
+    return json({ success: true }, 200, corsHeaders);
   } catch (e) {
-    return json({ error: String(e?.message || e) }, 500);
+    return json({ error: safeServerError("reset-password:unhandled", e) }, 500, corsHeaders);
   }
 });
 
-function json(body, status = 200) {
+function json(body: unknown, status: number, corsHeaders: Record<string, string>) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },

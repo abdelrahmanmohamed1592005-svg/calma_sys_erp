@@ -1,7 +1,16 @@
 -- ============================================================================
+-- Calma Hotel System - قاعدة البيانات (النسخة الموحّدة والنهائية)
+-- شغّل الملف ده كامل مرة واحدة بس في Supabase SQL Editor على مشروع جديد -
+-- آمن تشغّله أكتر من مرة على مشروع موجود بالفعل (كل حاجة فيه idempotent).
+--
+-- ده الملف الوحيد المطلوب من دلوقتي فصاعدًا. كل إصلاحات الأمان والصلاحيات
+-- اللي اتعملت على مراحل بقت مدمجة هنا في مكان واحد، فأي نسخة جديدة من
+-- النظام (لعميل تاني، أو استعادة بعد كارثة) هتبقى محمية من أول تشغيل من
+-- غير ما حد يحتاج يفتكر يشغّل ملفات patch منفصلة.
+
+-- ============================================================================
 -- Calma Hotel System - قاعدة البيانات (النسخة المُطبّعة الكاملة)
 -- شغّل الملف ده كامل مرة واحدة في Supabase SQL Editor - آمن تشغّله أكتر من مرة
--- ============================================================================
 
 -- --------------------------------------------------------------------------
 -- 0) دوال مساعدة عامة
@@ -245,6 +254,370 @@ grant execute on function is_gm() to authenticated;
 grant execute on function is_active_user() to authenticated;
 
 -- ============================================================================
--- خطوة يدوية مهمة بعد تشغيل السكريبت ده:
--- Authentication -> Providers -> Email -> شيّل علامة "Confirm email"
+
+
+-- ============================================================================
+-- Calma Hotel System - سكريبت إصلاحات شامل
+-- شغّليه كامل مرة واحدة في Supabase SQL Editor - آمن تشغّله أكتر من مرة
+--
+-- ملاحظة مهمة: السكريبت ده بيعالج كل نقاط الأمان وتكامل البيانات اللي راجعناها
+-- في السكريبت الأصلي. مش بديل عن اختبار فعلي للتطبيق، وفيه جزء واحد (status
+-- enum) اتسيب عمدًا من غير قيد صارم لأني مش عارف كل القيم اللي التطبيق
+-- بيبعتها فعليًا - شرح السبب تحت في القسم 7.
+-- ============================================================================
+
+-- --------------------------------------------------------------------------
+-- 1) صلاحيات GRANT الأساسية على الجداول (سبب مشكلة "permission denied")
+-- --------------------------------------------------------------------------
+grant usage on schema public to anon, authenticated;
+
+grant select, insert, update on profiles to authenticated;
+grant select, insert on profiles to anon;
+
+grant select on rooms to anon, authenticated;
+grant insert, update, delete on rooms to authenticated;
+
+grant select, insert, update, delete on room_overrides to authenticated;
+grant select, insert, update, delete on bookings to authenticated;
+grant select, insert, update, delete on shift_records to authenticated;
+grant select, insert, update, delete on shift_claims to authenticated;
+grant select, insert on activity_log to authenticated;
+
+-- --------------------------------------------------------------------------
+-- 2) تحصين الدوال الحالية (إضافة search_path ثابت - أمان Postgres قياسي)
+-- --------------------------------------------------------------------------
+create or replace function is_gm()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and role = 'gm' and active = true);
+$$;
+
+create or replace function is_active_user()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and active = true);
+$$;
+
+create or replace function profiles_exist()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists(select 1 from profiles limit 1);
+$$;
+
+-- دالة جديدة: هل المستخدم الحالي مدير عام أو حسابات (لعمليات الحذف المالية)
+create or replace function can_manage_financials()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (
+    select 1 from profiles
+    where id = auth.uid() and role in ('gm','accounts') and active = true
+  );
+$$;
+
+-- دالة جديدة: هل المستخدم الحالي "مدير حجوزات" - ده الدور اللي فعليًا معاه
+-- editBookings / canApproveBookings / editRoomConfig = true في كود التطبيق
+-- (constants.js) - مش gm ولا accounts زي ما كنت مفتكر أول مرة
+create or replace function is_reservations_manager()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (
+    select 1 from profiles
+    where id = auth.uid() and role = 'reservations' and active = true
+  );
+$$;
+
+grant execute on function profiles_exist() to anon, authenticated;
+grant execute on function is_gm() to authenticated;
+grant execute on function is_active_user() to authenticated;
+grant execute on function can_manage_financials() to authenticated;
+grant execute on function is_reservations_manager() to authenticated;
+
+-- --------------------------------------------------------------------------
+-- 3) حماية آخر مدير عام نشط (اكتشفت من كود التطبيق إن UsersPanel.jsx بيسمح
+--    بأكتر من مدير عام نشط في نفس الوقت عمدًا - ده مش خطأ، ده تصميم مقصود.
+--    اللي فعلاً محتاج حماية هو منع تعطيل آخر مدير عام نشط، وده حاليًا محمي
+--    في الفرونت إند بس (toggleActive في UsersPanel.jsx) وممكن يتلف لو حد
+--    نادى الـ API مباشرة. التريجر ده بينقل نفس الحماية لقاعدة البيانات.
+-- --------------------------------------------------------------------------
+create or replace function prevent_last_gm_deactivation()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.role = 'gm' and old.active = true and new.active = false then
+    if not exists (
+      select 1 from profiles
+      where role = 'gm' and active = true and id <> old.id
+    ) then
+      raise exception 'لازم يفضل مدير عام واحد فعّال على الأقل';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_protect_last_gm on profiles;
+create trigger profiles_protect_last_gm before update on profiles
+  for each row execute function prevent_last_gm_deactivation();
+
+-- --------------------------------------------------------------------------
+-- 4) تريجر: تعبئة هوية الفاعل الحقيقية تلقائيًا (بدل النص الحر من العميل)
+--    ده بيمنع أي حد إنه "يوقّع" باسم زميله في السجلات
+-- --------------------------------------------------------------------------
+create or replace function set_actor_fields()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_username text;
+  v_name text;
+  v_role text;
+begin
+  select username, name, role into v_username, v_name, v_role
+  from profiles where id = auth.uid();
+
+  if TG_TABLE_NAME = 'activity_log' then
+    new.username := coalesce(v_username, new.username);
+    new.user_name := coalesce(v_name, new.user_name);
+    new.role := coalesce(v_role, new.role);
+  elsif TG_TABLE_NAME = 'shift_records' then
+    new.staff_username := coalesce(v_username, new.staff_username);
+    new.staff_name := coalesce(v_name, new.staff_name);
+  elsif TG_TABLE_NAME = 'bookings' then
+    new.created_by := coalesce(v_username, new.created_by);
+  elsif TG_TABLE_NAME = 'shift_claims' then
+    new.username := coalesce(v_username, new.username);
+    new.name := coalesce(v_name, new.name);
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists activity_log_actor on activity_log;
+create trigger activity_log_actor before insert on activity_log
+  for each row execute function set_actor_fields();
+
+drop trigger if exists shift_records_actor on shift_records;
+create trigger shift_records_actor before insert on shift_records
+  for each row execute function set_actor_fields();
+
+drop trigger if exists bookings_actor on bookings;
+create trigger bookings_actor before insert on bookings
+  for each row execute function set_actor_fields();
+
+drop trigger if exists shift_claims_actor on shift_claims;
+create trigger shift_claims_actor before insert on shift_claims
+  for each row execute function set_actor_fields();
+
+-- --------------------------------------------------------------------------
+-- 5) تريجر: منع تعديل شيفت مقفول إلا من المدير العام أو الحسابات
+-- --------------------------------------------------------------------------
+create or replace function prevent_closed_shift_edit()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.closed = true and not can_manage_financials() then
+    raise exception 'لا يمكن تعديل شيفت مقفول إلا من المدير العام أو الحسابات';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists shift_records_lock on shift_records;
+create trigger shift_records_lock before update on shift_records
+  for each row execute function prevent_closed_shift_edit();
+
+-- --------------------------------------------------------------------------
+-- 6) تريجر: منع أي حد يوافق على حجزه لنفسه (approval_status)
+--    ملاحظة: راجعت constants.js في كود التطبيق - "canApproveBookings: true"
+--    معمولة لدور "reservations" (مدير الحجوزات) بس، مش gm ولا accounts.
+--    لو قيدتها عليهم كنت هكسر ميزة الموافقة فعليًا لصاحب الصلاحية الحقيقي.
+-- --------------------------------------------------------------------------
+create or replace function prevent_self_approval()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.approval_status is distinct from old.approval_status
+     and not is_reservations_manager() then
+    raise exception 'فقط مدير الحجوزات يقدر يغيّر حالة اعتماد الحجز';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_approval_guard on bookings;
+create trigger bookings_approval_guard before update on bookings
+  for each row execute function prevent_self_approval();
+
+-- --------------------------------------------------------------------------
+-- 7) قيود تكامل البيانات (Data Integrity Checks)
+--    ملاحظة عن "status": متعمد مسيبتوش check enum لأني مش شايف كل القيم
+--    اللي التطبيق بيبعتها فعليًا (مؤكد/ملغي/... إلخ). لو بعتيلي القائمة
+--    الكاملة أقدر أضيفه بأمان من غير ما يبوّظ حجوزات موجودة.
+-- --------------------------------------------------------------------------
+do $$ begin
+  alter table bookings add constraint bookings_dates_valid check (checkout > checkin);
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table bookings add constraint bookings_pax_positive check (pax > 0);
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table bookings add constraint bookings_amounts_nonneg check (
+    price_night >= 0 and total_room >= 0 and amount_paid >= 0 and amount_tendered >= 0
+  );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table bookings add constraint bookings_currency_chk check (currency in ('USD','EGP'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table bookings add constraint bookings_extras_shape check (
+    extras ?& array['laundry','cafeteria','tours','pickup']
+  );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table bookings add constraint bookings_payment_details_shape check (
+    payment_details ?& array['senderName','senderNumber','ref']
+  );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table bookings add constraint bookings_early_checkin_shape check (
+    early_checkin ?& array['applied','fee','note']
+  );
+exception when duplicate_object then null; end $$;
+
+create unique index if not exists bookings_code_unique_idx
+  on bookings (code) where code is not null;
+
+do $$ begin
+  alter table rooms add constraint rooms_price_nonneg check (price >= 0);
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table rooms add constraint rooms_capacity_positive check (capacity > 0);
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table rooms add constraint rooms_currency_chk check (currency in ('USD','EGP'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table shift_records add constraint shift_handover_shape check (
+    handover ?& array['EGP','USD']
+  );
+exception when duplicate_object then null; end $$;
+
+-- --------------------------------------------------------------------------
+-- 8) منع الحجز المزدوج لنفس الغرفة في تواريخ متداخلة
+--    لو فشلت الخطوة دي، معناها فيه حجوزات متعارضة موجودة فعلاً في بياناتك
+--    حاليًا - هيظهرلك NOTICE بدل ما يوقف باقي السكريبت
+-- --------------------------------------------------------------------------
+create extension if not exists btree_gist;
+
+alter table bookings add column if not exists stay_range daterange
+  generated always as (daterange(checkin, checkout, '[)')) stored;
+
+do $$
+begin
+  alter table bookings add constraint bookings_no_overlap
+    exclude using gist (room with =, stay_range with &&)
+    where (status <> 'ملغي');
+exception
+  when duplicate_object then null;
+  when others then
+    raise notice 'تعذر إضافة قيد منع تعارض الحجوزات - على الأرجح لوجود حجوزات متداخلة في البيانات الحالية. راجعي الحجوزات المتعارضة يدويًا ثم نفذي هذا الجزء تاني بمفرده.';
+end $$;
+
+-- --------------------------------------------------------------------------
+-- 9) تعديل صلاحيات الكتابة (RLS Policies) لتقييد العمليات الحساسة
+-- --------------------------------------------------------------------------
+
+-- الغرف: التسعير وإضافة/حذف الغرف لمدير الحجوزات (اللي عنده editRoomConfig
+-- فعليًا في التطبيق)، مش المدير العام. عرضها متاح للجميع.
+drop policy if exists "rooms write" on rooms;
+create policy "rooms write" on rooms for all using (is_reservations_manager()) with check (is_reservations_manager());
+
+-- الحجوزات: الإضافة والتعديل لأي موظف نشط، لكن الحذف الفعلي لمدير الحجوزات بس
+-- (ده اللي عنده editBookings=true فعليًا في التطبيق)
+drop policy if exists "bookings write" on bookings;
+drop policy if exists "bookings insert" on bookings;
+drop policy if exists "bookings update" on bookings;
+drop policy if exists "bookings delete" on bookings;
+create policy "bookings insert" on bookings for insert with check (is_active_user());
+create policy "bookings update" on bookings for update using (is_active_user()) with check (is_active_user());
+create policy "bookings delete" on bookings for delete using (is_reservations_manager());
+
+-- الشيفتات: نفس المنطق - التعديل لأي نشط (والتريجر بيمنع تعديل المقفول)، الحذف للمدير/الحسابات
+drop policy if exists "shifts write" on shift_records;
+drop policy if exists "shifts insert" on shift_records;
+drop policy if exists "shifts update" on shift_records;
+drop policy if exists "shifts delete" on shift_records;
+create policy "shifts insert" on shift_records for insert with check (is_active_user());
+create policy "shifts update" on shift_records for update using (is_active_user()) with check (is_active_user());
+create policy "shifts delete" on shift_records for delete using (can_manage_financials());
+
+-- اختيار الشيفتات: أي نشط يقدر يعمل claim، بس الحذف بس لصاحبه أو المدير العام
+drop policy if exists "claims write" on shift_claims;
+drop policy if exists "claims insert" on shift_claims;
+drop policy if exists "claims update" on shift_claims;
+drop policy if exists "claims delete" on shift_claims;
+create policy "claims insert" on shift_claims for insert with check (is_active_user());
+create policy "claims update" on shift_claims for update using (is_gm()) with check (is_gm());
+create policy "claims delete" on shift_claims for delete using (
+  is_gm() or username = (select username from profiles where id = auth.uid())
+);
+
+-- --------------------------------------------------------------------------
+-- 10) إعادة تفعيل البث اللحظي (لضمان بقاء الإعداد سليم بعد كل التعديلات)
+-- --------------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  foreach t in array array['profiles','rooms','room_overrides','bookings','shift_records','shift_claims','activity_log']
+  loop
+    begin
+      execute format('alter publication supabase_realtime add table %I', t);
+    exception when duplicate_object then null; when others then null;
+    end;
+  end loop;
+end $$;
+
+-- --------------------------------------------------------------------------
+-- 11) قيد صارم على حالة الحجز - القيم دي من كود التطبيق نفسه
+--     (domain/constants.js -> BOOKING_STATUSES) مش تخمين
+-- --------------------------------------------------------------------------
+do $$ begin
+  alter table bookings add constraint bookings_status_chk check (
+    status in ('مؤكد', 'تم تسجيل الدخول', 'تم تسجيل الخروج', 'ملغي')
+  );
+exception when duplicate_object then null; end $$;
+
+-- --------------------------------------------------------------------------
+-- 12) صلاحيات service_role على الجداول - محتاجها الـ Edge Functions
+--     (create-user و reset-password) عشان تقدر تنشئ/تعدّل بروفايلات
+--     من غير ما تعتمد على RLS (هي بتعمل التحقق من الصلاحية بنفسها في الكود
+--     قبل ما توصل هنا أصلاً). من غيرها بتظهر "permission denied for table"
+--     حتى لو الكود والمفتاح صح 100%.
+-- --------------------------------------------------------------------------
+grant usage on schema public to service_role;
+grant all on all tables in schema public to service_role;
+alter default privileges in schema public grant all on tables to service_role;
+
+-- ============================================================================
+-- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):
+--
+-- 1) Authentication -> Sign In / Providers -> Email -> شيّلي علامة
+--    "Confirm email" (من غيرها حسابات الموظفين الجداد مش هيقدروا يدخلوا).
+--
+-- 2) Authentication -> Settings -> Realtime Authorization: تأكدي إنه مفعّل
+--    ومحترم الـ RLS، عشان بيانات bookings/shift_records الحساسة متتسربش
+--    لأي مشترك في القناة بدون صلاحية SELECT فعلية.
+--
+-- 3) نشر الـ Edge Functions (مرة واحدة بس، من الجهاز اللي فيه المشروع):
+--      supabase functions deploy create-user
+--      supabase functions deploy reset-password
+--
+-- 4) (اختياري لكن موصى بيه) تقييد CORS للـ Edge Functions بدل ما تفضل
+--    مفتوحة لأي نطاق - بعد ما تعرفي دومين الموقع بتاعك على Vercel:
+--      supabase secrets set ALLOWED_ORIGIN=https://your-domain.vercel.app
+--
+-- 5) لو عندك حجوزات متعارضة قديمة (تواريخ متداخلة لنفس الغرفة) من قبل
+--    تشغيل السكريبت ده، قيد منع الحجز المزدوج في القسم 8 هيفشل ويطلعلك
+--    NOTICE بدل ما يوقف باقي السكريبت - راجعيها يدويًا وشغلي القسم ده لوحده
+--    تاني بعد كده.
 -- ============================================================================
