@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from "react";
-import Papa from "papaparse";
-import { Pencil, Trash2, AlertTriangle, Check, Plus, Upload, Download, Lock } from "lucide-react";
+import { Pencil, Trash2, AlertTriangle, Check, Plus, Download, Lock } from "lucide-react";
 import { TwoStepButton, PaymentDetailsInline, downloadCSV } from "./shared";
-import { fmt, CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal } from "../domain/money";
+import { fmt, CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, onlineNetAmount } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid } from "../domain/dates";
-import { BOOKING_SOURCES, BOOKING_STATUSES, OTA_SOURCES } from "../domain/constants";
-import { roomsOverlap, classifyBookingAgainstSet } from "../domain/bookingLogic";
-import { buildImportDraft } from "../domain/importLogic";
+import { BOOKING_SOURCES, BOOKING_STATUSES } from "../domain/constants";
+import { roomsOverlap } from "../domain/bookingLogic";
 
 function emptyBooking() {
   return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", amountTendered: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", settled: false, notes: "", imported: false, needsRoomReview: false, duplicateConfirmed: false };
@@ -17,7 +15,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
   const [filter, setFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [importPreview, setImportPreview] = useState(null);
 
   useEffect(() => {
     if (pendingEditId) {
@@ -61,50 +58,12 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
   async function approveBooking(b) { const res = await onUpdateBooking(b.id, { ...b, approvalStatus: "approved" }); if (res?.error) { showToast(res.error); return; } onLog(`موافقة على حجز مباشر - غرفة ${b.room} — ${b.guestName}`); showToast("تمت الموافقة"); }
   async function rejectBooking(b) { const res = await onUpdateBooking(b.id, { ...b, approvalStatus: "approved", status: "ملغي" }); if (res?.error) { showToast(res.error); return; } onLog(`رفض حجز مباشر - غرفة ${b.room} — ${b.guestName}`); showToast("تم الرفض"); }
 
-  function onFileSelected(e) {
-    const file = e.target.files[0]; if (!file) return;
-    Papa.parse(file, { header: true, skipEmptyLines: true, complete: (res) => {
-      const workingSet = [...bookings];
-      const drafts = res.data.map((row, idx) => {
-        const draft = buildImportDraft(row, idx, rooms, workingSet);
-        const cls = classifyBookingAgainstSet(draft, workingSet);
-        const finalDraft = { ...draft, ...cls, excluded: cls.matchType === "conflict" };
-        if (cls.matchType === "update") { const i = workingSet.findIndex((b) => b.id === cls.matchedExistingId); if (i >= 0) workingSet[i] = { ...workingSet[i], ...finalDraft, id: cls.matchedExistingId }; }
-        else if (cls.matchType === "new") { workingSet.push(finalDraft); }
-        return finalDraft;
-      });
-      setImportPreview(drafts);
-    } });
-    e.target.value = "";
-  }
-  function updateImportRow(idx, patch) {
-    setImportPreview((prev) => {
-      const draft = { ...prev[idx], ...patch };
-      const others = prev.filter((_, i) => i !== idx && prev[i].matchType !== "conflict");
-      const cls = classifyBookingAgainstSet(draft, [...bookings, ...others]);
-      const updated = { ...draft, ...cls, excluded: cls.matchType === "conflict" ? true : draft.excluded, needsRoomReview: cls.matchType === "conflict" };
-      const next = [...prev]; next[idx] = updated; return next;
-    });
-  }
-  async function confirmImport() {
-    const rowsToApply = importPreview.filter((r) => !r.excluded && r.room);
-    if (rowsToApply.length === 0) { showToast("مفيش صفوف صالحة للاستيراد"); return; }
-    let added = 0, updated = 0;
-    for (const row of rowsToApply) {
-      if (row.matchType === "update" && row.matchedExistingId) { await onUpdateBooking(row.matchedExistingId, { ...row, id: row.matchedExistingId }); updated++; }
-      else { await onInsertBooking({ ...row, id: uid() }); added++; }
-    }
-    onLog(`استيراد CSV: ${added} حجز جديد، ${updated} حجز اتحدّث`);
-    setImportPreview(null); showToast(`تم: ${added} جديد + ${updated} تحديث`);
-  }
-
   const list = bookings.filter((b) => {
     if (filter && !String(b.room).includes(filter) && !b.guestName.includes(filter) && !(b.code && b.code.includes(filter))) return false;
     if (dateFrom && b.checkout <= dateFrom) return false;
     if (dateTo && b.checkin > dateTo) return false;
     return true;
   }).sort((a, b) => b.checkin.localeCompare(a.checkin));
-  const needsReviewCount = bookings.filter((b) => b.needsRoomReview).length;
   const pendingBookings = bookings.filter((b) => b.approvalStatus === "pending" && b.status !== "ملغي");
 
   function exportCSV() {
@@ -124,7 +83,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="cx-btn cx-btn-outline" onClick={exportCSV}><Download size={13} /> تصدير CSV</button>
-          {perms.editBookings && (<label className="cx-btn cx-btn-outline" style={{ cursor: "pointer" }}><Upload size={13} /> استيراد من Booking.com<input type="file" accept=".csv" style={{ display: "none" }} onChange={onFileSelected} /></label>)}
           {(perms.editBookings || perms.canCreateBookings) && <button className="cx-btn cx-btn-gold" onClick={startNew}><Plus size={14} /> حجز جديد</button>}
         </div>
       </div>
@@ -147,43 +105,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
         </div>
       )}
 
-      {needsReviewCount > 0 && <div className="cx-card" style={{ padding: 10, marginBottom: 12, background: "#FBF1DC", fontSize: 12.5, display: "flex", gap: 6, alignItems: "center" }}><AlertTriangle size={14} color="#B8912F" /> فيه {needsReviewCount} حجز محتاج مراجعة الغرفة/الاسم (اتحطت تلقائيًا من الاستيراد)</div>}
-
-      {importPreview && (
-        <div className="cx-card" style={{ padding: 14, marginBottom: 14 }}>
-          <div style={{ fontWeight: 800, marginBottom: 4 }}>معاينة الاستيراد ({importPreview.length} صف) — راجع الغرفة والاسم قبل التأكيد</div>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>لو الصف نفس كود حجز موجود أو نفس الغرفة والتواريخ بالظبط، هيتحدّث الحجز الموجود مش هيتكرر. لو الغرفة متعارضة مع حجز تاني مختلف، الصف بيتستبعد تلقائيًا لحد ما تراجعه.</div>
-          <div style={{ overflowX: "auto" }}>
-            <table className="cx-table" style={{ fontSize: 11.5, minWidth: 760 }}>
-              <thead><tr><th className="cx-th">استبعاد</th><th className="cx-th">الكود</th><th className="cx-th">الغرفة</th><th className="cx-th">الاسم</th><th className="cx-th">من - إلى</th><th className="cx-th">السعر</th><th className="cx-th">الإجمالي</th><th className="cx-th">دفع</th><th className="cx-th">نوع العملية</th></tr></thead>
-              <tbody>
-                {importPreview.map((r, idx) => (
-                  <tr key={r.id} style={{ opacity: r.excluded ? 0.5 : 1, background: r.matchType === "conflict" ? "#F4E7E2" : r.matchType === "update" ? "#FBF1DC" : "transparent" }}>
-                    <td style={{ textAlign: "center" }}><input type="checkbox" checked={r.excluded} onChange={(e) => updateImportRow(idx, { excluded: e.target.checked })} /></td>
-                    <td>{r.code || "—"}</td>
-                    <td><select className="cx-select" value={r.room} onChange={(e) => updateImportRow(idx, { room: Number(e.target.value) })}><option value="">اختر</option>{rooms.map((rm) => <option key={rm.number} value={rm.number}>{rm.number}</option>)}</select></td>
-                    <td><input className="cx-input" value={r.guestName} onChange={(e) => updateImportRow(idx, { guestName: e.target.value })} /></td>
-                    <td style={{ whiteSpace: "nowrap" }}>{r.checkin} → {r.checkout}</td>
-                    <td>{r.priceNight} {r.currency}</td>
-                    <td>{fmt(bookingGrandTotal(r))}</td>
-                    <td>{r.paymentMethod}</td>
-                    <td>
-                      {r.matchType === "conflict" && <span style={{ color: "var(--rust)", fontWeight: 700 }}><AlertTriangle size={12} style={{ verticalAlign: -2 }} /> تعارض - غيّر الغرفة أو استبعد</span>}
-                      {r.matchType === "update" && <span style={{ color: "var(--gold)", fontWeight: 700 }}>تحديث لحجز موجود</span>}
-                      {r.matchType === "new" && (r.needsRoomReview ? <span style={{ color: "var(--rust)" }}>حجز جديد - راجع الغرفة</span> : <span style={{ color: "var(--sage)" }}>حجز جديد - تمام</span>)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <button className="cx-btn cx-btn-gold" onClick={confirmImport}><Check size={14} /> تأكيد الاستيراد</button>
-            <button className="cx-btn cx-btn-outline" onClick={() => setImportPreview(null)}>إلغاء</button>
-          </div>
-        </div>
-      )}
-
       {form && (
         <div className="cx-card" style={{ padding: 14, marginBottom: 14 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
@@ -200,7 +121,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={moneyLocked} placeholder={String(autoTotalRoom)} value={form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>طريقة الدفع {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><select className="cx-select" disabled={moneyLocked} value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>جهة الحجز</label><input className="cx-input" list="sources" value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} /><datalist id="sources">{BOOKING_SOURCES.map((s) => <option key={s}>{s}</option>)}</datalist>
-              {OTA_SOURCES.includes(form.source) && <div style={{ fontSize: 10, color: "#7A5FB5", marginTop: 2 }}>حجز أونلاين (OTA) - هيتحسب في تقرير "إيراد الحجوزات الأونلاين"</div>}
             </div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الحالة</label><select className="cx-select" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{BOOKING_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
           </div>
@@ -236,7 +156,20 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
             )}
           </div>
 
-          {ONLINE_METHODS.includes(form.paymentMethod) && (
+          <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700 }}>
+              <input type="checkbox" disabled={moneyLocked} checked={!!form.paymentDetails.onlinePaid} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, onlinePaid: e.target.checked } })} /> الحجز مدفوع أونلاين (Booking.com أو أي منصة حجز) {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}
+            </label>
+            {form.paymentDetails.onlinePaid && (
+              <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
+                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>نسبة عمولة المنصة %</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.paymentDetails.commissionPct} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, commissionPct: e.target.value } })} /></div>
+                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>السعر من غير عمولة</label><div style={{ fontWeight: 700, padding: "6px 0" }}>{fmt(grandTotal)} {form.currency}</div></div>
+                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>السعر بالعمولة (الصافي للفندق)</label><div style={{ fontWeight: 700, padding: "6px 0", color: "var(--teal)" }}>{fmt(onlineNetAmount(grandTotal, form.paymentDetails.commissionPct))} {form.currency}</div></div>
+              </div>
+            )}
+          </div>
+
+          {(ONLINE_METHODS.includes(form.paymentMethod) || form.paymentDetails.onlinePaid) && (
             <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
               <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>تفاصيل الدفع الأونلاين {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
@@ -273,7 +206,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
         {list.map((b) => { const gt = bookingGrandTotal(b); const due = gt - (Number(b.amountPaid) || 0); return (
           <div key={b.id} className="cx-card" style={{ padding: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
             <div>
-              <div style={{ fontWeight: 800 }}>غرفة {b.room} · {b.guestName} {b.needsRoomReview && <span className="cx-pill" style={{ background: "#FBF1DC", color: "var(--gold)", marginRight: 6 }}>يحتاج مراجعة</span>} {b.approvalStatus === "pending" && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>بانتظار الموافقة</span>}</div>
+              <div style={{ fontWeight: 800 }}>غرفة {b.room} · {b.guestName} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>مدفوع أونلاين</span>} {b.approvalStatus === "pending" && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>بانتظار الموافقة</span>}</div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.checkin} → {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {b.pax} أفراد {b.code && `· كود ${b.code}`}</div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.source} · {b.paymentMethod}{b.paymentDetails?.senderName ? ` (${b.paymentDetails.senderName} · ${b.paymentDetails.senderNumber})` : ""} · الإجمالي {fmt(gt)} {b.currency} {due > 0 && <span style={{ color: "var(--rust)" }}>· متبقي {fmt(due)}</span>}</div>
             </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord } from "../domain/money";
+import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, onlineNetAmount, emptyPaymentDetails, DEFAULT_ONLINE_COMMISSION_PCT } from "../domain/money";
 
 describe("computeShiftTotals", () => {
   it("separates EGP and USD totals correctly", () => {
@@ -63,5 +63,31 @@ describe("bookingGrandTotal", () => {
 
   it("handles a booking with no extras object at all", () => {
     expect(bookingGrandTotal({ totalRoom: 50 })).toBe(50);
+  });
+});
+
+describe("onlineNetAmount (حجوزات أونلاين - السعر بالعمولة)", () => {
+  it("subtracts the commission percentage from the gross amount", () => {
+    expect(onlineNetAmount(1000, 15)).toBe(850);
+  });
+  it("returns the full amount when commission is 0", () => {
+    expect(onlineNetAmount(1000, 0)).toBe(1000);
+  });
+  it("treats a missing/undefined commission as 0", () => {
+    expect(onlineNetAmount(1000, undefined)).toBe(1000);
+  });
+  it("treats a missing/undefined gross amount as 0", () => {
+    expect(onlineNetAmount(undefined, 15)).toBe(0);
+  });
+  it("handles a 100% commission (net is zero)", () => {
+    expect(onlineNetAmount(500, 100)).toBe(0);
+  });
+});
+
+describe("emptyPaymentDetails online fields", () => {
+  it("defaults onlinePaid to false and commissionPct to the standard default", () => {
+    const pd = emptyPaymentDetails();
+    expect(pd.onlinePaid).toBe(false);
+    expect(pd.commissionPct).toBe(DEFAULT_ONLINE_COMMISSION_PCT);
   });
 });

@@ -33,38 +33,3 @@ export function computeRoomStatus(roomNumber, bookings, overrides, dateStr) {
 export function roomsOverlap(bookings, room, checkin, checkout, excludeId) {
   return bookings.some((b) => b.id !== excludeId && b.room === room && b.status !== "ملغي" && !(checkout <= b.checkin || checkin >= b.checkout));
 }
-
-/* تصنيف صف مستورد مقابل الحجوزات الموجودة:
-   - نفس الكود -> تحديث لنفس الحجز (حتى لو المدة اتغيرت / اتمددت)
-   - مفيش كود بس نفس الغرفة+نفس تاريخ الدخول والخروج بالظبط -> تكرار لنفس الرفعة -> تحديث في مكانه
-   - نفس الغرفة وتواريخ متداخلة لكن مش نفس الحجز -> تعارض حقيقي، تحت المراجعة ولا يتضاف تلقائيًا
-   - حجز لسه بانتظار موافقة مدير الحجوزات مينفعش الاستيراد "يبلعه" ويحدثه/يمسح تفاصيله */
-export function classifyBookingAgainstSet(draft, workingBookings) {
-  if (draft.code) {
-    const m = workingBookings.find((b) => b.code && b.code === draft.code && b.approvalStatus !== "pending");
-    if (m) return { matchType: "update", matchedExistingId: m.id };
-  }
-  const exact = workingBookings.find((b) => b.room === draft.room && b.checkin === draft.checkin && b.checkout === draft.checkout && b.status !== "ملغي" && b.approvalStatus !== "pending");
-  if (exact) return { matchType: "update", matchedExistingId: exact.id };
-  const conflict = workingBookings.find((b) => b.room === draft.room && b.status !== "ملغي" && !(draft.checkout <= b.checkin || draft.checkin >= b.checkout));
-  if (conflict) return { matchType: "conflict", matchedExistingId: conflict.id };
-  return { matchType: "new", matchedExistingId: null };
-}
-
-export function getField(row, keys) {
-  const entries = Object.entries(row);
-  for (const k of keys) {
-    const hit = entries.find(([kk]) => kk.trim().toLowerCase() === k.toLowerCase());
-    if (hit && String(hit[1]).trim() !== "") return String(hit[1]).trim();
-  }
-  return "";
-}
-
-export function mapPaymentMethod(raw) {
-  const s = (raw || "").toLowerCase();
-  if (s.includes("visa") || s.includes("فيزا") || s.includes("card")) return "فيزا";
-  if (s.includes("insta") || s.includes("انستا")) return "انستاباي";
-  if (s.includes("vodafone") || s.includes("فودافون")) return "فودافون كاش";
-  if (s.includes("transfer") || s.includes("تحويل")) return "تحويل بنكي";
-  return "كاش";
-}

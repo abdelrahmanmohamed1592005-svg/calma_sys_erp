@@ -22,7 +22,6 @@ export const PERMISSIONS = {
   gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, canApproveBookings: false, editRoomStatus: false, roomStatusRestricted: false, editRoomConfig: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false },
 };
 
-export const OTA_SOURCES = ["Booking.com", "Trip.com"];
 export const BOOKING_SOURCES = ["مباشر", "Booking.com", "Trip.com", "Airbnb", "وسيط"];
 export const BOOKING_STATUSES = ["مؤكد", "تم تسجيل الدخول", "تم تسجيل الخروج", "ملغي"];
 

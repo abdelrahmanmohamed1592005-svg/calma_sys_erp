@@ -3,14 +3,23 @@ export const CURRENCY_LABEL = { EGP: "جنيه", USD: "دولار" };
 export const PAYMENT_METHODS = ["كاش", "فيزا", "انستاباي", "فودافون كاش", "تحويل بنكي"];
 export const ONLINE_METHODS = ["فيزا", "انستاباي", "فودافون كاش", "تحويل بنكي"];
 export const EXPENSE_CATEGORIES = ["كهرباء ومياه", "مشتريات ومطبخ", "صيانة", "مرتبات وحوافز", "نظافة", "أخرى"];
+export const DEFAULT_ONLINE_COMMISSION_PCT = 15;
 
 export const emptyMoney = () => ({ EGP: 0, USD: 0 });
-export const emptyPaymentDetails = () => ({ senderName: "", senderNumber: "", ref: "" });
+export const emptyPaymentDetails = () => ({ senderName: "", senderNumber: "", ref: "", onlinePaid: false, commissionPct: DEFAULT_ONLINE_COMMISSION_PCT });
 export const emptyLedgerRow = (room) => ({
   room, expenseDesc: "", expenseAmt: "", expenseCategory: "أخرى", expenseCurrency: "EGP",
   collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP",
   paymentDetails: emptyPaymentDetails(), notes: "",
 });
+
+/* المبلغ الصافي بعد خصم عمولة منصة الحجز الأونلاين (Booking.com وغيرها) */
+export function onlineNetAmount(grossAmount, commissionPct) {
+  const gross = Number(grossAmount) || 0;
+  const pct = Number(commissionPct) || 0;
+  return gross * (1 - pct / 100);
+}
+
 
 export function fmt(n) {
   return (Number(n) || 0).toLocaleString("ar-EG");

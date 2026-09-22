@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Download, Printer } from "lucide-react";
 import { downloadCSV } from "./shared";
-import { emptyMoney, computeShiftTotals, bookingGrandTotal, fmt, money, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
-import { SHIFTS, OTA_SOURCES } from "../domain/constants";
+import { emptyMoney, computeShiftTotals, bookingGrandTotal, onlineNetAmount, fmt, money, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
+import { SHIFTS } from "../domain/constants";
 import { todayStr, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getShiftRecord } from "../data/shifts";
 
@@ -33,19 +33,20 @@ function aggregateShifts(records) {
 function aggregateBookings(bookings, fromDate, toDate) {
   const toDate2 = addDays(toDate, 1);
   const inRange = bookings.filter((b) => b.status !== "ملغي" && b.approvalStatus !== "pending" && b.checkin < toDate2 && b.checkout > fromDate);
-  const onlineBookings = inRange.filter((b) => OTA_SOURCES.includes(b.source));
-  const revenue = emptyMoney(); const extrasTotal = { laundry: 0, cafeteria: 0, tours: 0, pickup: 0, earlyCheckin: 0 };
-  const bySource = {}; const byMethod = {}; const outstanding = [];
+  const onlineBookings = inRange.filter((b) => b.paymentDetails?.onlinePaid);
+  const grossRevenue = emptyMoney(); const netRevenue = emptyMoney();
+  const items = [];
   onlineBookings.forEach((b) => {
-    const gt = bookingGrandTotal(b);
-    revenue[b.currency] = (revenue[b.currency] || 0) + gt;
-    extrasTotal.laundry += Number(b.extras?.laundry) || 0; extrasTotal.cafeteria += Number(b.extras?.cafeteria) || 0; extrasTotal.tours += Number(b.extras?.tours) || 0; extrasTotal.pickup += Number(b.extras?.pickup) || 0;
-    if (b.earlyCheckin?.applied) extrasTotal.earlyCheckin += Number(b.earlyCheckin.fee) || 0;
-    bySource[b.source] = (bySource[b.source] || 0) + gt;
-    byMethod[b.paymentMethod] = byMethod[b.paymentMethod] || emptyMoney(); byMethod[b.paymentMethod][b.currency] = (byMethod[b.paymentMethod][b.currency] || 0) + gt;
+    const gross = bookingGrandTotal(b);
+    const commissionPct = Number(b.paymentDetails?.commissionPct) || 0;
+    const net = onlineNetAmount(gross, commissionPct);
+    grossRevenue[b.currency] = (grossRevenue[b.currency] || 0) + gross;
+    netRevenue[b.currency] = (netRevenue[b.currency] || 0) + net;
+    items.push({ id: b.id, room: b.room, guestName: b.guestName, checkin: b.checkin, checkout: b.checkout, currency: b.currency, gross, net, commissionPct, paymentDetails: b.paymentDetails });
   });
+  const outstanding = [];
   inRange.forEach((b) => { const gt = bookingGrandTotal(b); const due = gt - (Number(b.amountPaid) || 0); if (due > 0) outstanding.push({ ...b, due }); });
-  return { count: onlineBookings.length, totalCount: inRange.length, revenue, extrasTotal, bySource, byMethod, outstanding };
+  return { count: onlineBookings.length, totalCount: inRange.length, grossRevenue, netRevenue, items, outstanding };
 }
 
 export function ReportsPanel({ rooms, bookings, dataVersion }) {
@@ -84,7 +85,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
   function buildSummaryText() {
     let txt = `تقرير فندق Calma\n${rangeMode === "day" ? `${arabicWeekday(date)} ${arabicDateLong(date)}` : `من ${fromDate} إلى ${toDate}`}\n\n`;
     if (rangeMode === "day") { SHIFTS.forEach((s) => { const r = dayRecords[s.key]; if (!r) { txt += `${s.label}: لا يوجد سجل\n`; return; } const t = r.closed ? r : computeShiftTotals(r); txt += `${s.label} (${r.staffName}) — ${r.closed ? "مقفول" : "مفتوح"}\nتحصيل: ${money(t.totalCollections, "EGP")}ج + ${money(t.totalCollections, "USD")}$ | مصاريف: ${money(t.totalExpenses, "EGP")}ج + ${money(t.totalExpenses, "USD")}$ | رصيد الخزينة: ${money(t.closingCash, "EGP")}ج + ${money(t.closingCash, "USD")}$\n`; if (r.flagged) txt += `تنبيه متابعة: ${r.shiftNotes || "—"}\n`; txt += `\n`; }); }
-    txt += `إجمالي التحصيل: ${money(agg.totalCollections, "EGP")}ج + ${money(agg.totalCollections, "USD")}$\nإجمالي المصاريف: ${money(agg.totalExpenses, "EGP")}ج + ${money(agg.totalExpenses, "USD")}$\nصافي النقدية: ${money(agg.netCash, "EGP")}ج + ${money(agg.netCash, "USD")}$\nإيراد الحجوزات الأونلاين: ${money(bAgg.revenue, "EGP")}ج + ${money(bAgg.revenue, "USD")}$\nنسبة الإشغال: ${avgOccupancy}%`;
+    txt += `إجمالي التحصيل: ${money(agg.totalCollections, "EGP")}ج + ${money(agg.totalCollections, "USD")}$\nإجمالي المصاريف: ${money(agg.totalExpenses, "EGP")}ج + ${money(agg.totalExpenses, "USD")}$\nصافي النقدية: ${money(agg.netCash, "EGP")}ج + ${money(agg.netCash, "USD")}$\nإيراد الحجوزات الأونلاين (بالعمولة): ${money(bAgg.netRevenue, "EGP")}ج + ${money(bAgg.netRevenue, "USD")}$\nنسبة الإشغال: ${avgOccupancy}%`;
     return txt;
   }
   async function copySummary() { const t = buildSummaryText(); setCopyText(t); try { await navigator.clipboard.writeText(t); } catch (e) {} }
@@ -142,21 +143,37 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
           </div>
 
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>إيراد الحجوزات الأونلاين ({bAgg.count} حجز مدفوع أونلاين من إجمالي {bAgg.totalCount} حجز في الفترة)</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>القسم ده بيشمل بس الحجوزات الجايه من منصات الأونلاين (Booking.com / Trip.com). أي حجز تاني بيتحسب في اليومية عادي عشان ما يتحسبش مرتين.</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 10 }}>
-              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الإيراد بالدولار</div><div style={{ fontWeight: 800 }}>{money(bAgg.revenue, "USD")} $</div></div>
-              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الإيراد بالجنيه</div><div style={{ fontWeight: 800 }}>{money(bAgg.revenue, "EGP")} ج</div></div>
-              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>غسيل</div><div style={{ fontWeight: 800 }}>{fmt(bAgg.extrasTotal.laundry)}</div></div>
-              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>كافيتيريا</div><div style={{ fontWeight: 800 }}>{fmt(bAgg.extrasTotal.cafeteria)}</div></div>
-              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>جولات</div><div style={{ fontWeight: 800 }}>{fmt(bAgg.extrasTotal.tours)}</div></div>
-              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>بيك أب</div><div style={{ fontWeight: 800 }}>{fmt(bAgg.extrasTotal.pickup)}</div></div>
-              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>دخول مبكر</div><div style={{ fontWeight: 800 }}>{fmt(bAgg.extrasTotal.earlyCheckin)}</div></div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>الحجوزات الأونلاين ({bAgg.count} حجز مدفوع أونلاين من إجمالي {bAgg.totalCount} حجز في الفترة)</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>القسم ده بيشمل بس الحجوزات اللي اتحددت يدويًا كـ"مدفوعة أونلاين" وقت إنشاء أو تعديل الحجز.</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 12 }}>
+              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي من غير عمولة (دولار)</div><div style={{ fontWeight: 800 }}>{money(bAgg.grossRevenue, "USD")} $</div></div>
+              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي من غير عمولة (جنيه)</div><div style={{ fontWeight: 800 }}>{money(bAgg.grossRevenue, "EGP")} ج</div></div>
+              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الصافي بعد العمولة (دولار)</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(bAgg.netRevenue, "USD")} $</div></div>
+              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الصافي بعد العمولة (جنيه)</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(bAgg.netRevenue, "EGP")} ج</div></div>
             </div>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>حسب جهة الحجز</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>{Object.entries(bAgg.bySource).map(([s, v]) => <span key={s} className="cx-pill" style={{ background: "var(--paper2)" }}>{s}: {fmt(v)}</span>)}</div>
+            {bAgg.items.length > 0 ? (
+              <div style={{ overflowX: "auto" }}>
+                <table className="cx-table" style={{ fontSize: 12, minWidth: 620 }}>
+                  <thead><tr><th className="cx-th">الغرفة / النزيل</th><th className="cx-th">التواريخ</th><th className="cx-th">من غير عمولة</th><th className="cx-th">العمولة %</th><th className="cx-th">الصافي</th><th className="cx-th">تفاصيل الدفع</th></tr></thead>
+                  <tbody>
+                    {bAgg.items.map((it) => (
+                      <tr key={it.id}>
+                        <td>غرفة {it.room} · {it.guestName}</td>
+                        <td style={{ whiteSpace: "nowrap" }}>{it.checkin} → {it.checkout}</td>
+                        <td>{fmt(it.gross)} {it.currency}</td>
+                        <td>{it.commissionPct}%</td>
+                        <td style={{ fontWeight: 700, color: "var(--teal)" }}>{fmt(it.net)} {it.currency}</td>
+                        <td style={{ fontSize: 11, color: "var(--muted)" }}>{it.paymentDetails?.senderName || "—"} {it.paymentDetails?.ref ? `· ${it.paymentDetails.ref}` : ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>مفيش حجوزات متحددة كـ"مدفوعة أونلاين" في الفترة دي.</div>
+            )}
             {bAgg.outstanding.length > 0 && (<>
-              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: "var(--rust)" }}>مبالغ متبقية على نزلاء - كل الحجوزات ({bAgg.outstanding.length})</div>
+              <div style={{ fontSize: 12, fontWeight: 700, marginTop: 12, marginBottom: 6, color: "var(--rust)" }}>مبالغ متبقية على نزلاء - كل الحجوزات ({bAgg.outstanding.length})</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{bAgg.outstanding.map((b) => <div key={b.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}><span>غرفة {b.room} · {b.guestName}</span><span style={{ color: "var(--rust)", fontWeight: 700 }}>{fmt(b.due)} {b.currency}</span></div>)}</div>
             </>)}
           </div>

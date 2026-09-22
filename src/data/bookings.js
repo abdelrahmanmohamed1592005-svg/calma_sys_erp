@@ -6,7 +6,7 @@ function bookingFromRow(r) {
     checkin: r.checkin, checkout: r.checkout, priceNight: Number(r.price_night) || 0, currency: r.currency,
     totalRoom: Number(r.total_room) || 0, extras: r.extras || { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 },
     earlyCheckin: r.early_checkin || { applied: false, fee: 0, note: "" },
-    paymentMethod: r.payment_method, paymentDetails: r.payment_details || { senderName: "", senderNumber: "", ref: "" },
+    paymentMethod: r.payment_method, paymentDetails: r.payment_details || { senderName: "", senderNumber: "", ref: "", onlinePaid: false, commissionPct: 15 },
     amountPaid: Number(r.amount_paid) || 0, amountTendered: Number(r.amount_tendered) || 0,
     source: r.source, status: r.status, approvalStatus: r.approval_status, settled: !!r.settled, notes: r.notes || "",
     imported: !!r.imported, needsRoomReview: !!r.needs_room_review, createdAt: new Date(r.created_at).getTime(),
