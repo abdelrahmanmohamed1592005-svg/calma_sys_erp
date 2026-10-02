@@ -3,10 +3,13 @@ import { supabase } from "../lib/supabaseClient";
 function shiftFromRow(r) {
   return {
     date: r.date, shiftKey: r.shift_key, staffName: r.staff_name, staffUsername: r.staff_username,
-    handover: r.handover || { EGP: 0, USD: 0 }, rows: r.rows || [], cafeteria: r.cafeteria || {},
+    handover: r.handover || { EGP: 0, USD: 0 }, methodHandover: r.method_handover || {}, rows: r.rows || [], cafeteria: r.cafeteria || {},
     shiftNotes: r.shift_notes || "", flagged: !!r.flagged, closed: !!r.closed, closedBy: r.closed_by,
     closedAt: r.closed_at ? new Date(r.closed_at).getTime() : null,
     totalExpenses: r.total_expenses, totalCollections: r.total_collections, closingCash: r.closing_cash,
+    // دي بتتحفظ بس وقت إقفال الشيفت (عشان تفضل ثابتة وتتقرأ في التقرير حتى
+    // بعد ما تقفل)؛ للشيفت المفتوح بيتم حسابها لايف بـ computeShiftTotals.
+    cashCollections: r.cash_collections, byMethodCurrency: r.by_method_currency, byCategory: r.by_category, methodClosing: r.method_closing,
     updatedAt: r.updated_at,
   };
 }
@@ -14,10 +17,11 @@ function shiftFromRow(r) {
 function shiftToRow(rec) {
   return {
     date: rec.date, shift_key: rec.shiftKey, staff_name: rec.staffName, staff_username: rec.staffUsername,
-    handover: rec.handover, rows: rec.rows, cafeteria: rec.cafeteria, shift_notes: rec.shiftNotes,
+    handover: rec.handover, method_handover: rec.methodHandover, rows: rec.rows, cafeteria: rec.cafeteria, shift_notes: rec.shiftNotes,
     flagged: rec.flagged, closed: rec.closed, closed_by: rec.closedBy,
     closed_at: rec.closedAt ? new Date(rec.closedAt).toISOString() : null,
     total_expenses: rec.totalExpenses || null, total_collections: rec.totalCollections || null, closing_cash: rec.closingCash || null,
+    cash_collections: rec.cashCollections || null, by_method_currency: rec.byMethodCurrency || null, by_category: rec.byCategory || null, method_closing: rec.methodClosing || null,
   };
 }
 

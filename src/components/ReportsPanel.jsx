@@ -20,6 +20,16 @@ function addMoneyInto(target, source) {
   currencyKeysOf(source).forEach((c) => { target[c] = (target[c] || 0) + (source[c] || 0); });
 }
 
+// أول عهدة متسجلة لوسيلة دفع (غير الكاش) في أول شيفت ليه قراءة مسجّلة ضمن
+// الفترة المختارة - دي "كانت قبل كام" بالنسبة لتقرير المتابعة (مثلاً عهدة
+// جهاز الفيزا في بداية الفترة).
+function firstMethodHandover(records) {
+  for (const r of records) {
+    if (r.methodHandover && Object.keys(r.methodHandover).length > 0) return r.methodHandover;
+  }
+  return {};
+}
+
 function aggregateShifts(records) {
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
   const byMethodCurrency = {}, byCategory = {};
@@ -35,7 +45,20 @@ function aggregateShifts(records) {
   });
   const netCash = emptyMoney();
   currencyKeysOf(totalCollections, totalExpenses).forEach((c) => { netCash[c] = (totalCollections[c] || 0) - (totalExpenses[c] || 0); });
-  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, flaggedShifts, netCash };
+  // متابعة عهدة وسائل الدفع الأخرى (فيزا، إلخ) عبر الفترة: كانت قبل + حصلت
+  // في الفترة = الإجمالي دلوقتي. مبني على عهدة اليومية وتحصيلها فقط (مش
+  // متضمن تحصيل الحجوزات المباشر) عشان الحساب يفضل متطابق مع قراءة الجهاز
+  // الفعلية خطوة بخطوة شيفت بشيفت.
+  const methodOpening = firstMethodHandover(records);
+  const methodClosingNow = {};
+  new Set([...Object.keys(methodOpening), ...Object.keys(byMethodCurrency)]).forEach((m) => {
+    if (m === "كاش") return;
+    methodClosingNow[m] = emptyMoney();
+    currencyKeysOf(methodOpening[m], byMethodCurrency[m]).forEach((cur) => {
+      methodClosingNow[m][cur] = (methodOpening[m]?.[cur] || 0) + (byMethodCurrency[m]?.[cur] || 0);
+    });
+  });
+  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, flaggedShifts, netCash, methodOpening, methodClosingNow };
 }
 
 function aggregateBookings(bookings, fromDate, toDate) {
@@ -178,6 +201,32 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
             <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>الكاش من اليومية (درج الشيفت)، وباقي الطرق (فيزا/انستاباي/فودافون كاش/تحويل بنكي...) من المبالغ المسجَّلة على الحجوزات نفسها.</div>
             <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 12 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{PAYMENT_METHODS.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
           </div>
+
+          {PAYMENT_METHODS.some((m) => m !== "كاش" && currencyKeysOf(agg.methodOpening?.[m], agg.byMethodCurrency?.[m]).length > 0) && (
+            <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>متابعة عهدة وسائل الدفع الأخرى (فيزا، إلخ)</div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>مبنية على العهدة المسجَّلة في أول شيفت بالفترة وتحصيل اليومية فقط - مطابقة لقراءة الجهاز خطوة بخطوة.</div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="cx-table" style={{ fontSize: 12 }}>
+                  <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
+                  <tbody>
+                    {PAYMENT_METHODS.filter((m) => m !== "كاش").flatMap((m) => {
+                      const curs = currencyKeysOf(agg.methodOpening?.[m], agg.byMethodCurrency?.[m]);
+                      return curs.map((cur) => (
+                        <tr key={m + cur}>
+                          <td>{m}</td>
+                          <td>{cur}</td>
+                          <td>{money(agg.methodOpening?.[m], cur)}</td>
+                          <td>{money(agg.byMethodCurrency?.[m], cur)}</td>
+                          <td style={{ fontWeight: 800, color: "var(--teal)" }}>{money(agg.methodClosingNow?.[m], cur)}</td>
+                        </tr>
+                      ));
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>المصاريف حسب البند</div>

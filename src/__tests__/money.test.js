@@ -99,6 +99,41 @@ describe("onlineNetAmount (حجوزات أونلاين - السعر بالعمو
   });
 });
 
+describe("عهدة وسائل الدفع الأخرى (فيزا، إلخ) - methodHandover / methodClosing", () => {
+  it("carries the opening Visa handover forward and adds this shift's Visa collections", () => {
+    const rooms = [{ number: 601 }];
+    // عهدة الفيزا في بداية الشيفت (قراءة الجهاز المنقولة من إقفال الشيفت اللي فات)
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 0 }, { "فيزا": { EGP: 12000 } });
+    record.rows[0] = { ...record.rows[0], collectionAmt: "800", collectionCurrency: "EGP", collectionMethod: "فيزا" };
+
+    const totals = computeShiftTotals(record);
+    expect(totals.byMethodCurrency["فيزا"].EGP).toBe(800);
+    expect(totals.methodClosing["فيزا"].EGP).toBe(12800); // 12000 عهدة + 800 حصّلت الشيفت ده
+  });
+
+  it("does not create a cash entry inside methodClosing (cash has its own closingCash)", () => {
+    const rooms = [{ number: 601 }];
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 500 });
+    record.rows[0] = { ...record.rows[0], collectionAmt: "100", collectionCurrency: "EGP", collectionMethod: "كاش" };
+    const totals = computeShiftTotals(record);
+    expect(totals.methodClosing["كاش"]).toBeUndefined();
+  });
+
+  it("tracks a method with zero handover but some collection this shift", () => {
+    const rooms = [{ number: 601 }];
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 0 });
+    record.rows[0] = { ...record.rows[0], collectionAmt: "300", collectionCurrency: "EGP", collectionMethod: "انستاباي" };
+    const totals = computeShiftTotals(record);
+    expect(totals.methodClosing["انستاباي"].EGP).toBe(300); // 0 عهدة + 300 حصّلت
+  });
+
+  it("defaults methodHandover to an empty object when none is given", () => {
+    const rooms = [{ number: 601 }];
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 0 });
+    expect(record.methodHandover).toEqual({});
+  });
+});
+
 describe("directBookingPaymentsByMethod (تحصيل الحجوزات بطرق الدفع غير الكاش - كان مفقود من التقرير)", () => {
   it("counts a Visa payment on a booking by method and currency", () => {
     const bookings = [{ id: "b1", paymentMethod: "فيزا", currency: "EGP", amountPaid: 1500 }];

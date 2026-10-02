@@ -37,9 +37,14 @@ export function money(obj, cur) {
   return fmt(obj?.[cur] || 0);
 }
 
-export function freshShiftRecord(date, shiftKey, staffName, staffUsername, rooms, handover) {
+export function freshShiftRecord(date, shiftKey, staffName, staffUsername, rooms, handover, methodHandover) {
   return {
     date, shiftKey, staffName, staffUsername, handover: (handover && Object.keys(handover).length > 0) ? handover : { EGP: 0 },
+    // عهدة وسائل الدفع التانية غير الكاش (فيزا/انستاباي/فودافون كاش/تحويل
+    // بنكي...) - زي عهدة الكاش بالظبط، بس دي بتمثل قراءة جهاز الدفع (مثلاً)
+    // في بداية الشيفت، بتتنقل تلقائيًا من رصيد إقفال الشيفت اللي فات.
+    // الشكل: { "فيزا": { "EGP": 12000 }, ... }
+    methodHandover: (methodHandover && Object.keys(methodHandover).length > 0) ? methodHandover : {},
     rows: rooms.map((r) => emptyLedgerRow(r.number)),
     cafeteria: emptyLedgerRow("كافيتيريا"),
     shiftNotes: "", flagged: false, closed: false, closedBy: null, closedAt: null,
@@ -73,7 +78,20 @@ export function computeShiftTotals(record) {
   currencyKeysOf(handover, cashCollections, totalExpenses).forEach((cur) => {
     closingCash[cur] = (handover[cur] || 0) + (cashCollections[cur] || 0) - (totalExpenses[cur] || 0);
   });
-  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash };
+  // رصيد كل وسيلة دفع تانية (غير الكاش) دلوقتي = العهدة في بداية الشيفت +
+  // اللي اتحصّل بنفس الوسيلة والعملة خلال الشيفت ده. مفيش مصاريف بتتخصم هنا
+  // لأن المصاريف بتتدفع كاش عادةً، مش من جهاز الدفع.
+  const methodHandover = record.methodHandover && typeof record.methodHandover === "object" ? record.methodHandover : {};
+  const methodClosing = {};
+  const methods = new Set([...Object.keys(methodHandover), ...Object.keys(byMethodCurrency)]);
+  methods.forEach((m) => {
+    if (m === "كاش") return;
+    methodClosing[m] = emptyMoney();
+    currencyKeysOf(methodHandover[m], byMethodCurrency[m]).forEach((cur) => {
+      methodClosing[m][cur] = (methodHandover[m]?.[cur] || 0) + (byMethodCurrency[m]?.[cur] || 0);
+    });
+  });
+  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodHandover, methodClosing };
 }
 
 /* تحصيل الحجوزات اللي اتدفعت مباشر (مش أونلاين) حسب طريقة الدفع والعملة.

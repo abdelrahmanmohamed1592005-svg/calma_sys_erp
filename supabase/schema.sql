@@ -503,6 +503,18 @@ exception when duplicate_object then null; end $$;
 -- بالتحديد - شيلنا الشرط القديم اللي كان بيجبرها تبقى فيها الاتنين دول بس
 alter table shift_records drop constraint if exists shift_handover_shape;
 
+-- عهدة وسائل الدفع التانية غير الكاش (فيزا/انستاباي/فودافون كاش/تحويل
+-- بنكي...) - زي عهدة الكاش بالظبط بس لقراءة جهاز الدفع، بتتنقل تلقائيًا من
+-- إقفال الشيفت اللي فات. وأعمدة إضافية عشان تفاصيل الشيفت (تحصيل كل طريقة
+-- دفع، تحصيل الكاش بس، المصاريف حسب البند، ورصيد كل وسيلة دفع دلوقتي)
+-- تتحفظ فعليًا لما الشيفت يتقفل - من غيرها التقرير كان بيفقد التفاصيل دي
+-- بمجرد ما الشيفت يتقفل.
+alter table shift_records add column if not exists method_handover jsonb not null default '{}'::jsonb;
+alter table shift_records add column if not exists by_method_currency jsonb;
+alter table shift_records add column if not exists cash_collections jsonb;
+alter table shift_records add column if not exists by_category jsonb;
+alter table shift_records add column if not exists method_closing jsonb;
+
 -- --------------------------------------------------------------------------
 -- 8) منع الحجز المزدوج لنفس الغرفة في تواريخ متداخلة
 --    لو فشلت الخطوة دي، معناها فيه حجوزات متعارضة موجودة فعلاً في بياناتك

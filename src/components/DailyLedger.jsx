@@ -81,9 +81,13 @@ function LedgerTable({ record, locked, onUpdateRow, onUpdateCafeteria }) {
   );
 }
 
-function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCurrency, prevClosing }) {
+function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCurrency, prevClosing, onChangeMethodHandover, onAddMethodTracking, prevMethodClosing }) {
   const [newCur, setNewCur] = useState("");
+  const [newMethod, setNewMethod] = useState("فيزا");
+  const [newMethodCur, setNewMethodCur] = useState("EGP");
   const activeCurrencies = currencyKeysOf(record.handover, totals.totalCollections, totals.totalExpenses, totals.closingCash);
+  // وسائل الدفع (غير الكاش) اللي ليها عهدة متابَعة أو تحصيل في الشيفت ده
+  const activeMethods = PAYMENT_METHODS.filter((m) => m !== "كاش" && (currencyKeysOf(record.methodHandover?.[m]).length > 0 || currencyKeysOf(totals.byMethodCurrency?.[m]).length > 0));
   return (
     <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
@@ -109,6 +113,45 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
           <input className="cx-input" list="ledger-add-currency" placeholder="أضف عملة تانية (مثلاً EUR)" value={newCur} onChange={(e) => setNewCur(e.target.value.toUpperCase())} style={{ maxWidth: 180 }} />
           <datalist id="ledger-add-currency">{COMMON_CURRENCIES.filter((c) => !activeCurrencies.includes(c)).map((c) => <option key={c} value={c} />)}</datalist>
           <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} disabled={!newCur.trim()} onClick={() => { onAddCurrency(newCur.trim()); setNewCur(""); }}><Plus size={13} /> إضافة</button>
+        </div>
+      )}
+
+      {/* عهدة وتحصيل وسائل الدفع التانية (فيزا/انستاباي/فودافون كاش/تحويل
+          بنكي...) - زي عهدة الكاش بالظبط بس لجهاز الدفع مش الدرج: بتتنقل
+          القراية من إقفال الشيفت اللي فات، وبتتحدث أول ما تحصيل بنفس
+          الوسيلة يتسجل في جدول اليومية فوق. */}
+      {(activeMethods.length > 0 || !locked) && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--hair)" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 8 }}>عهدة وسائل الدفع الأخرى (فيزا، إلخ)</div>
+          {activeMethods.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14, marginBottom: activeMethods.length ? 10 : 0 }}>
+              {activeMethods.map((m) => {
+                const curs = currencyKeysOf(record.methodHandover?.[m], totals.byMethodCurrency?.[m]);
+                return curs.map((cur) => (
+                  <div key={m + cur} style={{ border: "1px solid var(--hair)", borderRadius: 10, padding: 10 }}>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>{m} ({cur})</div>
+                    <div style={{ marginBottom: 6 }}>
+                      <label style={{ fontSize: 11, color: "var(--muted)" }}>العهدة (قراءة الجهاز في بداية الشيفت)</label>
+                      <input className="cx-input" type="number" disabled={locked} value={record.methodHandover?.[m]?.[cur] ?? 0} onChange={(e) => onChangeMethodHandover(m, cur, e.target.value)} />
+                      {prevMethodClosing?.[m]?.[cur] != null && <div style={{ fontSize: 10, color: "var(--muted)" }}>مقترح: {money(prevMethodClosing[m], cur)}</div>}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12.5 }}>
+                      <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>حصلت الشيفت ده</div><div style={{ fontWeight: 700 }}>{money(totals.byMethodCurrency?.[m], cur)}</div></div>
+                      <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>الإجمالي دلوقتي</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(totals.methodClosing?.[m], cur)}</div></div>
+                    </div>
+                  </div>
+                ));
+              })}
+            </div>
+          )}
+          {!locked && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <select className="cx-select" style={{ fontSize: 12, width: 130 }} value={newMethod} onChange={(e) => setNewMethod(e.target.value)}>{PAYMENT_METHODS.filter((m) => m !== "كاش").map((m) => <option key={m} value={m}>{m}</option>)}</select>
+              <input className="cx-input" list="ledger-method-currency" placeholder="العملة" value={newMethodCur} onChange={(e) => setNewMethodCur(e.target.value.toUpperCase())} style={{ width: 80 }} />
+              <datalist id="ledger-method-currency">{COMMON_CURRENCIES.map((c) => <option key={c} value={c} />)}</datalist>
+              <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} disabled={!newMethod || !newMethodCur.trim()} onClick={() => onAddMethodTracking(newMethod, newMethodCur.trim())}><Plus size={13} /> متابعة عهدة {newMethod}</button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -145,6 +188,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   const [myShiftKey, setMyShiftKey] = useState(null);
   const [record, setRecord] = useState(null);
   const [prevClosing, setPrevClosing] = useState(null);
+  const [prevMethodClosing, setPrevMethodClosing] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const today = todayStr();
@@ -176,12 +220,12 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
         let rec = await getShiftRecord(today, sk);
         const prev = await getPrevShiftClosing(today, sk);
         if (!rec) {
-          const fresh = freshShiftRecord(today, sk, profile.name, profile.username, rooms, prev || undefined);
+          const fresh = freshShiftRecord(today, sk, profile.name, profile.username, rooms, prev?.cash || undefined, prev?.method || undefined);
           const created = await createShiftRecord(fresh);
           rec = created.data || fresh;
         }
         if (cancelled) return;
-        setMyShiftKey(sk); setRecord(rec); setPrevClosing(prev);
+        setMyShiftKey(sk); setRecord(rec); setPrevClosing(prev?.cash || null); setPrevMethodClosing(prev?.method || null);
       } else { setMyShiftKey(null); setRecord(null); }
       setLoading(false);
     })();
@@ -202,7 +246,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   async function getPrevShiftClosing(date, shiftKey) {
     const prev = prevShiftOf(date, shiftKey);
     const rec = await getShiftRecord(prev.date, prev.shiftKey);
-    if (rec && rec.closed) return rec.closingCash;
+    if (rec && rec.closed) return { cash: rec.closingCash, method: rec.methodClosing };
     return null;
   }
 
@@ -239,6 +283,11 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   function updateCafeteria(patch) { persist({ ...record, cafeteria: { ...record.cafeteria, ...patch } }, { silent: true }); }
   function updateHandover(cur, val) { persist({ ...record, handover: { ...record.handover, [cur]: Number(val) || 0 } }, { silent: true }); }
   function addCurrency(cur) { if (!cur || record.handover?.[cur] != null) return; persist({ ...record, handover: { ...record.handover, [cur]: 0 } }, { silent: true, immediate: true }); }
+  function updateMethodHandover(method, cur, val) { persist({ ...record, methodHandover: { ...record.methodHandover, [method]: { ...(record.methodHandover?.[method] || {}), [cur]: Number(val) || 0 } } }, { silent: true }); }
+  function addMethodTracking(method, cur) {
+    if (!method || !cur || record.methodHandover?.[method]?.[cur] != null) return;
+    persist({ ...record, methodHandover: { ...record.methodHandover, [method]: { ...(record.methodHandover?.[method] || {}), [cur]: 0 } } }, { silent: true, immediate: true });
+  }
 
   const totals = record ? computeShiftTotals(record) : null;
   const locked = !record || record.closed || !perms.editLedger;
@@ -291,7 +340,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
               </div>
               <textarea className="cx-textarea" rows={2} placeholder="ملاحظات الشيفت" disabled={locked} value={record.shiftNotes} onChange={(e) => persist({ ...record, shiftNotes: e.target.value }, { silent: true })} />
             </div>
-            <ShiftSummaryFooter record={record} totals={totals} locked={locked} onChangeHandover={updateHandover} onAddCurrency={addCurrency} prevClosing={prevClosing} />
+            <ShiftSummaryFooter record={record} totals={totals} locked={locked} onChangeHandover={updateHandover} onAddCurrency={addCurrency} prevClosing={prevClosing} onChangeMethodHandover={updateMethodHandover} onAddMethodTracking={addMethodTracking} prevMethodClosing={prevMethodClosing} />
             <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {!record.closed && perms.closeShift && <button className="cx-btn cx-btn-gold" onClick={closeShift}><Lock size={14} /> إقفال الشيفت</button>}
               {record.closed && <span style={{ fontSize: 12, color: "var(--muted)" }}>أُقفل بواسطة {record.closedBy} في {new Date(record.closedAt).toLocaleString("ar-EG")} — الشيفت ده خلص ومش هتقدر ترجعله تاني</span>}
@@ -308,7 +357,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
             <>
               <button className="cx-btn cx-btn-outline cx-no-print" style={{ marginBottom: 10 }} onClick={() => exportCSV(histRecord)}><Download size={13} /> CSV</button>
               <LedgerTable record={histRecord} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
-              <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} />
+              <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
             </>
           )}
