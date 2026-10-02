@@ -4,7 +4,7 @@ import { TwoStepButton, PaymentDetailsInline, downloadCSV } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, onlineNetAmount } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid } from "../domain/dates";
 import { BOOKING_SOURCES, BOOKING_STATUSES } from "../domain/constants";
-import { roomsOverlap, findOverlappingBooking } from "../domain/bookingLogic";
+import { roomsOverlap, findOverlappingBooking, resolveDuplicateCheckin } from "../domain/bookingLogic";
 
 function emptyBooking() {
   return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", amountTendered: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", settled: false, notes: "", imported: false, needsRoomReview: false, duplicateConfirmed: false };
@@ -48,14 +48,23 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
     if (moneyLocked && originalBooking) {
       cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: originalBooking.totalRoom, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails, amountPaid: originalBooking.amountPaid, amountTendered: originalBooking.amountTendered, settled: originalBooking.settled };
     }
-    // "تسكين مكرر": الضيف القديم خرج بدري. قبل ما نحفظ الحجز الجديد، نقصّر
-    // تاريخ خروج الحجز القديم لحد تاريخ دخول الحجز الجديد - عشان مايفضلش
-    // تعارض حقيقي في التواريخ يرفضه قيد منع الحجز المزدوج في قاعدة البيانات.
+    // "تسكين مكرر": الضيف القديم خرج بدري. قبل ما نحفظ الحجز الجديد، نتعامل
+    // مع الحجز القديم المتعارض بطريقتين حسب تواريخه:
+    // - لو الحجز القديم بدأ قبل الجديد: نقصّر تاريخ خروجه لحد تاريخ دخول
+    //   الجديد (الضيف خرج بدري فعلاً فالليالي اللي بعد كده معندوش معنى).
+    // - لو الحجز القديم بيبدأ في نفس يوم الجديد أو بعده: تقصيره هيخلي
+    //   checkout = checkin (أو أقل)، وده قيد ممنوع في قاعدة البيانات
+    //   (bookings_dates_valid). في الحالة دي الحجز القديم بقى متجاوَز بالكامل
+    //   بالحجز الجديد، فبنلغيه بدل ما نجيب تاريخ غير صالح.
     if (conflict && form.duplicateConfirmed) {
       const clash = findOverlappingBooking(bookings, cleaned.room, cleaned.checkin, cleaned.checkout, cleaned.id);
-      if (clash && clash.checkin <= cleaned.checkin) {
-        const trimRes = await onUpdateBooking(clash.id, { ...clash, checkout: cleaned.checkin });
+      const resolution = resolveDuplicateCheckin(clash, cleaned.checkin);
+      if (resolution?.action === "trim") {
+        const trimRes = await onUpdateBooking(clash.id, { ...clash, checkout: resolution.checkout });
         if (trimRes?.error) { showToast("تعذر تقصير الحجز القديم: " + trimRes.error); return; }
+      } else if (resolution?.action === "cancel") {
+        const cancelRes = await onUpdateBooking(clash.id, { ...clash, status: "ملغي", notes: (clash.notes ? clash.notes + " — " : "") + "أُلغي تلقائيًا: تسكين مكرر جديد لنفس الغرفة" });
+        if (cancelRes?.error) { showToast("تعذر إلغاء الحجز القديم المتعارض: " + cancelRes.error); return; }
       }
     }
     const res = isExistingBooking ? await onUpdateBooking(cleaned.id, cleaned) : await onInsertBooking(cleaned);

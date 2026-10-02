@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
-import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, COMMON_CURRENCIES, ONLINE_METHODS } from "../domain/money";
+import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, COMMON_CURRENCIES, ONLINE_METHODS, PAYMENT_METHODS } from "../domain/money";
 import { todayStr, nightsBetween } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_BOOKING, roomFloor } from "../domain/constants";
 import { computeRoomStatus } from "../domain/bookingLogic";
@@ -12,6 +12,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
   const [selected, setSelected] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [extrasDraft, setExtrasDraft] = useState(null);
+  const [collectMethod, setCollectMethod] = useState("كاش");
   const date = todayStr();
   const room = rooms.find((r) => r.number === selected);
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date) : null;
@@ -19,6 +20,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
 
   useEffect(() => { if (room) { setEditType(room.type); setEditPrice(room.price); setEditCurrency(room.currency); setEditCapacity(room.capacity || 2); setEditBeds(room.beds || ""); setEditMode(false); } }, [selected]);
   useEffect(() => { if (status?.booking) setExtrasDraft({ laundry: status.booking.extras?.laundry || "", cafeteria: status.booking.extras?.cafeteria || "", tours: status.booking.extras?.tours || "", pickup: status.booking.extras?.pickup || "" }); else setExtrasDraft(null); }, [selected, status?.booking?.id]);
+  useEffect(() => { if (status?.booking) setCollectMethod(status.booking.paymentMethod || "كاش"); }, [selected, status?.booking?.id]);
 
   useEffect(() => {
     (async () => {
@@ -49,11 +51,22 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
     if (res?.error) { showToast(res.error); return; }
     onLog(`تعديل بيانات الغرفة ${selected}`); setEditMode(false); showToast("تم حفظ بيانات الغرفة");
   }
-  async function toggleSettled(booking, value) {
-    const res = await onToggleSettled(booking, value);
+  // تسجيل تحصيل كامل المبلغ لازم يسجل طريقة الدفع الفعلية (فيزا/انستاباي/
+  // فودافون كاش/تحويل بنكي...) مش بس يعلّم "متحصّل" - عشان التقرير يقدر
+  // يحسب كل طريقة دفع صح، فبنحدّث amountPaid وطريقة الدفع مع علامة التحصيل
+  // في تحديث واحد بدل ما نسيب طريقة الدفع زي ما كانت وقت إنشاء الحجز.
+  async function collectFullPayment(booking) {
+    const gt = bookingGrandTotal(booking);
+    const res = await onUpdateBooking(booking.id, { ...booking, paymentMethod: collectMethod, amountPaid: gt, settled: true });
     if (res?.error) { showToast(res.error); return; }
-    onLog(`${value ? "تحصيل" : "إلغاء تحصيل"} كامل مبلغ الحجز - غرفة ${booking.room} - ${booking.guestName}`);
-    showToast(value ? "تم تسجيل التحصيل الكامل" : "تم إلغاء علامة التحصيل");
+    onLog(`تحصيل كامل مبلغ الحجز (${collectMethod}) - غرفة ${booking.room} - ${booking.guestName}`);
+    showToast("تم تسجيل التحصيل الكامل");
+  }
+  async function undoSettled(booking) {
+    const res = await onToggleSettled(booking, false);
+    if (res?.error) { showToast(res.error); return; }
+    onLog(`إلغاء تحصيل كامل مبلغ الحجز - غرفة ${booking.room} - ${booking.guestName}`);
+    showToast("تم إلغاء علامة التحصيل");
   }
   async function saveExtras(booking) {
     const res = await onUpdateBooking(booking.id, { ...booking, extras: extrasDraft });
@@ -149,13 +162,14 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
                 </div>
               )}
               {b.earlyCheckin?.applied && b.earlyCheckin.note && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر: {b.earlyCheckin.note}</div>}
-              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 {perms.markPaymentReceived && !b.paymentDetails?.onlinePaid && (
                   status.paid ? (
-                    <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => toggleSettled(b, false)}>إلغاء علامة "متحصّل بالكامل"</button>
-                  ) : (
-                    <button className="cx-btn cx-btn-gold" style={{ fontSize: 12 }} onClick={() => toggleSettled(b, true)}><Check size={13} /> تسجيل تحصيل كامل المبلغ</button>
-                  )
+                    <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => undoSettled(b)}>إلغاء علامة "متحصّل بالكامل"</button>
+                  ) : (<>
+                    <select className="cx-select" style={{ fontSize: 12, width: 120 }} value={collectMethod} onChange={(e) => setCollectMethod(e.target.value)}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                    <button className="cx-btn cx-btn-gold" style={{ fontSize: 12 }} onClick={() => collectFullPayment(b)}><Check size={13} /> تسجيل تحصيل كامل المبلغ</button>
+                  </>)
                 )}
                 {perms.editBookings && onEditBooking && <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => onEditBooking(b.id)}><Pencil size={13} /> تعديل تفاصيل الحجز</button>}
               </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, onlineNetAmount, emptyPaymentDetails, DEFAULT_ONLINE_COMMISSION_PCT } from "../domain/money";
+import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, onlineNetAmount, emptyPaymentDetails, directBookingPaymentsByMethod, DEFAULT_ONLINE_COMMISSION_PCT } from "../domain/money";
 
 describe("computeShiftTotals", () => {
   it("separates EGP and USD totals correctly", () => {
@@ -96,6 +96,51 @@ describe("onlineNetAmount (حجوزات أونلاين - السعر بالعمو
   });
   it("handles a 100% commission (net is zero)", () => {
     expect(onlineNetAmount(500, 100)).toBe(0);
+  });
+});
+
+describe("directBookingPaymentsByMethod (تحصيل الحجوزات بطرق الدفع غير الكاش - كان مفقود من التقرير)", () => {
+  it("counts a Visa payment on a booking by method and currency", () => {
+    const bookings = [{ id: "b1", paymentMethod: "فيزا", currency: "EGP", amountPaid: 1500 }];
+    const result = directBookingPaymentsByMethod(bookings);
+    expect(result["فيزا"].EGP).toBe(1500);
+  });
+
+  it("sums multiple bookings paid with the same method and currency", () => {
+    const bookings = [
+      { id: "b1", paymentMethod: "انستاباي", currency: "EGP", amountPaid: 500 },
+      { id: "b2", paymentMethod: "انستاباي", currency: "EGP", amountPaid: 300 },
+    ];
+    const result = directBookingPaymentsByMethod(bookings);
+    expect(result["انستاباي"].EGP).toBe(800);
+  });
+
+  it("keeps different methods and currencies separate", () => {
+    const bookings = [
+      { id: "b1", paymentMethod: "فودافون كاش", currency: "EGP", amountPaid: 200 },
+      { id: "b2", paymentMethod: "تحويل بنكي", currency: "USD", amountPaid: 50 },
+    ];
+    const result = directBookingPaymentsByMethod(bookings);
+    expect(result["فودافون كاش"].EGP).toBe(200);
+    expect(result["تحويل بنكي"].USD).toBe(50);
+  });
+
+  it("excludes cash payments (tracked separately via the shift drawer ledger)", () => {
+    const bookings = [{ id: "b1", paymentMethod: "كاش", currency: "EGP", amountPaid: 1000 }];
+    const result = directBookingPaymentsByMethod(bookings);
+    expect(result["كاش"]).toBeUndefined();
+  });
+
+  it("excludes online-paid bookings (reported separately in the online section)", () => {
+    const bookings = [{ id: "b1", paymentMethod: "فيزا", currency: "EGP", amountPaid: 1000, paymentDetails: { onlinePaid: true } }];
+    const result = directBookingPaymentsByMethod(bookings);
+    expect(result["فيزا"]).toBeUndefined();
+  });
+
+  it("ignores bookings with no amount actually paid yet", () => {
+    const bookings = [{ id: "b1", paymentMethod: "فيزا", currency: "EGP", amountPaid: 0 }];
+    const result = directBookingPaymentsByMethod(bookings);
+    expect(result["فيزا"]).toBeUndefined();
   });
 });
 

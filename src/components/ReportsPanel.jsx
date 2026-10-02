@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Download, Printer } from "lucide-react";
 import { downloadCSV } from "./shared";
-import { emptyMoney, computeShiftTotals, bookingGrandTotal, onlineNetAmount, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
+import { emptyMoney, computeShiftTotals, bookingGrandTotal, onlineNetAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
 import { todayStr, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getShiftRecord } from "../data/shifts";
@@ -42,6 +42,7 @@ function aggregateBookings(bookings, fromDate, toDate) {
   const toDate2 = addDays(toDate, 1);
   const inRange = bookings.filter((b) => b.status !== "ملغي" && b.checkin < toDate2 && b.checkout > fromDate);
   const onlineBookings = inRange.filter((b) => b.paymentDetails?.onlinePaid);
+  const directBookings = inRange.filter((b) => !b.paymentDetails?.onlinePaid);
   const grossRevenue = emptyMoney(); const netRevenue = emptyMoney();
   const items = [];
   onlineBookings.forEach((b) => {
@@ -52,9 +53,14 @@ function aggregateBookings(bookings, fromDate, toDate) {
     netRevenue[b.currency] = (netRevenue[b.currency] || 0) + net;
     items.push({ id: b.id, room: b.room, guestName: b.guestName, checkin: b.checkin, checkout: b.checkout, currency: b.currency, gross, net, commissionPct, paymentDetails: b.paymentDetails });
   });
+  // تحصيل الحجوزات اللي اتدفعت مباشر (مش أونلاين) حسب طريقة الدفع - دي
+  // المبالغ اللي بتتسجل وقت "تسجيل تحصيل" على الحجز نفسه (فيزا/انستاباي/
+  // فودافون كاش/تحويل بنكي...) ومش بتمر على يومية الشيفت، فلازم تتجمع هنا
+  // عشان تظهر في التقرير.
+  const byMethodCurrency = directBookingPaymentsByMethod(directBookings);
   const outstanding = [];
   inRange.forEach((b) => { const gt = bookingGrandTotal(b); const due = gt - (Number(b.amountPaid) || 0); if (due > 0) outstanding.push({ ...b, due }); });
-  return { count: onlineBookings.length, totalCount: inRange.length, grossRevenue, netRevenue, items, outstanding };
+  return { count: onlineBookings.length, totalCount: inRange.length, grossRevenue, netRevenue, items, outstanding, byMethodCurrency };
 }
 
 export function ReportsPanel({ rooms, bookings, dataVersion }) {
@@ -83,7 +89,26 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
 
   const agg = useMemo(() => aggregateShifts(records), [records]);
   const bAgg = useMemo(() => aggregateBookings(bookings, effFrom, effTo), [bookings, effFrom, effTo]);
-  const reportCurrencies = useMemo(() => currencyKeysOf(agg.totalCollections, agg.totalExpenses, agg.netCash), [agg]);
+  // دمج تحصيل اليومية (كاش غالبًا) مع تحصيل الحجوزات المباشر بطرق الدفع
+  // التانية (فيزا/انستاباي/فودافون كاش/تحويل بنكي...) عشان "التحصيل حسب
+  // طريقة الدفع" و"إجمالي التحصيل" يعكسوا الصورة الحقيقية كاملة.
+  const combinedByMethodCurrency = useMemo(() => {
+    const out = {};
+    Object.entries(agg.byMethodCurrency).forEach(([m, obj]) => { out[m] = { ...obj }; });
+    Object.entries(bAgg.byMethodCurrency).forEach(([m, obj]) => {
+      out[m] = out[m] || {};
+      Object.entries(obj).forEach(([c, v]) => { out[m][c] = (out[m][c] || 0) + v; });
+    });
+    return out;
+  }, [agg, bAgg]);
+  const combinedTotalCollections = useMemo(() => {
+    const out = { ...agg.totalCollections };
+    Object.values(bAgg.byMethodCurrency).forEach((obj) => {
+      currencyKeysOf(obj).forEach((c) => { out[c] = (out[c] || 0) + (obj[c] || 0); });
+    });
+    return out;
+  }, [agg, bAgg]);
+  const reportCurrencies = useMemo(() => currencyKeysOf(agg.totalCollections, agg.totalExpenses, agg.netCash, combinedTotalCollections), [agg, combinedTotalCollections]);
   const daySpan = Math.max(1, nightsBetween(effFrom, effTo) + 1);
   const avgOccupancy = useMemo(() => {
     let sum = 0, d = effFrom, n = 0;
@@ -96,7 +121,9 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
   function buildSummaryText() {
     let txt = `تقرير فندق Calma\n${rangeMode === "day" ? `${arabicWeekday(date)} ${arabicDateLong(date)}` : `من ${fromDate} إلى ${toDate}`}\n\n`;
     if (rangeMode === "day") { SHIFTS.forEach((s) => { const r = dayRecords[s.key]; if (!r) { txt += `${s.label}: لا يوجد سجل\n`; return; } const t = r.closed ? r : computeShiftTotals(r); txt += `${s.label} (${r.staffName}) — ${r.closed ? "مقفول" : "مفتوح"}\nتحصيل: ${moneyLine(t.totalCollections)} | مصاريف: ${moneyLine(t.totalExpenses)} | رصيد الخزينة: ${moneyLine(t.closingCash)}\n`; if (r.flagged) txt += `تنبيه متابعة: ${r.shiftNotes || "—"}\n`; txt += `\n`; }); }
-    txt += `إجمالي التحصيل: ${moneyLine(agg.totalCollections)}\nإجمالي المصاريف: ${moneyLine(agg.totalExpenses)}\nصافي النقدية: ${moneyLine(agg.netCash)}\nإيراد الحجوزات الأونلاين (بالعمولة): ${moneyLine(bAgg.netRevenue)}\nنسبة الإشغال: ${avgOccupancy}%`;
+    txt += `إجمالي التحصيل: ${moneyLine(combinedTotalCollections)}\nإجمالي المصاريف: ${moneyLine(agg.totalExpenses)}\nصافي النقدية (الدرج): ${moneyLine(agg.netCash)}\n`;
+    PAYMENT_METHODS.forEach((m) => { const obj = combinedByMethodCurrency[m]; if (obj && currencyKeysOf(obj).length) txt += `  - ${m}: ${moneyLine(obj)}\n`; });
+    txt += `إيراد الحجوزات الأونلاين (بالعمولة): ${moneyLine(bAgg.netRevenue)}\nنسبة الإشغال: ${avgOccupancy}%`;
     return txt;
   }
   async function copySummary() { const t = buildSummaryText(); setCopyText(t); try { await navigator.clipboard.writeText(t); } catch (e) {} }
@@ -140,15 +167,16 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
           )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 14 }}>
-            <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي التحصيل</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(agg.totalCollections)}</div></div>
+            <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي التحصيل</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(combinedTotalCollections)}</div></div>
             <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي المصاريف</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(agg.totalExpenses)}</div></div>
-            <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>صافي النقدية</div><div style={{ fontWeight: 800, fontSize: 16, color: "var(--teal)" }}>{moneyLine(agg.netCash)}</div></div>
+            <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>صافي النقدية (الدرج)</div><div style={{ fontWeight: 800, fontSize: 16, color: "var(--teal)" }}>{moneyLine(agg.netCash)}</div></div>
             <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>متوسط نسبة الإشغال</div><div style={{ fontWeight: 800, fontSize: 20 }}>{avgOccupancy}%</div></div>
           </div>
 
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>التحصيل حسب طريقة الدفع والعملة</div>
-            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 12 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{PAYMENT_METHODS.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(agg.byMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>التحصيل حسب طريقة الدفع والعملة</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>الكاش من اليومية (درج الشيفت)، وباقي الطرق (فيزا/انستاباي/فودافون كاش/تحويل بنكي...) من المبالغ المسجَّلة على الحجوزات نفسها.</div>
+            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 12 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{PAYMENT_METHODS.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
           </div>
 
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>

@@ -39,3 +39,15 @@ export function roomsOverlap(bookings, room, checkin, checkout, excludeId) {
 export function findOverlappingBooking(bookings, room, checkin, checkout, excludeId) {
   return bookings.find((b) => b.id !== excludeId && b.room === room && b.status !== "ملغي" && !(checkout <= b.checkin || checkin >= b.checkout)) || null;
 }
+
+/* قرار "تسكين مكرر" بالنسبة للحجز القديم المتعارض (clash)، منفصل عن أي
+   استدعاء شبكة عشان يتختبر لوحده: لو الحجز القديم بدأ قبل الجديد فعلاً،
+   تقصير تاريخ خروجه لتاريخ دخول الجديد قيمة صالحة دايمًا (checkout > checkin
+   مضمونة). لكن لو الحجز القديم بيبدأ في نفس يوم الجديد أو بعده، تقصيره
+   هيطلّع تاريخ غير صالح (checkout <= checkin) يرفضه قيد bookings_dates_valid
+   في قاعدة البيانات - فبدل كده بنعتبره حجز اتجاوزه الجديد بالكامل ونلغيه. */
+export function resolveDuplicateCheckin(clash, newCheckin) {
+  if (!clash) return null;
+  if (clash.checkin < newCheckin) return { action: "trim", checkout: newCheckin };
+  return { action: "cancel" };
+}

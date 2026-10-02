@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeRoomStatus, roomsOverlap, isOverrideStillActive } from "../domain/bookingLogic";
+import { computeRoomStatus, roomsOverlap, findOverlappingBooking, resolveDuplicateCheckin, isOverrideStillActive } from "../domain/bookingLogic";
 
 function makeBooking(overrides = {}) {
   return {
@@ -79,5 +79,45 @@ describe("roomsOverlap", () => {
   });
   it("excludes the booking's own id when editing itself", () => {
     expect(roomsOverlap(existing, 601, "2026-09-05", "2026-09-07", "b1")).toBe(false);
+  });
+});
+
+describe("resolveDuplicateCheckin (early-checkout / duplicate check-in fix)", () => {
+  // هذا الاختبار يغطي باگ تحطيم الحجز القديم (constraint bookings_dates_valid)
+  // اللي كان بيحصل لما الضيف القديم يخرج بدري ويتسجل حجز جديد شرعي نفس اليوم.
+  it("trims the old booking's checkout when it genuinely started earlier", () => {
+    const clash = makeBooking({ checkin: "2026-09-05", checkout: "2026-09-10" });
+    const resolution = resolveDuplicateCheckin(clash, "2026-09-07");
+    expect(resolution).toEqual({ action: "trim", checkout: "2026-09-07" });
+  });
+
+  it("cancels the old booking instead of producing an invalid checkout<=checkin when both start the same day", () => {
+    // ده بالظبط السيناريو اللي كان بيرمي خطأ bookings_dates_valid: الحجز
+    // القديم بيبدأ في نفس يوم الحجز الجديد، فتقصيره كان هيخلي checkout==checkin.
+    const clash = makeBooking({ checkin: "2026-09-07", checkout: "2026-09-10" });
+    const resolution = resolveDuplicateCheckin(clash, "2026-09-07");
+    expect(resolution).toEqual({ action: "cancel" });
+  });
+
+  it("cancels the old booking when it starts after the new check-in", () => {
+    const clash = makeBooking({ checkin: "2026-09-08", checkout: "2026-09-10" });
+    const resolution = resolveDuplicateCheckin(clash, "2026-09-07");
+    expect(resolution).toEqual({ action: "cancel" });
+  });
+
+  it("returns null when there is no clashing booking", () => {
+    expect(resolveDuplicateCheckin(null, "2026-09-07")).toBe(null);
+  });
+});
+
+describe("findOverlappingBooking", () => {
+  it("returns the actual overlapping booking object, not just a boolean", () => {
+    const existing = [makeBooking({ id: "b1", checkin: "2026-09-05", checkout: "2026-09-10" })];
+    const found = findOverlappingBooking(existing, 601, "2026-09-07", "2026-09-12");
+    expect(found?.id).toBe("b1");
+  });
+  it("returns null when there is no overlap", () => {
+    const existing = [makeBooking({ id: "b1", checkin: "2026-09-05", checkout: "2026-09-07" })];
+    expect(findOverlappingBooking(existing, 601, "2026-09-07", "2026-09-09")).toBe(null);
   });
 });

@@ -76,6 +76,26 @@ export function computeShiftTotals(record) {
   return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash };
 }
 
+/* تحصيل الحجوزات اللي اتدفعت مباشر (مش أونلاين) حسب طريقة الدفع والعملة.
+   دي المبالغ اللي بتتسجل وقت "تسجيل تحصيل" على الحجز نفسه (فيزا/انستاباي/
+   فودافون كاش/تحويل بنكي...) ومش بتمر على يومية الشيفت أبدًا - فمن غير
+   الدالة دي كانت بتختفي من التقرير بالكامل. الكاش مستبعد عمدًا لأنه بيتسجل
+   من اليومية نفسها (تسوية درج الكاش الفعلي)، فمحسبوش هنا منعًا للتكرار. */
+export function directBookingPaymentsByMethod(bookings) {
+  const byMethodCurrency = {};
+  (bookings || []).forEach((b) => {
+    if (b.paymentDetails?.onlinePaid) return;
+    const paid = Number(b.amountPaid) || 0;
+    if (paid <= 0) return;
+    const method = b.paymentMethod || "كاش";
+    if (method === "كاش") return;
+    const cur = b.currency || "EGP";
+    byMethodCurrency[method] = byMethodCurrency[method] || emptyMoney();
+    byMethodCurrency[method][cur] = (byMethodCurrency[method][cur] || 0) + paid;
+  });
+  return byMethodCurrency;
+}
+
 export function bookingGrandTotal(b) {
   const extras = b.extras || {};
   const earlyFee = b.earlyCheckin?.applied ? Number(b.earlyCheckin.fee) || 0 : 0;
