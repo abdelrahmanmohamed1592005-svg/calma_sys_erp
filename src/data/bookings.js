@@ -10,6 +10,11 @@ function bookingFromRow(r) {
     amountPaid: Number(r.amount_paid) || 0, amountTendered: Number(r.amount_tendered) || 0,
     source: r.source, status: r.status, approvalStatus: r.approval_status, settled: !!r.settled, notes: r.notes || "",
     imported: !!r.imported, needsRoomReview: !!r.needs_room_review, createdAt: new Date(r.created_at).getTime(),
+    // createdBy بيبان في سجل النشاط/التدقيق مين أنشأ الحجز فعليًا (القيمة
+    // دي بتتملى تلقائيًا في قاعدة البيانات، مينفعش حد يزوّرها). updatedAt
+    // لازم عشان نقدر نمنع تعديلين في نفس اللحظة يبوّظوا بعض (انظر
+    // updateBookingIfUnchanged تحت).
+    createdBy: r.created_by || null, updatedAt: r.updated_at,
   };
 }
 
@@ -40,6 +45,24 @@ export async function insertBooking(booking) {
 export async function updateBooking(id, booking) {
   const { data, error } = await supabase.from("bookings").update(bookingToRow(booking)).eq("id", id).select().maybeSingle();
   if (error) return { error: error.message };
+  return { data: bookingFromRow(data) };
+}
+
+/* كتابة آمنة من التعارض - نفس أسلوب updateShiftRecordIfUnchanged بالظبط:
+   لو حد تاني (موظف تاني في نفس الشيفت، أو تاب تاني مفتوح) عدّل نفس الحجز
+   في نفس اللحظة، الـ updated_at هيكون اتغيّر، فشرط eq("updated_at", ...)
+   مش هيتحقق ومفيش صف هيتحدث - وده اكتشاف التعارض بدل ما نكتب فوق تعديل
+   حد تاني من غير ما حد يدري (مثلاً موظفة بتسجل تحصيل فيزا على غرفة في نفس
+   لحظة ما مدير الحجوزات بيعدّل رقم تليفون النزيل على نفس الحجز). */
+export async function updateBookingIfUnchanged(id, expectedUpdatedAt, booking) {
+  if (!expectedUpdatedAt) return updateBooking(id, booking);
+  const { data, error } = await supabase
+    .from("bookings")
+    .update(bookingToRow(booking))
+    .eq("id", id).eq("updated_at", expectedUpdatedAt)
+    .select().maybeSingle();
+  if (error) return { error: error.message };
+  if (!data) return { conflict: true };
   return { data: bookingFromRow(data) };
 }
 

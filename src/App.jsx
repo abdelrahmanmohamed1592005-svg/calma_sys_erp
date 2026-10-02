@@ -13,7 +13,7 @@ import { supabaseConfigured } from "./lib/supabaseClient";
 import { subscribeToAllChanges } from "./lib/realtime";
 import { signUpUser, signIn, signOut, getSession, onAuthStateChange, getMyProfile, listProfiles, checkSetupNeeded, changeOwnPassword as authChangeOwnPassword } from "./lib/auth";
 import { getRooms, getRoomOverrides, setRoomOverride, saveRoom } from "./data/rooms";
-import { getBookings, insertBooking, updateBooking, deleteBooking } from "./data/bookings";
+import { getBookings, insertBooking, updateBookingIfUnchanged, deleteBooking } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
 
 import { PERMISSIONS, ROOMS_DEFAULT } from "./domain/constants";
@@ -93,9 +93,18 @@ export default function App() {
 
   async function handleSaveOverride(roomNumber, status) { const res = await setRoomOverride(roomNumber, status, currentProfile?.username); if (!res.error) setOverrides((prev) => ({ ...prev, [roomNumber]: { status, updatedAt: Date.now() } })); return res; }
   async function handleSaveRoom(room) { const res = await saveRoom(room); if (!res.error) setRooms((prev) => prev.map((r) => (r.number === room.number ? { ...r, ...room } : r))); return res; }
-  async function handleToggleSettled(booking, value) { const res = await updateBooking(booking.id, { ...booking, settled: value }); if (res.data) setBookings((prev) => prev.map((b) => (b.id === booking.id ? res.data : b))); return res; }
+  // تعديل آمن من تعارض تعديلين في نفس اللحظة (زي اليومية بالظبط): لو حد
+  // عدّل نفس الحجز في نفس اللحظة، بنرجّع "تعارض" بدل ما نكتب فوق تعديله
+  // من غير ما حد يدري، وبنحدّث بيانات الشاشة من قاعدة البيانات تاني.
+  async function safeUpdateBooking(id, booking) {
+    const res = await updateBookingIfUnchanged(id, booking.updatedAt, booking);
+    if (res.conflict) { setDataVersion((v) => v + 1); return { error: "في حد عدّل نفس الحجز ده في نفس اللحظة - البيانات اتحدّثت، راجعي وجرّبي تاني" }; }
+    if (res.data) setBookings((prev) => prev.map((b) => (b.id === id ? res.data : b)));
+    return res;
+  }
+  async function handleToggleSettled(booking, value) { return safeUpdateBooking(booking.id, { ...booking, settled: value }); }
   async function handleInsertBooking(booking) { const res = await insertBooking(booking); if (res.data) setBookings((prev) => [res.data, ...prev]); return res; }
-  async function handleUpdateBooking(id, booking) { const res = await updateBooking(id, booking); if (res.data) setBookings((prev) => prev.map((b) => (b.id === id ? res.data : b))); return res; }
+  async function handleUpdateBooking(id, booking) { return safeUpdateBooking(id, booking); }
   async function handleDeleteBooking(id) { const res = await deleteBooking(id); if (!res.error) setBookings((prev) => prev.filter((b) => b.id !== id)); return res; }
 
   async function handleSetup({ name, username, pw }) {

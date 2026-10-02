@@ -44,7 +44,11 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
   async function saveBooking() {
     if (!form.room || !form.guestName.trim()) { showToast("لازم تحدد الغرفة واسم النزيل"); return; }
     if (conflict && !form.duplicateConfirmed) { showToast('الغرفة متعارضة مع حجز موجود - لو ده تسكين مكرر شرعي فعّل تأكيد "تسكين مكرر" تحت'); return; }
-    let cleaned = { ...form, room: Number(form.room), totalRoom: form.totalRoom !== "" ? Number(form.totalRoom) : autoTotalRoom, needsRoomReview: false, approvalStatus: "approved" };
+    // منع أي قيمة سالبة في الرسوم الإضافية/رسم الدخول المبكر من غير داعي
+    // تضرب قيد قاعدة البيانات وتطلّع رسالة خطأ تقنية مش مفهومة.
+    const clampedExtras = { laundry: Math.max(0, Number(form.extras.laundry) || 0), cafeteria: Math.max(0, Number(form.extras.cafeteria) || 0), tours: Math.max(0, Number(form.extras.tours) || 0), pickup: Math.max(0, Number(form.extras.pickup) || 0) };
+    const clampedEarlyCheckin = { ...form.earlyCheckin, fee: Math.max(0, Number(form.earlyCheckin?.fee) || 0) };
+    let cleaned = { ...form, room: Number(form.room), totalRoom: form.totalRoom !== "" ? Number(form.totalRoom) : autoTotalRoom, extras: clampedExtras, earlyCheckin: clampedEarlyCheckin, needsRoomReview: false, approvalStatus: "approved" };
     if (moneyLocked && originalBooking) {
       cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: originalBooking.totalRoom, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails, amountPaid: originalBooking.amountPaid, amountTendered: originalBooking.amountTendered, settled: originalBooking.settled };
     }
@@ -134,10 +138,10 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
           <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>رسوم إضافية {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(100px,1fr))", gap: 8 }}>
-              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.extras.laundry} onChange={(e) => setForm({ ...form, extras: { ...form.extras, laundry: e.target.value } })} /></div>
-              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.extras.cafeteria} onChange={(e) => setForm({ ...form, extras: { ...form.extras, cafeteria: e.target.value } })} /></div>
-              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.extras.tours} onChange={(e) => setForm({ ...form, extras: { ...form.extras, tours: e.target.value } })} /></div>
-              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.extras.pickup} onChange={(e) => setForm({ ...form, extras: { ...form.extras, pickup: e.target.value } })} /></div>
+              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" min="0" disabled={moneyLocked} value={form.extras.laundry} onChange={(e) => setForm({ ...form, extras: { ...form.extras, laundry: e.target.value } })} /></div>
+              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" min="0" disabled={moneyLocked} value={form.extras.cafeteria} onChange={(e) => setForm({ ...form, extras: { ...form.extras, cafeteria: e.target.value } })} /></div>
+              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" min="0" disabled={moneyLocked} value={form.extras.tours} onChange={(e) => setForm({ ...form, extras: { ...form.extras, tours: e.target.value } })} /></div>
+              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" min="0" disabled={moneyLocked} value={form.extras.pickup} onChange={(e) => setForm({ ...form, extras: { ...form.extras, pickup: e.target.value } })} /></div>
             </div>
           </div>
 
@@ -147,7 +151,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
             </label>
             {form.earlyCheckin?.applied && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رسم الدخول المبكر</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.earlyCheckin.fee} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, fee: e.target.value } })} /></div>
+                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رسم الدخول المبكر</label><input className="cx-input" type="number" min="0" disabled={moneyLocked} value={form.earlyCheckin.fee} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, fee: e.target.value } })} /></div>
                 <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر</label><input className="cx-input" disabled={moneyLocked} value={form.earlyCheckin.note} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, note: e.target.value } })} /></div>
               </div>
             )}

@@ -69,8 +69,12 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
     showToast("تم إلغاء علامة التحصيل");
   }
   async function saveExtras(booking) {
-    const res = await onUpdateBooking(booking.id, { ...booking, extras: extrasDraft });
+    // منع أي قيمة سالبة من غير داعي تضرب قيد قاعدة البيانات (bookings_extras_nonneg)
+    // وتطلّع رسالة خطأ تقنية مش مفهومة للموظف - بنمنعها من هنا الأول.
+    const clamped = { laundry: Math.max(0, Number(extrasDraft.laundry) || 0), cafeteria: Math.max(0, Number(extrasDraft.cafeteria) || 0), tours: Math.max(0, Number(extrasDraft.tours) || 0), pickup: Math.max(0, Number(extrasDraft.pickup) || 0) };
+    const res = await onUpdateBooking(booking.id, { ...booking, extras: clamped });
     if (res?.error) { showToast(res.error); return; }
+    setExtrasDraft(clamped);
     onLog(`تعديل الرسوم الإضافية - غرفة ${booking.room} - ${booking.guestName}`);
     showToast("تم حفظ الرسوم الإضافية");
   }
@@ -148,10 +152,10 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
                 <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
                   <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (تقدر تضيفها هنا على طول من غير ما تفتح الحجز كامل)</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
-                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
-                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
-                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" value={extrasDraft.tours} onChange={(e) => setExtrasDraft({ ...extrasDraft, tours: e.target.value })} /></div>
-                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" value={extrasDraft.pickup} onChange={(e) => setExtrasDraft({ ...extrasDraft, pickup: e.target.value })} /></div>
+                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" min="0" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
+                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" min="0" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
+                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" min="0" value={extrasDraft.tours} onChange={(e) => setExtrasDraft({ ...extrasDraft, tours: e.target.value })} /></div>
+                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" min="0" value={extrasDraft.pickup} onChange={(e) => setExtrasDraft({ ...extrasDraft, pickup: e.target.value })} /></div>
                   </div>
                   <button className="cx-btn cx-btn-gold" style={{ marginTop: 8, fontSize: 12 }} onClick={() => saveExtras(b)}><Check size={13} /> حفظ الرسوم</button>
                 </div>

@@ -321,11 +321,30 @@ returns boolean language sql security definer stable set search_path = public as
   );
 $$;
 
+-- دالتين جديدتين: هل الدور الحالي ستاف بالظبط، وهل هو ستاف أو مدير حجوزات
+-- (الدورين اللي فعليًا بيكتبوا على الحجوزات/حالة الغرف في التطبيق -
+-- راجعت PERMISSIONS في constants.js: accounts و gm عندهم canCreateBookings
+-- و editBookings و editRoomStatus و markPaymentReceived كلها false، يعني
+-- مفروض أصلاً ميقدروش يكتبوا على الجداول دي - كانت الصلاحية القديمة
+-- is_active_user() بتسمحلهم يعدّلوا مباشرة عن طريق الـ API من غير ما يمروا
+-- على الواجهة خالص، وده كان بيكسر فصل الصلاحيات اللي التطبيق بيوعد بيه)
+create or replace function is_staff()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and role = 'staff' and active = true);
+$$;
+
+create or replace function is_staff_or_reservations()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and role in ('staff','reservations') and active = true);
+$$;
+
 grant execute on function profiles_exist() to anon, authenticated;
 grant execute on function is_gm() to authenticated;
 grant execute on function is_active_user() to authenticated;
 grant execute on function can_manage_financials() to authenticated;
 grant execute on function is_reservations_manager() to authenticated;
+grant execute on function is_staff() to authenticated;
+grant execute on function is_staff_or_reservations() to authenticated;
 
 -- --------------------------------------------------------------------------
 -- 3) حماية آخر مدير عام نشط (اكتشفت من كود التطبيق إن UsersPanel.jsx بيسمح
@@ -459,6 +478,32 @@ do $$ begin
   );
 exception when duplicate_object then null; end $$;
 
+-- الشرط القديم على extras/early_checkin كان بيتأكد إن المفاتيح موجودة بس
+-- مش إن القيم مش سالبة - يعني موظف كان يقدر يكتب رقم سالب في "غسيل" مثلاً
+-- ويقلل إجمالي الحجز من غير ما حد يدري أو حاجة توقفه. لو فيه حجوزات قديمة
+-- فيها قيم سالبة فعلاً، القيد مش هيتضاف (NOTICE بدل ما يوقف باقي السكريبت)
+-- - راجعي الحجوزات دي يدويًا وصلّحيها ثم شغّلي الملف تاني.
+do $$ begin
+  alter table bookings add constraint bookings_extras_nonneg check (
+    coalesce((extras->>'laundry')::numeric, 0) >= 0 and
+    coalesce((extras->>'cafeteria')::numeric, 0) >= 0 and
+    coalesce((extras->>'tours')::numeric, 0) >= 0 and
+    coalesce((extras->>'pickup')::numeric, 0) >= 0
+  );
+exception
+  when duplicate_object then null;
+  when others then raise notice 'تعذر إضافة قيد منع الرسوم الإضافية السالبة - فيه حجوزات قديمة فيها قيمة سالبة. راجعيها يدويًا ثم شغّلي هذا الجزء تاني بمفرده.';
+end $$;
+
+do $$ begin
+  alter table bookings add constraint bookings_early_checkin_fee_nonneg check (
+    coalesce((early_checkin->>'fee')::numeric, 0) >= 0
+  );
+exception
+  when duplicate_object then null;
+  when others then raise notice 'تعذر إضافة قيد منع رسوم الدخول المبكر السالبة - فيه حجوزات قديمة فيها قيمة سالبة. راجعيها يدويًا ثم شغّلي هذا الجزء تاني بمفرده.';
+end $$;
+
 -- العملة بقت نص حر (مش بس EGP/USD) - القيد بس بيتأكد إنها كود معقول الطول
 alter table bookings drop constraint if exists bookings_currency_chk;
 do $$ begin
@@ -545,35 +590,49 @@ end $$;
 drop policy if exists "rooms write" on rooms;
 create policy "rooms write" on rooms for all using (is_reservations_manager()) with check (is_reservations_manager());
 
--- الحجوزات: الإضافة والتعديل لأي موظف نشط، لكن الحذف الفعلي لمدير الحجوزات بس
--- (ده اللي عنده editBookings=true فعليًا في التطبيق)
+-- الحجوزات: الإضافة والتعديل لستاف ومدير الحجوزات بس (دول الدورين اللي
+-- عندهم canCreateBookings/editBookings/markPaymentReceived = true فعليًا
+-- في constants.js) - مش أي مستخدم نشط زي ما كان قبل كده. الحذف لمدير
+-- الحجوزات بس زي ما هو.
 drop policy if exists "bookings write" on bookings;
 drop policy if exists "bookings insert" on bookings;
 drop policy if exists "bookings update" on bookings;
 drop policy if exists "bookings delete" on bookings;
-create policy "bookings insert" on bookings for insert with check (is_active_user());
-create policy "bookings update" on bookings for update using (is_active_user()) with check (is_active_user());
+create policy "bookings insert" on bookings for insert with check (is_staff_or_reservations());
+create policy "bookings update" on bookings for update using (is_staff_or_reservations()) with check (is_staff_or_reservations());
 create policy "bookings delete" on bookings for delete using (is_reservations_manager());
 
--- الشيفتات: نفس المنطق - التعديل لأي نشط (والتريجر بيمنع تعديل المقفول)، الحذف للمدير/الحسابات
+-- الشيفتات: الإنشاء (claim شيفت جديد) لستاف بس (ده اللي عنده editLedger=true
+-- فعليًا). التعديل: ستاف يقدر يعدّل أي شيفت (والتريجر الموجود أصلاً بيمنعه
+-- من تعديل شيفت مقفول)، والمدير العام/الحسابات ميقدروش يعدّلوا إلا شيفت
+-- *مقفول بالفعل* بس (تصحيح بعد الإقفال) - مش شيفت لسه شغال، عشان مايبقوش
+-- عندهم صلاحية فعلية أوسع من اللي موضحة في PERMISSIONS (editLedger=false
+-- للاتنين). الحذف للمدير/الحسابات زي ما هو.
 drop policy if exists "shifts write" on shift_records;
 drop policy if exists "shifts insert" on shift_records;
 drop policy if exists "shifts update" on shift_records;
 drop policy if exists "shifts delete" on shift_records;
-create policy "shifts insert" on shift_records for insert with check (is_active_user());
-create policy "shifts update" on shift_records for update using (is_active_user()) with check (is_active_user());
+create policy "shifts insert" on shift_records for insert with check (is_staff());
+create policy "shifts update" on shift_records for update using (is_staff() or (can_manage_financials() and closed = true)) with check (is_staff() or can_manage_financials());
 create policy "shifts delete" on shift_records for delete using (can_manage_financials());
 
--- اختيار الشيفتات: أي نشط يقدر يعمل claim، بس الحذف بس لصاحبه أو المدير العام
+-- اختيار الشيفتات: ستاف بس (ده اللي فعليًا بيدخل شاشة "شيفتي النهارده")،
+-- الحذف بس لصاحبه أو المدير العام
 drop policy if exists "claims write" on shift_claims;
 drop policy if exists "claims insert" on shift_claims;
 drop policy if exists "claims update" on shift_claims;
 drop policy if exists "claims delete" on shift_claims;
-create policy "claims insert" on shift_claims for insert with check (is_active_user());
+create policy "claims insert" on shift_claims for insert with check (is_staff());
 create policy "claims update" on shift_claims for update using (is_gm()) with check (is_gm());
 create policy "claims delete" on shift_claims for delete using (
   is_gm() or username = (select username from profiles where id = auth.uid())
 );
+
+-- حالة الغرف اليدوية (صيانة/تنظيف/غادر مبكرًا...): ستاف ومدير الحجوزات بس
+-- (ده اللي عنده editRoomStatus=true فعليًا) - كانت متاحة لأي مستخدم نشط
+-- بما فيهم المدير العام والحسابات اللي مفروض معندهمش الصلاحية دي أصلاً.
+drop policy if exists "overrides write" on room_overrides;
+create policy "overrides write" on room_overrides for all using (is_staff_or_reservations()) with check (is_staff_or_reservations());
 
 -- --------------------------------------------------------------------------
 -- 10) إعادة تفعيل البث اللحظي (لضمان بقاء الإعداد سليم بعد كل التعديلات)
