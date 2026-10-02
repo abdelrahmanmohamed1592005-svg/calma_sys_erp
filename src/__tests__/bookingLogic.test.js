@@ -27,10 +27,10 @@ describe("computeRoomStatus", () => {
     expect(status.key).toBe("occupied_unpaid");
   });
 
-  it("ignores pending (unapproved) bookings for occupied status", () => {
-    const booking = makeBooking({ approvalStatus: "pending" });
+  it("treats an online-paid booking as paid even if amountPaid is 0", () => {
+    const booking = makeBooking({ settled: false, amountPaid: 0, paymentDetails: { onlinePaid: true, commissionPct: 15 } });
     const status = computeRoomStatus(601, [booking], {}, "2026-09-06");
-    expect(status.key).toBe("pending_approval");
+    expect(status.key).toBe("occupied_paid");
   });
 
   it("shows reserved for a booking starting within the next 2 days", () => {

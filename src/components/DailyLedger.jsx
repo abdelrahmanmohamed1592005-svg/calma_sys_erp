@@ -1,11 +1,21 @@
-import React, { useState, useEffect } from "react";
-import { Lock, Unlock, AlertTriangle, Download, History } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Lock, Unlock, AlertTriangle, Download, History, Plus } from "lucide-react";
 import { downloadCSV } from "./shared";
-import { CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, EXPENSE_CATEGORIES, fmt, money, freshShiftRecord, computeShiftTotals } from "../domain/money";
+import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
 import { todayStr, arabicWeekday, defaultShiftForNow, prevShiftOf } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
 import { getShiftRecord, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow } from "../data/shifts";
+
+function CurrencyPicker({ value, onChange, disabled, width }) {
+  const listId = "ledger-currencies";
+  return (
+    <>
+      <input className="cx-input" list={listId} disabled={disabled} value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} style={{ width: width || 62 }} />
+      <datalist id={listId}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c} />)}</datalist>
+    </>
+  );
+}
 
 function LedgerTable({ record, locked, onUpdateRow, onUpdateCafeteria }) {
   return (
@@ -22,7 +32,7 @@ function LedgerTable({ record, locked, onUpdateRow, onUpdateCafeteria }) {
                   <input className="cx-input" placeholder="البيان" disabled={locked} value={row.expenseDesc} onChange={(e) => onUpdateRow(idx, { expenseDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
                     <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.expenseAmt} onChange={(e) => onUpdateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
-                    <select className="cx-select" disabled={locked} value={row.expenseCurrency} onChange={(e) => onUpdateRow(idx, { expenseCurrency: e.target.value })} style={{ width: 62 }}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    <CurrencyPicker value={row.expenseCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { expenseCurrency: v })} />
                   </div>
                 </div>
               </td>
@@ -32,7 +42,7 @@ function LedgerTable({ record, locked, onUpdateRow, onUpdateCafeteria }) {
                   <input className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={row.collectionDesc} onChange={(e) => onUpdateRow(idx, { collectionDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
                     <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.collectionAmt} onChange={(e) => onUpdateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
-                    <select className="cx-select" disabled={locked} value={row.collectionCurrency} onChange={(e) => onUpdateRow(idx, { collectionCurrency: e.target.value })} style={{ width: 62 }}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    <CurrencyPicker value={row.collectionCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { collectionCurrency: v })} />
                   </div>
                 </div>
               </td>
@@ -48,7 +58,7 @@ function LedgerTable({ record, locked, onUpdateRow, onUpdateCafeteria }) {
                 <input className="cx-input" placeholder="البيان" disabled={locked} value={record.cafeteria.expenseDesc} onChange={(e) => onUpdateCafeteria({ expenseDesc: e.target.value })} />
                 <div style={{ display: "flex", gap: 3 }}>
                   <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={record.cafeteria.expenseAmt} onChange={(e) => onUpdateCafeteria({ expenseAmt: e.target.value })} style={{ flex: 1 }} />
-                  <select className="cx-select" disabled={locked} value={record.cafeteria.expenseCurrency} onChange={(e) => onUpdateCafeteria({ expenseCurrency: e.target.value })} style={{ width: 62 }}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                  <CurrencyPicker value={record.cafeteria.expenseCurrency} disabled={locked} onChange={(v) => onUpdateCafeteria({ expenseCurrency: v })} />
                 </div>
               </div>
             </td>
@@ -58,7 +68,7 @@ function LedgerTable({ record, locked, onUpdateRow, onUpdateCafeteria }) {
                 <input className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={record.cafeteria.collectionDesc} onChange={(e) => onUpdateCafeteria({ collectionDesc: e.target.value })} />
                 <div style={{ display: "flex", gap: 3 }}>
                   <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={record.cafeteria.collectionAmt} onChange={(e) => onUpdateCafeteria({ collectionAmt: e.target.value })} style={{ flex: 1 }} />
-                  <select className="cx-select" disabled={locked} value={record.cafeteria.collectionCurrency} onChange={(e) => onUpdateCafeteria({ collectionCurrency: e.target.value })} style={{ width: 62 }}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                  <CurrencyPicker value={record.cafeteria.collectionCurrency} disabled={locked} onChange={(v) => onUpdateCafeteria({ collectionCurrency: v })} />
                 </div>
               </div>
             </td>
@@ -71,17 +81,19 @@ function LedgerTable({ record, locked, onUpdateRow, onUpdateCafeteria }) {
   );
 }
 
-function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, prevClosing }) {
+function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCurrency, prevClosing }) {
+  const [newCur, setNewCur] = useState("");
+  const activeCurrencies = currencyKeysOf(record.handover, totals.totalCollections, totals.totalExpenses, totals.closingCash);
   return (
     <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        {CURRENCIES.map((cur) => (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
+        {activeCurrencies.map((cur) => (
           <div key={cur} style={{ border: "1px solid var(--hair)", borderRadius: 10, padding: 10 }}>
-            <div style={{ fontWeight: 800, marginBottom: 8 }}>{CURRENCY_LABEL[cur]} ({cur})</div>
+            <div style={{ fontWeight: 800, marginBottom: 8 }}>{CURRENCY_LABEL[cur] || cur} ({cur})</div>
             <div style={{ marginBottom: 6 }}>
               <label style={{ fontSize: 11, color: "var(--muted)" }}>العهدة</label>
               <input className="cx-input" type="number" disabled={locked} value={record.handover?.[cur] ?? 0} onChange={(e) => onChangeHandover(cur, e.target.value)} />
-              {prevClosing && <div style={{ fontSize: 10, color: "var(--muted)" }}>مقترح: {money(prevClosing, cur)}</div>}
+              {prevClosing && prevClosing[cur] != null && <div style={{ fontSize: 10, color: "var(--muted)" }}>مقترح: {money(prevClosing, cur)}</div>}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12.5 }}>
               <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>إجمالي التحصيل</div><div style={{ fontWeight: 700 }}>{money(totals.totalCollections, cur)}</div></div>
@@ -92,6 +104,13 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, prevClos
           </div>
         ))}
       </div>
+      {!locked && (
+        <div style={{ marginTop: 12, display: "flex", gap: 6, alignItems: "center" }}>
+          <input className="cx-input" list="ledger-add-currency" placeholder="أضف عملة تانية (مثلاً EUR)" value={newCur} onChange={(e) => setNewCur(e.target.value.toUpperCase())} style={{ maxWidth: 180 }} />
+          <datalist id="ledger-add-currency">{COMMON_CURRENCIES.filter((c) => !activeCurrencies.includes(c)).map((c) => <option key={c} value={c} />)}</datalist>
+          <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} disabled={!newCur.trim()} onClick={() => { onAddCurrency(newCur.trim()); setNewCur(""); }}><Plus size={13} /> إضافة</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -133,6 +152,16 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   const [histShift, setHistShift] = useState(defaultShiftForNow());
   const [histRecord, setHistRecord] = useState(null);
 
+  // حل مشكلة "العداد بيهيس وأنا بكتب": كل كتابة كانت بتبعت save فوري
+  // للسيرفر، والـ realtime كان بيسمع صدى الحفظة دي ويعيد تحميل السجل من
+  // جديد فوق نفس اللي بتكتبيه لسه. الحل جزئين: (1) دلوقتي كل التعديلات
+  // بتتجمع محليًا وبتتبعت مرة واحدة للسيرفر بعد ما تسيبي الكتابة لحظة بسيطة
+  // (debounce)، (2) شاشة اليومية بتاعتك النهارده مابقتش بتعمل reload لنفسها
+  // كل ما التغيير ده يوصلها هي نفسها عن طريق الـ realtime.
+  const pendingRef = useRef(null);
+  const baseUpdatedAtRef = useRef(null);
+  const debounceTimer = useRef(null);
+
   useEffect(() => {
     if (mode !== "live") return;
     let cancelled = false;
@@ -157,7 +186,11 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [mode, refreshKey, dataVersion]);
+    // ملحوظة: عمدًا من غير dataVersion هنا - الشاشة دي بتحدّث نفسها من ردّ
+    // كل حفظة مباشرة، وإضافة dataVersion كانت بتخلي كل كتابة تعمل تحميل
+    // كامل من جديد فوق نفسها (ده كان سبب مشكلة "العداد بيهيس").
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, refreshKey]);
 
   useEffect(() => {
     if (mode !== "history") return;
@@ -182,29 +215,46 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     setRefreshKey((k) => k + 1);
   }
 
-  async function persist(next, { silent } = {}) {
-    const expected = record.updatedAt;
-    setRecord(next);
-    const res = await updateShiftRecordIfUnchanged(today, myShiftKey, expected, next);
+  // بتحدّث الشاشة فورًا (استجابة سريعة أثناء الكتابة)، لكن بتستنى شوية قبل
+  // ما تبعت للسيرفر فعليًا - فكتابة رقم من 3 خانات بتبعت مرة واحدة بس مش 3.
+  async function flushPending() {
+    const toSave = pendingRef.current;
+    const expected = baseUpdatedAtRef.current;
+    pendingRef.current = null; baseUpdatedAtRef.current = null;
+    if (!toSave) return;
+    const res = await updateShiftRecordIfUnchanged(today, myShiftKey, expected, toSave);
     if (res.conflict) { showToast("⚠ فيه تعديل حصل من مكان تاني على نفس الشيفت - جاري تحديث البيانات"); setRefreshKey((k) => k + 1); return; }
     if (res.error) { showToast(res.error); return; }
     setRecord(res.data);
-    if (!silent) showToast("تم الحفظ");
+  }
+  function persist(next, { silent, immediate } = {}) {
+    if (!pendingRef.current) baseUpdatedAtRef.current = record.updatedAt;
+    pendingRef.current = next;
+    setRecord(next);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    if (immediate) { flushPending(); if (!silent) showToast("تم الحفظ"); return; }
+    debounceTimer.current = setTimeout(flushPending, 700);
   }
   function updateRow(idx, patch) { const rows = record.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)); persist({ ...record, rows }, { silent: true }); }
   function updateCafeteria(patch) { persist({ ...record, cafeteria: { ...record.cafeteria, ...patch } }, { silent: true }); }
   function updateHandover(cur, val) { persist({ ...record, handover: { ...record.handover, [cur]: Number(val) || 0 } }, { silent: true }); }
+  function addCurrency(cur) { if (!cur || record.handover?.[cur] != null) return; persist({ ...record, handover: { ...record.handover, [cur]: 0 } }, { silent: true, immediate: true }); }
 
   const totals = record ? computeShiftTotals(record) : null;
   const locked = !record || record.closed || !perms.editLedger;
 
   async function closeShift() {
-    const t = computeShiftTotals(record);
-    const closedRecord = { ...record, closed: true, closedBy: profile.name, closedAt: Date.now(), ...t };
-    const res = await updateShiftRecordIfUnchanged(today, myShiftKey, record.updatedAt, closedRecord);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    const base = pendingRef.current || record;
+    const expected = pendingRef.current ? baseUpdatedAtRef.current : record.updatedAt;
+    pendingRef.current = null; baseUpdatedAtRef.current = null;
+    const t = computeShiftTotals(base);
+    const closedRecord = { ...base, closed: true, closedBy: profile.name, closedAt: Date.now(), ...t };
+    const res = await updateShiftRecordIfUnchanged(today, myShiftKey, expected, closedRecord);
     if (res.conflict) { showToast("⚠ فيه تعديل حصل من مكان تاني - جاري تحديث البيانات، جرّب تقفل تاني"); setRefreshKey((k) => k + 1); return; }
     if (res.error) { showToast(res.error); return; }
-    onLog(`أقفل ${SHIFTS.find((s) => s.key === myShiftKey)?.label} ليوم ${today} — رصيد الخزينة ${money(t.closingCash, "EGP")}ج / ${money(t.closingCash, "USD")}$`);
+    const summary = currencyKeysOf(t.closingCash).map((c) => `${money(t.closingCash, c)} ${c}`).join(" / ") || "0";
+    onLog(`أقفل ${SHIFTS.find((s) => s.key === myShiftKey)?.label} ليوم ${today} — رصيد الخزينة ${summary}`);
     setRefreshKey((k) => k + 1);
   }
 
@@ -236,12 +286,12 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
             <LedgerTable record={record} locked={locked} onUpdateRow={updateRow} onUpdateCafeteria={updateCafeteria} />
             <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <input type="checkbox" checked={record.flagged} disabled={locked} onChange={(e) => persist({ ...record, flagged: e.target.checked })} />
+                <input type="checkbox" checked={record.flagged} disabled={locked} onChange={(e) => persist({ ...record, flagged: e.target.checked }, { immediate: true })} />
                 <span style={{ fontSize: 13, fontWeight: 700, color: record.flagged ? "var(--rust)" : "var(--text)" }}><AlertTriangle size={13} style={{ verticalAlign: -2 }} /> فيه مشكلة تحتاج متابعة من المديرة/المدير العام</span>
               </div>
               <textarea className="cx-textarea" rows={2} placeholder="ملاحظات الشيفت" disabled={locked} value={record.shiftNotes} onChange={(e) => persist({ ...record, shiftNotes: e.target.value }, { silent: true })} />
             </div>
-            <ShiftSummaryFooter record={record} totals={totals} locked={locked} onChangeHandover={updateHandover} prevClosing={prevClosing} />
+            <ShiftSummaryFooter record={record} totals={totals} locked={locked} onChangeHandover={updateHandover} onAddCurrency={addCurrency} prevClosing={prevClosing} />
             <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {!record.closed && perms.closeShift && <button className="cx-btn cx-btn-gold" onClick={closeShift}><Lock size={14} /> إقفال الشيفت</button>}
               {record.closed && <span style={{ fontSize: 12, color: "var(--muted)" }}>أُقفل بواسطة {record.closedBy} في {new Date(record.closedAt).toLocaleString("ar-EG")} — الشيفت ده خلص ومش هتقدر ترجعله تاني</span>}
@@ -258,7 +308,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
             <>
               <button className="cx-btn cx-btn-outline cx-no-print" style={{ marginBottom: 10 }} onClick={() => exportCSV(histRecord)}><Download size={13} /> CSV</button>
               <LedgerTable record={histRecord} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
-              <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} prevClosing={null} />
+              <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
             </>
           )}

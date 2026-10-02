@@ -23,7 +23,7 @@ describe("computeShiftTotals", () => {
 
     const totals = computeShiftTotals(record);
     expect(totals.totalCollections.EGP).toBe(2000);
-    expect(totals.cashCollections.EGP).toBe(0);
+    expect(totals.cashCollections.EGP || 0).toBe(0); // مفيش تحصيل كاش خالص، فمفتاح EGP مش هيتسجل أصلاً (سلوك ديناميكي مقصود)
     expect(totals.closingCash.EGP).toBe(0); // مفيش نقدية فعلية دخلت الدرج
   });
 
@@ -63,6 +63,21 @@ describe("bookingGrandTotal", () => {
 
   it("handles a booking with no extras object at all", () => {
     expect(bookingGrandTotal({ totalRoom: 50 })).toBe(50);
+  });
+});
+
+describe("computeShiftTotals - عملات غير EGP/USD (كانت باگ قبل كده)", () => {
+  it("tracks a currency like EUR correctly end-to-end, not just EGP/USD", () => {
+    const rooms = [{ number: 601 }];
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EUR: 100 });
+    record.rows[0] = { ...record.rows[0], collectionAmt: "40", collectionCurrency: "EUR", collectionMethod: "كاش" };
+    const totals = computeShiftTotals(record);
+    expect(totals.totalCollections.EUR).toBe(40);
+    expect(totals.cashCollections.EUR).toBe(40);
+    expect(totals.closingCash.EUR).toBe(140); // 100 عهدة + 40 كاش
+    // ومفيش حاجة اتسجلت غلط في EGP/USD من غير داعي
+    expect(totals.closingCash.EGP).toBeUndefined();
+    expect(totals.closingCash.USD).toBeUndefined();
   });
 });
 

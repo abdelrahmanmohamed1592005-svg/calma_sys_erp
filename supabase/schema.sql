@@ -459,8 +459,10 @@ do $$ begin
   );
 exception when duplicate_object then null; end $$;
 
+-- العملة بقت نص حر (مش بس EGP/USD) - القيد بس بيتأكد إنها كود معقول الطول
+alter table bookings drop constraint if exists bookings_currency_chk;
 do $$ begin
-  alter table bookings add constraint bookings_currency_chk check (currency in ('USD','EGP'));
+  alter table bookings add constraint bookings_currency_chk check (char_length(currency) between 1 and 10);
 exception when duplicate_object then null; end $$;
 
 do $$ begin
@@ -492,15 +494,14 @@ do $$ begin
   alter table rooms add constraint rooms_capacity_positive check (capacity > 0);
 exception when duplicate_object then null; end $$;
 
+alter table rooms drop constraint if exists rooms_currency_chk;
 do $$ begin
-  alter table rooms add constraint rooms_currency_chk check (currency in ('USD','EGP'));
+  alter table rooms add constraint rooms_currency_chk check (char_length(currency) between 1 and 10);
 exception when duplicate_object then null; end $$;
 
-do $$ begin
-  alter table shift_records add constraint shift_handover_shape check (
-    handover ?& array['EGP','USD']
-  );
-exception when duplicate_object then null; end $$;
+-- العهدة (handover) بقت ممكن تتسجل بأي عملة، مش لازم تكون فيها EGP/USD
+-- بالتحديد - شيلنا الشرط القديم اللي كان بيجبرها تبقى فيها الاتنين دول بس
+alter table shift_records drop constraint if exists shift_handover_shape;
 
 -- --------------------------------------------------------------------------
 -- 8) منع الحجز المزدوج لنفس الغرفة في تواريخ متداخلة

@@ -13,13 +13,13 @@ export const ROLES = [
 
 export const TAB_LABELS = { board: "لوحة الغرف", ledger: "اليومية", bookings: "الحجوزات", reports: "التقارير", activity: "سجل الحركة", users: "إدارة المستخدمين" };
 
-/* staff: يشتغل باليومية والحجوزات (عرض + إضافة حجز مباشر يستنى موافقة مدير الحجوزات) وحالة الغرف (بقيود).
+/* staff: يشتغل باليومية والحجوزات (عرض + إضافة حجز مباشر) وحالة الغرف (بقيود).
    كل حاجة باينة للمدير العام باينة كمان لمديرة الحسابات ومدير الحجوزات - عرض بس، غير الصلاحيات المحددة لكل دور. */
 export const PERMISSIONS = {
-  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, canApproveBookings: false, editRoomStatus: true, roomStatusRestricted: true, editRoomConfig: false, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true },
-  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, canApproveBookings: true, editRoomStatus: true, roomStatusRestricted: false, editRoomConfig: true, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: true },
-  accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, canApproveBookings: false, editRoomStatus: false, roomStatusRestricted: false, editRoomConfig: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false },
-  gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, canApproveBookings: false, editRoomStatus: false, roomStatusRestricted: false, editRoomConfig: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false },
+  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, editRoomConfig: false, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true },
+  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, editRoomConfig: true, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: true },
+  accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, editRoomConfig: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false },
+  gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, editRoomConfig: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false },
 };
 
 export const BOOKING_SOURCES = ["مباشر", "Booking.com", "Trip.com", "Airbnb", "وسيط"];
@@ -34,7 +34,7 @@ export const MANUAL_STATUS_OPTIONS = [
 ];
 export const STAFF_ALLOWED_ON_ACTIVE_BOOKING = ["early_checkout"];
 
-export const STATUS_COLORS = { available: "var(--sage)", occupied_paid: "var(--teal)", occupied_unpaid: "var(--rust)", reserved: "var(--gold)", maintenance: "#8A8577", cleaning: "var(--slate)", early_checkout: "#C9702B", pending_approval: "#7A5FB5" };
+export const STATUS_COLORS = { available: "#2F7A4A", occupied_paid: "#1F4B4A", occupied_unpaid: "#B23B3B", reserved: "#6B4FA0", maintenance: "#6B5B4D", cleaning: "#2E6B9E", early_checkout: "#C9702B" };
 
 export const ROOMS_DEFAULT = [
   { number: 601, type: "غرفة مزدوجة - إطلالة داخلية", price: 50, currency: "USD", capacity: 2, beds: "سرير مزدوج" },

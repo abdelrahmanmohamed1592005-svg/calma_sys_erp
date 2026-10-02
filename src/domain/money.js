@@ -1,11 +1,19 @@
-export const CURRENCIES = ["EGP", "USD"];
-export const CURRENCY_LABEL = { EGP: "جنيه", USD: "دولار" };
+export const COMMON_CURRENCIES = ["EGP", "USD", "EUR", "SAR", "GBP"];
+export const CURRENCY_LABEL = { EGP: "جنيه", USD: "دولار", EUR: "يورو", SAR: "ريال سعودي", GBP: "جنيه إسترليني" };
 export const PAYMENT_METHODS = ["كاش", "فيزا", "انستاباي", "فودافون كاش", "تحويل بنكي"];
 export const ONLINE_METHODS = ["فيزا", "انستاباي", "فودافون كاش", "تحويل بنكي"];
 export const EXPENSE_CATEGORIES = ["كهرباء ومياه", "مشتريات ومطبخ", "صيانة", "مرتبات وحوافز", "نظافة", "أخرى"];
 export const DEFAULT_ONLINE_COMMISSION_PCT = 15;
 
-export const emptyMoney = () => ({ EGP: 0, USD: 0 });
+export const emptyMoney = () => ({});
+/* كل عملة اتسجل ليها أي مبلغ (عهدة/تحصيل/مصاريف) في أي مكان في السجل - مش
+   بس جنيه ودولار. بيتستخدم عشان نعرض كارت لكل عملة استُخدمت فعليًا بدل
+   عمودين ثابتين. */
+export function currencyKeysOf(...moneyObjects) {
+  const set = new Set();
+  moneyObjects.forEach((m) => { if (m && typeof m === "object") Object.keys(m).forEach((k) => { if (k) set.add(k); }); });
+  return Array.from(set).sort((a, b) => (a === "EGP" ? -1 : b === "EGP" ? 1 : a === "USD" ? -1 : b === "USD" ? 1 : a.localeCompare(b)));
+}
 export const emptyPaymentDetails = () => ({ senderName: "", senderNumber: "", ref: "", onlinePaid: false, commissionPct: DEFAULT_ONLINE_COMMISSION_PCT });
 export const emptyLedgerRow = (room) => ({
   room, expenseDesc: "", expenseAmt: "", expenseCategory: "أخرى", expenseCurrency: "EGP",
@@ -31,7 +39,7 @@ export function money(obj, cur) {
 
 export function freshShiftRecord(date, shiftKey, staffName, staffUsername, rooms, handover) {
   return {
-    date, shiftKey, staffName, staffUsername, handover: handover || emptyMoney(),
+    date, shiftKey, staffName, staffUsername, handover: (handover && Object.keys(handover).length > 0) ? handover : { EGP: 0 },
     rows: rooms.map((r) => emptyLedgerRow(r.number)),
     cafeteria: emptyLedgerRow("كافيتيريا"),
     shiftNotes: "", flagged: false, closed: false, closedBy: null, closedAt: null,
@@ -60,11 +68,11 @@ export function computeShiftTotals(record) {
       if (r.collectionMethod === "كاش") cashCollections[cur] = (cashCollections[cur] || 0) + col;
     }
   });
-  const handover = record.handover && typeof record.handover === "object" ? record.handover : { EGP: Number(record.handover) || 0, USD: 0 };
-  const closingCash = {
-    EGP: (handover.EGP || 0) + (cashCollections.EGP || 0) - (totalExpenses.EGP || 0),
-    USD: (handover.USD || 0) + (cashCollections.USD || 0) - (totalExpenses.USD || 0),
-  };
+  const handover = record.handover && typeof record.handover === "object" ? record.handover : { EGP: Number(record.handover) || 0 };
+  const closingCash = {};
+  currencyKeysOf(handover, cashCollections, totalExpenses).forEach((cur) => {
+    closingCash[cur] = (handover[cur] || 0) + (cashCollections[cur] || 0) - (totalExpenses[cur] || 0);
+  });
   return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash };
 }
 

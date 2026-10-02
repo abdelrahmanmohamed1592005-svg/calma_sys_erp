@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Pencil, Trash2, AlertTriangle, Check, Plus, Download, Lock } from "lucide-react";
 import { TwoStepButton, PaymentDetailsInline, downloadCSV } from "./shared";
-import { fmt, CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, onlineNetAmount } from "../domain/money";
+import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, onlineNetAmount } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid } from "../domain/dates";
 import { BOOKING_SOURCES, BOOKING_STATUSES } from "../domain/constants";
-import { roomsOverlap } from "../domain/bookingLogic";
+import { roomsOverlap, findOverlappingBooking } from "../domain/bookingLogic";
 
 function emptyBooking() {
   return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", amountTendered: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", settled: false, notes: "", imported: false, needsRoomReview: false, duplicateConfirmed: false };
@@ -29,7 +29,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
 
   const isExistingBooking = form ? bookings.some((b) => b.id === form.id) : false;
   const originalBooking = form && isExistingBooking ? bookings.find((b) => b.id === form.id) : null;
-  const moneyLocked = role === "reservations" && isExistingBooking && originalBooking?.approvalStatus !== "pending";
+  const moneyLocked = role === "reservations" && isExistingBooking;
 
   function onRoomChange(roomNum) { const r = rooms.find((x) => x.number === Number(roomNum)); setForm((f) => ({ ...f, room: Number(roomNum), priceNight: moneyLocked ? f.priceNight : (r ? r.price : f.priceNight), currency: moneyLocked ? f.currency : (r ? r.currency : f.currency) })); }
 
@@ -44,19 +44,26 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
   async function saveBooking() {
     if (!form.room || !form.guestName.trim()) { showToast("لازم تحدد الغرفة واسم النزيل"); return; }
     if (conflict && !form.duplicateConfirmed) { showToast('الغرفة متعارضة مع حجز موجود - لو ده تسكين مكرر شرعي فعّل تأكيد "تسكين مكرر" تحت'); return; }
-    let cleaned = { ...form, room: Number(form.room), totalRoom: form.totalRoom !== "" ? Number(form.totalRoom) : autoTotalRoom, needsRoomReview: false };
+    let cleaned = { ...form, room: Number(form.room), totalRoom: form.totalRoom !== "" ? Number(form.totalRoom) : autoTotalRoom, needsRoomReview: false, approvalStatus: "approved" };
     if (moneyLocked && originalBooking) {
       cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: originalBooking.totalRoom, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails, amountPaid: originalBooking.amountPaid, amountTendered: originalBooking.amountTendered, settled: originalBooking.settled };
     }
-    if (!isExistingBooking && role === "staff") cleaned.approvalStatus = "pending";
+    // "تسكين مكرر": الضيف القديم خرج بدري. قبل ما نحفظ الحجز الجديد، نقصّر
+    // تاريخ خروج الحجز القديم لحد تاريخ دخول الحجز الجديد - عشان مايفضلش
+    // تعارض حقيقي في التواريخ يرفضه قيد منع الحجز المزدوج في قاعدة البيانات.
+    if (conflict && form.duplicateConfirmed) {
+      const clash = findOverlappingBooking(bookings, cleaned.room, cleaned.checkin, cleaned.checkout, cleaned.id);
+      if (clash && clash.checkin <= cleaned.checkin) {
+        const trimRes = await onUpdateBooking(clash.id, { ...clash, checkout: cleaned.checkin });
+        if (trimRes?.error) { showToast("تعذر تقصير الحجز القديم: " + trimRes.error); return; }
+      }
+    }
     const res = isExistingBooking ? await onUpdateBooking(cleaned.id, cleaned) : await onInsertBooking(cleaned);
     if (res?.error) { showToast(res.error); return; }
-    onLog(`${isExistingBooking ? "تعديل" : "إضافة"} حجز غرفة ${cleaned.room} — ${cleaned.guestName}${conflict ? " (تسكين مكرر معتمد يدويًا)" : ""}${cleaned.approvalStatus === "pending" ? " - بانتظار موافقة مدير الحجوزات" : ""}`);
-    setForm(null); showToast(cleaned.approvalStatus === "pending" ? "اتبعت لمدير الحجوزات للموافقة" : "تم الحفظ");
+    onLog(`${isExistingBooking ? "تعديل" : "إضافة"} حجز غرفة ${cleaned.room} — ${cleaned.guestName}${conflict ? " (تسكين مكرر معتمد يدويًا)" : ""}`);
+    setForm(null); showToast("تم الحفظ");
   }
   async function removeBooking(id) { const b = bookings.find((x) => x.id === id); const res = await onDeleteBooking(id); if (res?.error) { showToast(res.error); return; } onLog(`حذف حجز غرفة ${b?.room} — ${b?.guestName}`); showToast("تم الحذف"); }
-  async function approveBooking(b) { const res = await onUpdateBooking(b.id, { ...b, approvalStatus: "approved" }); if (res?.error) { showToast(res.error); return; } onLog(`موافقة على حجز مباشر - غرفة ${b.room} — ${b.guestName}`); showToast("تمت الموافقة"); }
-  async function rejectBooking(b) { const res = await onUpdateBooking(b.id, { ...b, approvalStatus: "approved", status: "ملغي" }); if (res?.error) { showToast(res.error); return; } onLog(`رفض حجز مباشر - غرفة ${b.room} — ${b.guestName}`); showToast("تم الرفض"); }
 
   const list = bookings.filter((b) => {
     if (filter && !String(b.room).includes(filter) && !b.guestName.includes(filter) && !(b.code && b.code.includes(filter))) return false;
@@ -64,7 +71,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
     if (dateTo && b.checkin > dateTo) return false;
     return true;
   }).sort((a, b) => b.checkin.localeCompare(a.checkin));
-  const pendingBookings = bookings.filter((b) => b.approvalStatus === "pending" && b.status !== "ملغي");
 
   function exportCSV() {
     const headers = ["كود", "الغرفة", "النزيل", "الهاتف", "دخول", "خروج", "الليالي", "السعر لليلة", "العملة", "إجمالي الغرفة", "غسيل", "كافيتيريا", "جولات", "بيك أب", "الإجمالي الكلي", "المدفوع", "المتبقي", "طريقة الدفع", "المصدر", "الحالة"];
@@ -87,24 +93,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
         </div>
       </div>
 
-      {perms.canApproveBookings && pendingBookings.length > 0 && (
-        <div className="cx-card" style={{ padding: 12, marginBottom: 14, borderColor: "#7A5FB5" }}>
-          <div style={{ fontWeight: 800, marginBottom: 8, color: "#7A5FB5" }}>حجوزات مباشرة بانتظار الموافقة ({pendingBookings.length})</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {pendingBookings.map((b) => (
-              <div key={b.id} style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, borderBottom: "1px solid var(--hair)", paddingBottom: 8 }}>
-                <div style={{ fontSize: 12.5 }}><div style={{ fontWeight: 700 }}>غرفة {b.room} · {b.guestName}</div><div style={{ color: "var(--muted)" }}>{b.checkin} → {b.checkout} · {fmt(bookingGrandTotal(b))} {b.currency} · {b.paymentMethod}</div></div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button className="cx-btn cx-btn-outline" onClick={() => startEdit(b)}><Pencil size={13} /> مراجعة</button>
-                  <button className="cx-btn cx-btn-gold" onClick={() => approveBooking(b)}><Check size={13} /> موافقة</button>
-                  <TwoStepButton label="رفض" confirmLabel="تأكيد الرفض؟" onConfirm={() => rejectBooking(b)} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {form && (
         <div className="cx-card" style={{ padding: 14, marginBottom: 14 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
@@ -117,7 +105,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>عدد الأفراد</label><input className="cx-input" type="number" min="1" value={form.pax} onChange={(e) => setForm({ ...form, pax: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>تاريخ الدخول</label><input className="cx-input" type="date" value={form.checkin} onChange={(e) => setForm({ ...form, checkin: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>تاريخ الخروج</label><input className="cx-input" type="date" value={form.checkout} onChange={(e) => setForm({ ...form, checkout: e.target.value })} /></div>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>السعر لليلة {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={moneyLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value })} /><select className="cx-select" disabled={moneyLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 80 }}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div></div>
+            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>السعر لليلة {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={moneyLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value })} /><input className="cx-input" list="currencies" disabled={moneyLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} style={{ width: 80 }} /><datalist id="currencies">{COMMON_CURRENCIES.map((c) => <option key={c} value={c} />)}</datalist></div></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={moneyLocked} placeholder={String(autoTotalRoom)} value={form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>طريقة الدفع {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><select className="cx-select" disabled={moneyLocked} value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>جهة الحجز</label><input className="cx-input" list="sources" value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} /><datalist id="sources">{BOOKING_SOURCES.map((s) => <option key={s}>{s}</option>)}</datalist>
@@ -180,18 +168,26 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
             </div>
           )}
 
-          <div className="cx-card" style={{ marginTop: 10, padding: 10 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-              <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي الكلي (غرفة + رسوم)</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{fmt(grandTotal)} {form.currency}</div></div>
-              <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المدفوع حتى الآن {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.amountPaid} onChange={(e) => setForm({ ...form, amountPaid: e.target.value })} /></div>
-              <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المتبقي على النزيل</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0", color: balanceDue > 0 ? "var(--rust)" : "var(--sage)" }}>{fmt(balanceDue)} {form.currency}</div></div>
-              {form.paymentMethod === "كاش" && (<>
-                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المبلغ المُستلم نقدًا</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.amountTendered} onChange={(e) => setForm({ ...form, amountTendered: e.target.value })} /></div>
-                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الباقي (الفكة)</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{changeDue != null ? fmt(changeDue) : "—"} {form.currency}</div></div>
-              </>)}
+          {form.paymentDetails.onlinePaid ? (
+            <div className="cx-card" style={{ marginTop: 10, padding: 10 }}>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي الكلي (غرفة + رسوم)</div>
+              <div style={{ fontWeight: 800, fontSize: 15, padding: "4px 0" }}>{fmt(grandTotal)} {form.currency}</div>
+              <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>الحجز مدفوع أونلاين - المبلغ ده مش محصّل هنا، خانة المتحصّل والمتبقي مش محتاجة للحجوزات الأونلاين.</div>
             </div>
-            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" disabled={moneyLocked} checked={form.settled} onChange={(e) => setForm({ ...form, settled: e.target.checked })} /><span style={{ fontSize: 12.5 }}>تم تحصيل كامل المبلغ (مُصفّى)</span></div>
-          </div>
+          ) : (
+            <div className="cx-card" style={{ marginTop: 10, padding: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
+                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي الكلي (غرفة + رسوم)</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{fmt(grandTotal)} {form.currency}</div></div>
+                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المدفوع حتى الآن {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.amountPaid} onChange={(e) => setForm({ ...form, amountPaid: e.target.value })} /></div>
+                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المتبقي على النزيل</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0", color: balanceDue > 0 ? "var(--rust)" : "var(--sage)" }}>{fmt(balanceDue)} {form.currency}</div></div>
+                {form.paymentMethod === "كاش" && (<>
+                  <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المبلغ المُستلم نقدًا</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.amountTendered} onChange={(e) => setForm({ ...form, amountTendered: e.target.value })} /></div>
+                  <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الباقي (الفكة)</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{changeDue != null ? fmt(changeDue) : "—"} {form.currency}</div></div>
+                </>)}
+              </div>
+              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" disabled={moneyLocked} checked={form.settled} onChange={(e) => setForm({ ...form, settled: e.target.checked })} /><span style={{ fontSize: 12.5 }}>تم تحصيل كامل المبلغ (مُصفّى)</span></div>
+            </div>
+          )}
 
           <div style={{ marginTop: 8 }}><label style={{ fontSize: 11, color: "var(--muted)" }}>ملاحظات</label><input className="cx-input" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
@@ -206,9 +202,9 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
         {list.map((b) => { const gt = bookingGrandTotal(b); const due = gt - (Number(b.amountPaid) || 0); return (
           <div key={b.id} className="cx-card" style={{ padding: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
             <div>
-              <div style={{ fontWeight: 800 }}>غرفة {b.room} · {b.guestName} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>مدفوع أونلاين</span>} {b.approvalStatus === "pending" && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>بانتظار الموافقة</span>}</div>
+              <div style={{ fontWeight: 800 }}>غرفة {b.room} · {b.guestName} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>مدفوع أونلاين</span>}</div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.checkin} → {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {b.pax} أفراد {b.code && `· كود ${b.code}`}</div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.source} · {b.paymentMethod}{b.paymentDetails?.senderName ? ` (${b.paymentDetails.senderName} · ${b.paymentDetails.senderNumber})` : ""} · الإجمالي {fmt(gt)} {b.currency} {due > 0 && <span style={{ color: "var(--rust)" }}>· متبقي {fmt(due)}</span>}</div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.source} · {b.paymentMethod}{b.paymentDetails?.senderName ? ` (${b.paymentDetails.senderName} · ${b.paymentDetails.senderNumber})` : ""} · الإجمالي {fmt(gt)} {b.currency} {due > 0 && !b.paymentDetails?.onlinePaid && <span style={{ color: "var(--rust)" }}>· متبقي {fmt(due)}</span>}</div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span className="cx-pill" style={{ background: "#00000010", color: b.status === "ملغي" ? "var(--rust)" : "var(--teal)" }}>{b.status}</span>
