@@ -32,7 +32,37 @@ export function GlobalStyle() {
       table.cx-table{ border-collapse:collapse; width:100%; }
       table.cx-table td, table.cx-table th{ border:1px solid var(--hair); padding:5px 6px; vertical-align:middle; }
       ::placeholder{ color:#B3AA97; }
-      @media print{ .cx-no-print{ display:none !important; } }
+      .cx-print-only{ display:none; }
+
+      /* ========== شكل الطباعة الاحترافي (تقرير اليومية/الفترة) ========== */
+      @media print{
+        @page{ size:A4; margin:14mm 12mm; }
+        html, body{ background:#fff !important; }
+        .calma-app{ background:#fff !important; color:#161D27 !important; }
+        .cx-no-print{ display:none !important; }
+        .cx-print-only{ display:block !important; }
+        .cx-header, .cx-tab, .cx-toast{ display:none !important; }
+
+        .cx-print-header{ margin-bottom:10px; }
+        .cx-print-head-row{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+        .cx-print-brand{ display:flex; align-items:center; gap:8px; }
+        .cx-print-hotel-name{ font-family:'Fraunces',serif; font-style:italic; font-size:15px; color:#161D27; }
+        .cx-print-meta{ text-align:left; font-size:11px; color:#3D4650; line-height:1.6; }
+        .cx-print-title{ font-weight:800; font-size:14px; color:#161D27; }
+        .cx-print-rule{ height:2px; background:linear-gradient(90deg,#B8912F,rgba(184,145,47,0)); margin:8px 0 14px; }
+        .cx-print-footer{ margin-top:26px; }
+        .cx-print-sign{ display:flex; justify-content:space-between; font-size:11px; color:#3D4650; border-top:1px dashed #999; padding-top:10px; margin-top:18px; }
+        .cx-print-generated{ text-align:center; font-size:9.5px; color:#8A8273; margin-top:6px; }
+
+        .cx-card{ box-shadow:none !important; border:1px solid #BBB !important; border-radius:6px !important; break-inside:avoid; page-break-inside:avoid; background:#fff !important; }
+        .cx-kpi{ background:#fff !important; border:1px solid #BBB !important; }
+        .cx-report-grid{ grid-template-columns:repeat(4,1fr) !important; gap:8px !important; }
+        table.cx-table{ font-size:10.5px; }
+        table.cx-table thead{ display:table-header-group; }
+        table.cx-table th.cx-th{ background:#F0EDE2 !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+        table.cx-table tr{ break-inside:avoid; page-break-inside:avoid; }
+        * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      }
     `}</style>
   );
 }

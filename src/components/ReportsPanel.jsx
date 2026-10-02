@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Download, Printer } from "lucide-react";
-import { downloadCSV } from "./shared";
+import { downloadCSV, Logo } from "./shared";
 import { emptyMoney, computeShiftTotals, bookingGrandTotal, onlineNetAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
-import { SHIFTS } from "../domain/constants";
+import { SHIFTS, HOTEL_NAME } from "../domain/constants";
 import { todayStr, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getShiftRecord } from "../data/shifts";
 
@@ -86,7 +86,7 @@ function aggregateBookings(bookings, fromDate, toDate) {
   return { count: onlineBookings.length, totalCount: inRange.length, grossRevenue, netRevenue, items, outstanding, byMethodCurrency };
 }
 
-export function ReportsPanel({ rooms, bookings, dataVersion }) {
+export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   const [rangeMode, setRangeMode] = useState("day");
   const [date, setDate] = useState(todayStr());
   const [fromDate, setFromDate] = useState(addDays(todayStr(), -6));
@@ -176,6 +176,24 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
 
       {loading ? <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>جارِ التحميل...</div> : (
         <>
+          {/* ترويسة التقرير المطبوع - بتظهر بس وقت الطباعة/التصدير كـ PDF،
+              مش في الشاشة، عشان الورقة تطلع شكل رسمي باسم الفندق والفترة
+              وتاريخ الإصدار ومين أصدره. */}
+          <div className="cx-print-only cx-print-header">
+            <div className="cx-print-head-row">
+              <div className="cx-print-brand">
+                <Logo size={30} />
+                {HOTEL_NAME && <div className="cx-print-hotel-name">{HOTEL_NAME}</div>}
+              </div>
+              <div className="cx-print-meta">
+                <div className="cx-print-title">تقرير مالي وتشغيلي</div>
+                <div>{rangeMode === "day" ? `${arabicWeekday(date)} ${arabicDateLong(date)}` : `من ${fromDate} إلى ${toDate}`}</div>
+                <div>تاريخ الإصدار: {arabicDateLong(todayStr())}{profile?.name ? ` · أُعِد بواسطة: ${profile.name}` : ""}</div>
+              </div>
+            </div>
+            <div className="cx-print-rule" />
+          </div>
+
           {rangeMode === "day" && (
             <div style={{ overflowX: "auto", marginBottom: 14 }}>
               <table className="cx-table" style={{ fontSize: 12, minWidth: 700 }}>
@@ -189,7 +207,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 14 }}>
+          <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 14 }}>
             <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي التحصيل</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(combinedTotalCollections)}</div></div>
             <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي المصاريف</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(agg.totalExpenses)}</div></div>
             <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>صافي النقدية (الدرج)</div><div style={{ fontWeight: 800, fontSize: 16, color: "var(--teal)" }}>{moneyLine(agg.netCash)}</div></div>
@@ -236,7 +254,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>الحجوزات الأونلاين ({bAgg.count} حجز مدفوع أونلاين من إجمالي {bAgg.totalCount} حجز في الفترة)</div>
             <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>القسم ده بيشمل بس الحجوزات اللي اتحددت يدويًا كـ"مدفوعة أونلاين" وقت إنشاء أو تعديل الحجز.</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 12 }}>
+            <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 12 }}>
               <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي من غير عمولة</div><div style={{ fontWeight: 800 }}>{moneyLine(bAgg.grossRevenue)}</div></div>
               <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الصافي بعد العمولة</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{moneyLine(bAgg.netRevenue)}</div></div>
             </div>
@@ -276,6 +294,16 @@ export function ReportsPanel({ rooms, bookings, dataVersion }) {
 
           <button className="cx-btn cx-btn-outline cx-no-print" onClick={copySummary}><Copy size={14} /> نسخ الملخص</button>
           {copyText && <textarea className="cx-textarea" readOnly value={copyText} rows={8} style={{ marginTop: 10 }} onFocus={(e) => e.target.select()} />}
+
+          {/* تذييل الطباعة: خانة توقيع/ختم المسؤول، وسطر صغير بيوضح إن
+              التقرير متولد أوتوماتيك من نظام Calma - شكل ورقة رسمية. */}
+          <div className="cx-print-only cx-print-footer">
+            <div className="cx-print-sign">
+              <span>توقيع المسؤول: ______________________</span>
+              <span>الختم:</span>
+            </div>
+            <div className="cx-print-generated">تم إصدار هذا التقرير أوتوماتيكيًا من نظام إدارة الفندق Calma</div>
+          </div>
         </>
       )}
     </div>
