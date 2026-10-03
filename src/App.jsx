@@ -12,7 +12,7 @@ import { UsersPanel } from "./components/UsersPanel";
 import { supabaseConfigured } from "./lib/supabaseClient";
 import { subscribeToAllChanges } from "./lib/realtime";
 import { signUpUser, signIn, signOut, getSession, onAuthStateChange, getMyProfile, listProfiles, checkSetupNeeded, changeOwnPassword as authChangeOwnPassword } from "./lib/auth";
-import { getRooms, getRoomOverrides, setRoomOverride, saveRoom } from "./data/rooms";
+import { getRooms, getRoomOverrides, setRoomOverride } from "./data/rooms";
 import { getBookings, insertBooking, updateBookingIfUnchanged, deleteBooking } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
 
@@ -92,7 +92,6 @@ export default function App() {
   }
 
   async function handleSaveOverride(roomNumber, status) { const res = await setRoomOverride(roomNumber, status, currentProfile?.username); if (!res.error) setOverrides((prev) => ({ ...prev, [roomNumber]: { status, updatedAt: Date.now() } })); return res; }
-  async function handleSaveRoom(room) { const res = await saveRoom(room); if (!res.error) setRooms((prev) => prev.map((r) => (r.number === room.number ? { ...r, ...room } : r))); return res; }
   // تعديل آمن من تعارض تعديلين في نفس اللحظة (زي اليومية بالظبط): لو حد
   // عدّل نفس الحجز في نفس اللحظة، بنرجّع "تعارض" بدل ما نكتب فوق تعديله
   // من غير ما حد يدري، وبنحدّث بيانات الشاشة من قاعدة البيانات تاني.
@@ -145,7 +144,7 @@ export default function App() {
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} />
       {loadingData ? <LoadingScreen /> : (
         <>
-          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} onSaveOverride={handleSaveOverride} onSaveRoom={handleSaveRoom} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} onSaveOverride={handleSaveOverride} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "ledger" && <DailyLedger rooms={rooms} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDeleteBooking={handleDeleteBooking} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} />}
           {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}

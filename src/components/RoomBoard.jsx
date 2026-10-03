@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
-import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, COMMON_CURRENCIES, ONLINE_METHODS, PAYMENT_METHODS } from "../domain/money";
+import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, ONLINE_METHODS, PAYMENT_METHODS } from "../domain/money";
 import { todayStr, nightsBetween } from "../domain/dates";
-import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_BOOKING, roomFloor } from "../domain/constants";
+import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_BOOKING } from "../domain/constants";
 import { computeRoomStatus } from "../domain/bookingLogic";
 import { getShiftRecord } from "../data/shifts";
 
-const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#E3EDED", occupied_unpaid: "#F5E2E2", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
+const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#E3EDED", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
-export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, onSaveRoom, onToggleSettled, onUpdateBooking, onEditBooking, onLog, showToast, dataVersion }) {
+export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, onToggleSettled, onUpdateBooking, onEditBooking, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [extrasDraft, setExtrasDraft] = useState(null);
@@ -16,9 +16,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
   const date = todayStr();
   const room = rooms.find((r) => r.number === selected);
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date) : null;
-  const [editType, setEditType] = useState(""); const [editPrice, setEditPrice] = useState(""); const [editCurrency, setEditCurrency] = useState("USD"); const [editCapacity, setEditCapacity] = useState(2); const [editBeds, setEditBeds] = useState(""); const [editMode, setEditMode] = useState(false);
 
-  useEffect(() => { if (room) { setEditType(room.type); setEditPrice(room.price); setEditCurrency(room.currency); setEditCapacity(room.capacity || 2); setEditBeds(room.beds || ""); setEditMode(false); } }, [selected]);
   useEffect(() => { if (status?.booking) setExtrasDraft({ laundry: status.booking.extras?.laundry || "", cafeteria: status.booking.extras?.cafeteria || "", tours: status.booking.extras?.tours || "", pickup: status.booking.extras?.pickup || "" }); else setExtrasDraft(null); }, [selected, status?.booking?.id]);
   useEffect(() => { if (status?.booking) setCollectMethod(status.booking.paymentMethod || "كاش"); }, [selected, status?.booking?.id]);
 
@@ -45,11 +43,6 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
     if (res?.error) { showToast(res.error); return; }
     onLog(`تغيير حالة الغرفة ${selected} إلى: ${MANUAL_STATUS_OPTIONS.find((o) => o.key === statusKey)?.label}`);
     showToast("تم تحديث حالة الغرفة");
-  }
-  async function saveRoomConfig() {
-    const res = await onSaveRoom({ number: selected, type: editType, price: Number(editPrice) || 0, currency: editCurrency, capacity: Number(editCapacity) || 1, beds: editBeds });
-    if (res?.error) { showToast(res.error); return; }
-    onLog(`تعديل بيانات الغرفة ${selected}`); setEditMode(false); showToast("تم حفظ بيانات الغرفة");
   }
   // تسجيل تحصيل كامل المبلغ لازم يسجل طريقة الدفع الفعلية (فيزا/انستاباي/
   // فودافون كاش/تحويل بنكي...) مش بس يعلّم "متحصّل" - عشان التقرير يقدر
@@ -111,13 +104,8 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
       {room && status && (
         <div className="cx-card" style={{ marginTop: 16, padding: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div><div style={{ fontSize: 20, fontWeight: 800 }}>غرفة {room.number}</div><div style={{ fontSize: 13, color: "var(--muted)" }}>{room.type} · {fmt(room.price)} {room.currency}</div></div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>غرفة {room.number}</div>
             <button className="cx-btn cx-btn-outline" onClick={() => setSelected(null)}><X size={14} /></button>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 8, marginTop: 10, fontSize: 12.5, background: "var(--paper2)", borderRadius: 8, padding: 10 }}>
-            <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>الدور</div><div style={{ fontWeight: 700 }}>الدور {roomFloor(room.number)}</div></div>
-            <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>السعة القصوى</div><div style={{ fontWeight: 700 }}>{room.capacity || 2} أفراد</div></div>
-            <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>الأسرّة</div><div style={{ fontWeight: 700 }}>{room.beds || "—"}</div></div>
           </div>
 
           {status.booking && (() => { const b = status.booking; const gt = bookingGrandTotal(b); const paid = Number(b.amountPaid) || 0; const due = gt - paid; const extrasList = [
@@ -196,24 +184,6 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
               </div>
             )
           ) : (<div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Eye size={13} /> عرض فقط لدورك الحالي</div>)}
-
-          {perms.editRoomConfig && (
-            <div style={{ marginTop: 14, borderTop: "1px solid var(--hair)", paddingTop: 12 }}>
-              {!editMode ? <button className="cx-btn cx-btn-outline" onClick={() => setEditMode(true)}><Pencil size={14} /> تعديل بيانات الغرفة</button> : (
-                <div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 8, marginBottom: 8 }}>
-                    <input className="cx-input" value={editType} onChange={(e) => setEditType(e.target.value)} placeholder="نوع الغرفة" />
-                    <input className="cx-input" type="number" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} placeholder="السعر" />
-                    <input className="cx-input" list="room-currencies" value={editCurrency} onChange={(e) => setEditCurrency(e.target.value.toUpperCase())} placeholder="العملة" />
-                    <datalist id="room-currencies">{COMMON_CURRENCIES.map((c) => <option key={c} value={c} />)}</datalist>
-                    <input className="cx-input" type="number" min="1" value={editCapacity} onChange={(e) => setEditCapacity(e.target.value)} placeholder="السعة القصوى" />
-                    <input className="cx-input" value={editBeds} onChange={(e) => setEditBeds(e.target.value)} placeholder="الأسرّة" />
-                  </div>
-                  <button className="cx-btn cx-btn-gold" onClick={saveRoomConfig}><Check size={14} /> حفظ</button>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       )}
     </div>

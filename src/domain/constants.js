@@ -21,43 +21,36 @@ export const TAB_LABELS = { board: "لوحة الغرف", ledger: "اليومي�
 /* staff: يشتغل باليومية والحجوزات (عرض + إضافة حجز مباشر) وحالة الغرف (بقيود).
    كل حاجة باينة للمدير العام باينة كمان لمديرة الحسابات ومدير الحجوزات - عرض بس، غير الصلاحيات المحددة لكل دور. */
 export const PERMISSIONS = {
-  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, editRoomConfig: false, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true },
-  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, editRoomConfig: true, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: true },
-  accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, editRoomConfig: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false },
-  gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, editRoomConfig: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false },
+  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true },
+  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: true },
+  accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false },
+  gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false },
 };
 
 export const BOOKING_SOURCES = ["مباشر", "Booking.com", "Trip.com", "Airbnb", "وسيط"];
 export const BOOKING_STATUSES = ["مؤكد", "تم تسجيل الدخول", "تم تسجيل الخروج", "ملغي"];
 
+/* شيلنا خيار "متاحة يدويًا" نهائيًا - مفيش فايدة منه لأن الغرفة أصلاً بترجع
+   "متاحة" تلقائيًا لوحدها من حساب الحجوزات لحظة ما معندهاش حجز نشط أو قادم،
+   فمكنش له أي استخدام حقيقي يفرق عن الوضع التلقائي. */
 export const MANUAL_STATUS_OPTIONS = [
   { key: "auto", label: "تلقائي حسب الحجوزات" },
   { key: "early_checkout", label: "غادر مبكرًا" },
   { key: "maintenance", label: "صيانة" },
   { key: "cleaning", label: "تحت التنظيف" },
-  { key: "available", label: "متاحة يدويًا" },
 ];
 export const STAFF_ALLOWED_ON_ACTIVE_BOOKING = ["early_checkout"];
 
-export const STATUS_COLORS = { available: "#2F7A4A", occupied_paid: "#1F4B4A", occupied_unpaid: "#B23B3B", reserved: "#6B4FA0", maintenance: "#6B5B4D", cleaning: "#2E6B9E", early_checkout: "#C9702B" };
+/* لون "مشغولة - متبقي فلوس" لازم يكون واضح وبارز ومختلف تمامًا عن باقي
+   الألوان (دي أهم حالة تحتاج متابعة فورية - فيه فلوس متأخرة على نزيل). */
+export const STATUS_COLORS = { available: "#2F7A4A", occupied_paid: "#1F4B4A", occupied_unpaid: "#E63946", reserved: "#6B4FA0", maintenance: "#6B5B4D", cleaning: "#2E6B9E", early_checkout: "#C9702B" };
 
+/* الغرفة بقت بس رقمها المسجل في قاعدة البيانات - مفيش نوع غرفة ولا سعر
+   ثابت ولا سعة ولا أسرّة محفوظة على الغرفة نفسها. كل تفاصيل الحجز (السعر،
+   العملة، عدد الأفراد، إلخ) بتتحدد وقت إنشاء/تعديل الحجز في شاشة الحجوزات
+   نفسها، مش من بيانات الغرفة. */
 export const ROOMS_DEFAULT = [
-  { number: 601, type: "غرفة مزدوجة - إطلالة داخلية", price: 50, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 602, type: "غرفة بسرير كينج - إطلالة داخلية", price: 50, currency: "USD", capacity: 2, beds: "سرير كينج" },
-  { number: 603, type: "غرفة عائلية (٣ أسرة)", price: 80, currency: "USD", capacity: 4, beds: "٣ أسرة مفردة" },
-  { number: 604, type: "غرفة مزدوجة - بلكونة فرنسية", price: 70, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 605, type: "غرفة مزدوجة - بلكونة", price: 70, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 606, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 607, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 608, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 609, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 610, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 611, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 612, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 613, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 614, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 615, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
-  { number: 616, type: "غرفة مزدوجة", price: 60, currency: "USD", capacity: 2, beds: "سرير مزدوج" },
+  { number: 601 }, { number: 602 }, { number: 603 }, { number: 604 }, { number: 605 }, { number: 606 },
+  { number: 607 }, { number: 608 }, { number: 609 }, { number: 610 }, { number: 611 }, { number: 612 },
+  { number: 613 }, { number: 614 }, { number: 615 }, { number: 616 },
 ];
-
-export function roomFloor(number) { return Math.floor(number / 100); }

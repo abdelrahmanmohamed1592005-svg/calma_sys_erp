@@ -30,6 +30,16 @@ function firstMethodHandover(records) {
   return {};
 }
 
+// نفس المنطق بالظبط بس لعهدة الكاش (الدرج) - عهدة أول شيفت في الفترة بكل
+// عملاتها، عشان جدول متابعة العملات في التقرير يبقى شامل الكاش كمان مش بس
+// وسائل الدفع الأخرى.
+function firstCashHandover(records) {
+  for (const r of records) {
+    if (r.handover && Object.keys(r.handover).length > 0) return r.handover;
+  }
+  return {};
+}
+
 function aggregateShifts(records) {
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
   const byMethodCurrency = {}, byCategory = {};
@@ -58,7 +68,16 @@ function aggregateShifts(records) {
       methodClosingNow[m][cur] = (methodOpening[m]?.[cur] || 0) + (byMethodCurrency[m]?.[cur] || 0);
     });
   });
-  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, flaggedShifts, netCash, methodOpening, methodClosingNow };
+  // نفس فكرة "متابعة العهدة" بس للكاش نفسه: عهدة أول شيفت في الفترة + كل
+  // التحصيل النقدي - كل المصاريف (المصاريف دايمًا بتُدفع من الكاش) = رصيد
+  // الدرج دلوقتي بكل عملة. ده غير netCash اللي فوق (تحصيل كل الوسائل مجمّعة
+  // ناقص المصاريف) - cashClosingNow هنا مطابق لرصيد الدرج الفعلي.
+  const cashOpening = firstCashHandover(records);
+  const cashClosingNow = emptyMoney();
+  currencyKeysOf(cashOpening, cashCollections, totalExpenses).forEach((cur) => {
+    cashClosingNow[cur] = (cashOpening[cur] || 0) + (cashCollections[cur] || 0) - (totalExpenses[cur] || 0);
+  });
+  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, flaggedShifts, netCash, methodOpening, methodClosingNow, cashOpening, cashClosingNow };
 }
 
 function aggregateBookings(bookings, fromDate, toDate) {
@@ -81,8 +100,23 @@ function aggregateBookings(bookings, fromDate, toDate) {
   // فودافون كاش/تحويل بنكي...) ومش بتمر على يومية الشيفت، فلازم تتجمع هنا
   // عشان تظهر في التقرير.
   const byMethodCurrency = directBookingPaymentsByMethod(directBookings);
+  // المبالغ المتبقية على النزلاء: للحجز المدفوع أونلاين، سعر الغرفة نفسه
+  // متسوّى بالفعل عن طريق منصة الحجز (ده اللي قسم "الحجوزات الأونلاين" فوق
+  // بيتابعه بالعمولة) - فمينفعش يفضل ظاهر كـ"متبقي" تاني هنا. اللي ممكن
+  // يفضل متبقي بس هو أي خدمة إضافية (غسيل/كافيتيريا/جولات/بيك أب/دخول مبكر)
+  // اتاخدت في الفندق ومتحصّلتش لسه - دي لوحدها المحسوبة هنا للحجز الأونلاين.
   const outstanding = [];
-  inRange.forEach((b) => { const gt = bookingGrandTotal(b); const due = gt - (Number(b.amountPaid) || 0); if (due > 0) outstanding.push({ ...b, due }); });
+  inRange.forEach((b) => {
+    const gt = bookingGrandTotal(b);
+    if (b.paymentDetails?.onlinePaid) {
+      const extrasTotal = gt - (Number(b.totalRoom) || 0);
+      const due = extrasTotal - (Number(b.amountPaid) || 0);
+      if (due > 0) outstanding.push({ ...b, due, onlineExtrasOnly: true });
+    } else {
+      const due = gt - (Number(b.amountPaid) || 0);
+      if (due > 0) outstanding.push({ ...b, due, onlineExtrasOnly: false });
+    }
+  });
   return { count: onlineBookings.length, totalCount: inRange.length, grossRevenue, netRevenue, items, outstanding, byMethodCurrency };
 }
 
@@ -213,23 +247,28 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
             <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 12 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{PAYMENT_METHODS.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
           </div>
 
-          {PAYMENT_METHODS.some((m) => m !== "كاش" && currencyKeysOf(agg.methodOpening?.[m], agg.byMethodCurrency?.[m]).length > 0) && (
+          {PAYMENT_METHODS.some((m) => currencyKeysOf(m === "كاش" ? agg.cashOpening : agg.methodOpening?.[m], m === "كاش" ? agg.cashCollections : agg.byMethodCurrency?.[m]).length > 0) && (
             <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>متابعة عهدة وسائل الدفع الأخرى (فيزا، إلخ)</div>
-              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>مبنية على العهدة المسجَّلة في أول شيفت بالفترة وتحصيل اليومية فقط - مطابقة لقراءة الجهاز خطوة بخطوة.</div>
+              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>متابعة العهدة والتحصيل حسب وسيلة الدفع والعملة</div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>مبنية على العهدة المسجَّلة في أول شيفت بالفترة وتحصيل/مصاريف اليومية فقط (بكل عملة اتكتبت فيها) - مطابقة لرصيد الدرج وقراءة الجهاز خطوة بخطوة. الكاش بس عليه مصاريف لأن المصاريف بتُدفع منه.</div>
               <div style={{ overflowX: "auto" }}>
                 <table className="cx-table" style={{ fontSize: 12 }}>
-                  <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
+                  <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">مصاريف الفترة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
                   <tbody>
-                    {PAYMENT_METHODS.filter((m) => m !== "كاش").flatMap((m) => {
-                      const curs = currencyKeysOf(agg.methodOpening?.[m], agg.byMethodCurrency?.[m]);
+                    {PAYMENT_METHODS.flatMap((m) => {
+                      const isCash = m === "كاش";
+                      const opening = isCash ? agg.cashOpening : agg.methodOpening?.[m];
+                      const collected = isCash ? agg.cashCollections : agg.byMethodCurrency?.[m];
+                      const closingNow = isCash ? agg.cashClosingNow : agg.methodClosingNow?.[m];
+                      const curs = currencyKeysOf(opening, collected);
                       return curs.map((cur) => (
                         <tr key={m + cur}>
                           <td>{m}</td>
                           <td>{cur}</td>
-                          <td>{money(agg.methodOpening?.[m], cur)}</td>
-                          <td>{money(agg.byMethodCurrency?.[m], cur)}</td>
-                          <td style={{ fontWeight: 800, color: "var(--teal)" }}>{money(agg.methodClosingNow?.[m], cur)}</td>
+                          <td>{money(opening, cur)}</td>
+                          <td>{money(collected, cur)}</td>
+                          <td>{isCash ? money(agg.totalExpenses, cur) : "—"}</td>
+                          <td style={{ fontWeight: 800, color: "var(--teal)" }}>{money(closingNow, cur)}</td>
                         </tr>
                       ));
                     })}
@@ -272,11 +311,26 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
             ) : (
               <div style={{ fontSize: 12, color: "var(--muted)" }}>مفيش حجوزات متحددة كـ"مدفوعة أونلاين" في الفترة دي.</div>
             )}
-            {bAgg.outstanding.length > 0 && (<>
-              <div style={{ fontSize: 12, fontWeight: 700, marginTop: 12, marginBottom: 6, color: "var(--rust)" }}>مبالغ متبقية على نزلاء - كل الحجوزات ({bAgg.outstanding.length})</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{bAgg.outstanding.map((b) => <div key={b.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}><span>غرفة {b.room} · {b.guestName}</span><span style={{ color: "var(--rust)", fontWeight: 700 }}>{fmt(b.due)} {b.currency}</span></div>)}</div>
-            </>)}
           </div>
+
+          {/* قسم مستقل تمامًا وبعيد عن الحجوزات الأونلاين - سعر الغرفة
+              للحجز المدفوع أونلاين متسوّى بالفعل عن طريق المنصة فمبيظهرش هنا
+              كمتبقي؛ اللي بيظهر بس هو خدمات إضافية (غسيل/كافيتيريا/جولات/
+              بيك أب/دخول مبكر) متحصّلتش لسه، لأي حجز سواء أونلاين أو مباشر. */}
+          {bAgg.outstanding.length > 0 && (
+            <div className="cx-card" style={{ padding: 12, marginBottom: 14, borderColor: "var(--rust)" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2, color: "var(--rust)" }}>مبالغ متبقية على نزلاء ({bAgg.outstanding.length})</div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>للحجوزات المدفوعة أونلاين، المتبقي هنا بس خدمات إضافية مش متحصّلة - سعر الغرفة نفسه متسوّى أونلاين ومحسوبش هنا.</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {bAgg.outstanding.map((b) => (
+                  <div key={b.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}>
+                    <span>غرفة {b.room} · {b.guestName} {b.onlineExtrasOnly && <span style={{ color: "var(--muted)", fontSize: 10.5 }}>(خدمات إضافية - الحجز مدفوع أونلاين)</span>}</span>
+                    <span style={{ color: "var(--rust)", fontWeight: 700 }}>{fmt(b.due)} {b.currency}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {agg.flaggedShifts.length > 0 && (
             <div className="cx-card" style={{ padding: 12, marginBottom: 14, borderColor: "var(--rust)" }}>

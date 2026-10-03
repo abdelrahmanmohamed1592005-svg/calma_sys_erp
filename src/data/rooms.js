@@ -1,20 +1,15 @@
 import { supabase } from "../lib/supabaseClient";
 
+// الغرفة بقت بس رقمها - كل تفاصيلها (السعر، العملة، النوع، إلخ) بقت
+// بتتحدد من الحجز نفسه مش من بيانات الغرفة الثابتة (انظر domain/constants.js).
 function roomFromRow(r) {
-  return { number: r.number, type: r.type, price: Number(r.price), currency: r.currency, capacity: r.capacity, beds: r.beds || "" };
+  return { number: r.number };
 }
 
 export async function getRooms() {
   const { data, error } = await supabase.from("rooms").select("*").order("number");
   if (error || !data) return [];
   return data.map(roomFromRow);
-}
-
-export async function saveRoom(room) {
-  const { error } = await supabase.from("rooms").update({
-    type: room.type, price: room.price, currency: room.currency, capacity: room.capacity, beds: room.beds,
-  }).eq("number", room.number);
-  return { error: error?.message };
 }
 
 export async function getRoomOverrides() {

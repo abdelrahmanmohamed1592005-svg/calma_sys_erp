@@ -31,7 +31,10 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
   const originalBooking = form && isExistingBooking ? bookings.find((b) => b.id === form.id) : null;
   const moneyLocked = role === "reservations" && isExistingBooking;
 
-  function onRoomChange(roomNum) { const r = rooms.find((x) => x.number === Number(roomNum)); setForm((f) => ({ ...f, room: Number(roomNum), priceNight: moneyLocked ? f.priceNight : (r ? r.price : f.priceNight), currency: moneyLocked ? f.currency : (r ? r.currency : f.currency) })); }
+  // الغرفة بقت بس رقم - مفيش سعر ثابت أو نوع متسجل عليها نرجع نعبّي بيه
+  // السعر/العملة تلقائيًا؛ الموظف بيكتب سعر الليلة والعملة بنفسه كل مرة حسب
+  // الاتفاق مع النزيل.
+  function onRoomChange(roomNum) { setForm((f) => ({ ...f, room: Number(roomNum) })); }
 
   const nights = form ? nightsBetween(form.checkin, form.checkout) : 0;
   const autoTotalRoom = form ? (Number(form.priceNight) || 0) * nights : 0;
@@ -120,9 +123,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
         <div className="cx-card cx-no-print" style={{ padding: 14, marginBottom: 14 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>كود الحجز (اختياري)</label><input className="cx-input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الغرفة</label><select className="cx-select" value={form.room} onChange={(e) => onRoomChange(e.target.value)}><option value="">اختر</option>{rooms.map((r) => <option key={r.number} value={r.number}>{r.number} - {r.type}</option>)}</select>
-              {form.room && (() => { const r = rooms.find((x) => x.number === Number(form.room)); return r ? <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 2 }}>السعة القصوى: {r.capacity || 2} أفراد · {r.beds}</div> : null; })()}
-            </div>
+            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الغرفة</label><select className="cx-select" value={form.room} onChange={(e) => onRoomChange(e.target.value)}><option value="">اختر</option>{rooms.map((r) => <option key={r.number} value={r.number}>غرفة {r.number}</option>)}</select></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>اسم النزيل</label><input className="cx-input" value={form.guestName} onChange={(e) => setForm({ ...form, guestName: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الهاتف</label><input className="cx-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>عدد الأفراد</label><input className="cx-input" type="number" min="1" value={form.pax} onChange={(e) => setForm({ ...form, pax: e.target.value })} /></div>
