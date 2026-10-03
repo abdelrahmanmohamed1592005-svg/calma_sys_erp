@@ -672,6 +672,120 @@ grant usage on schema public to service_role;
 grant all on all tables in schema public to service_role;
 alter default privileges in schema public grant all on tables to service_role;
 
+-- --------------------------------------------------------------------------
+-- 13) تشديدات أمان إضافية (مراجعة شاملة - النظام ده فيه فلوس وحجوزات حقيقية
+--     فلازم يكون قفل محكم 100% مش بس على مستوى الواجهة، لأن أي حد يعرف
+--     JavaScript يقدر يفتح Console المتصفح ويبعت طلبات مباشرة لقاعدة
+--     البيانات (Supabase API) من غير ما يمر على الواجهة خالص - فالحماية
+--     الحقيقية الوحيدة هي RLS على مستوى قاعدة البيانات نفسها، مش كود الواجهة.
+-- --------------------------------------------------------------------------
+
+-- (أ) ثغرة انتحال هوية: room_overrides.updated_by كان بييجي كنص حر من
+--     المتصفح من غير أي تحقق - موظف ممكن (بفتح Console) يبعت تحديث حالة
+--     غرفة وهو يكتب في updated_by اسم زميله بدل اسمه، فيظهر في السجل إن
+--     زميله هو اللي غيّر الحالة مش هو. نفس الحل المطبّق على activity_log/
+--     bookings/shift_records/shift_claims: تريجر بيجيب هوية الفاعل الحقيقية
+--     من الجلسة نفسها (auth.uid())، مش من النص اللي المتصفح بعته.
+create or replace function set_actor_fields()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_username text;
+  v_name text;
+  v_role text;
+begin
+  select username, name, role into v_username, v_name, v_role
+  from profiles where id = auth.uid();
+
+  if TG_TABLE_NAME = 'activity_log' then
+    new.username := coalesce(v_username, new.username);
+    new.user_name := coalesce(v_name, new.user_name);
+    new.role := coalesce(v_role, new.role);
+  elsif TG_TABLE_NAME = 'shift_records' then
+    new.staff_username := coalesce(v_username, new.staff_username);
+    new.staff_name := coalesce(v_name, new.staff_name);
+  elsif TG_TABLE_NAME = 'bookings' then
+    new.created_by := coalesce(v_username, new.created_by);
+  elsif TG_TABLE_NAME = 'shift_claims' then
+    new.username := coalesce(v_username, new.username);
+    new.name := coalesce(v_name, new.name);
+  elsif TG_TABLE_NAME = 'room_overrides' then
+    new.updated_by := coalesce(v_username, new.updated_by);
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists room_overrides_actor on room_overrides;
+create trigger room_overrides_actor before insert or update on room_overrides
+  for each row execute function set_actor_fields();
+
+-- (ب) ثغرة في تسجيل أول مدير عام (bootstrap): الشرط القديم
+--     "(select count(*) from profiles) = 0 or is_gm()" كان بيسمح بإدخال
+--     أي صف (أي id، وأي role حتى لو مش 'gm') طول ما جدول profiles فاضي
+--     خالص - من غير ما يتأكد إن اللي بيعمل insert ده هو نفسه صاحب الـ id
+--     المُدرج. دلوقتي بنتأكد: (1) الصف اللي بيتضاف لازم يكون بمعرّف
+--     المستخدم الحالي نفسه (id = auth.uid()) مش معرّف حد تاني، و(2) أول
+--     حساب يتعمل (الجدول فاضي) لازم يكون دوره 'gm' بالتحديد مش أي دور تاني.
+drop policy if exists "profiles insert" on profiles;
+create policy "profiles insert" on profiles for insert
+  with check (
+    id = auth.uid()
+    and (
+      (role = 'gm' and (select count(*) from profiles) = 0)
+      or is_gm()
+    )
+  );
+
+-- (ج) ثغرة: كل شاشات العرض (select) على rooms/room_overrides/bookings/
+--     shift_records/shift_claims/profiles كانت بس بتتأكد إن فيه جلسة دخول
+--     صالحة (auth.uid() is not null) من غير ما تتأكد إن الحساب ده لسه
+--     "مفعّل" (active = true). يعني موظف اتعطّل حسابه من المدير العام
+--     يقدر يستمر يقرا كل بيانات الحجوزات/الفلوس/الأنشطة لحد ما الجلسة
+--     (JWT) بتاعته تنتهي أو يسجّل خروج - ده وقت طويل أوي لحساب المفروض
+--     مقطوع منه الوصول فورًا. دلوقتي العرض كله بقى مربوط بـ is_active_user()
+--     بدل ما يكفي إنه بس "مسجل دخول".
+drop policy if exists "profiles select" on profiles;
+create policy "profiles select" on profiles for select using (is_active_user());
+
+drop policy if exists "rooms select" on rooms;
+create policy "rooms select" on rooms for select using (is_active_user());
+
+drop policy if exists "overrides select" on room_overrides;
+create policy "overrides select" on room_overrides for select using (is_active_user());
+
+drop policy if exists "bookings select" on bookings;
+create policy "bookings select" on bookings for select using (is_active_user());
+
+drop policy if exists "shifts select" on shift_records;
+create policy "shifts select" on shift_records for select using (is_active_user());
+
+drop policy if exists "claims select" on shift_claims;
+create policy "claims select" on shift_claims for select using (is_active_user());
+
+-- (د) سجل الحركة (activity_log) كان أي مستخدم نشط يقدر يقراه كامل، حتى لو
+--     دوره (staff) مفروض معندهوش صلاحية "viewActivity" في الواجهة أصلاً
+--     (constants.js -> PERMISSIONS.staff.viewActivity = false). الواجهة
+--     كانت بتخبي التاب بس، والسجل الكامل (بتاع كل الموظفين) يفضل متاح عن
+--     طريق الـ API مباشرة. دلوقتي: مدير الحجوزات/الحسابات/المدير العام
+--     بيشوفوا السجل كامل زي ما هي صلاحيتهم. أما ستاف (أو أي دور تاني) فبيشوف
+--     بس صفوفه هو (username بتاعه) - ده ضروري لميزة "تقرير جلسة العمل" قبل
+--     تسجيل الخروج اللي بتعرض أفعال اليوزر نفسه بس وموجودة لكل الأدوار.
+create or replace function can_view_activity_log()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (
+    select 1 from profiles
+    where id = auth.uid() and role in ('reservations','accounts','gm') and active = true
+  );
+$$;
+grant execute on function can_view_activity_log() to authenticated;
+
+drop policy if exists "activity select" on activity_log;
+create policy "activity select" on activity_log for select using (
+  can_view_activity_log()
+  or (is_active_user() and username = (select username from profiles where id = auth.uid()))
+);
+
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):
 --
