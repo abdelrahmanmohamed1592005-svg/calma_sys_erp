@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from "react";
-import { Pencil, Trash2, AlertTriangle, Check, Plus, Download, Lock } from "lucide-react";
-import { TwoStepButton, PaymentDetailsInline, downloadCSV } from "./shared";
+import { Pencil, Trash2, AlertTriangle, Check, Plus, Printer, Lock } from "lucide-react";
+import { TwoStepButton, PaymentDetailsInline, Logo } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, onlineNetAmount } from "../domain/money";
-import { todayStr, addDays, nightsBetween, uid } from "../domain/dates";
-import { BOOKING_SOURCES, BOOKING_STATUSES } from "../domain/constants";
+import { todayStr, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
+import { BOOKING_SOURCES, BOOKING_STATUSES, HOTEL_NAME } from "../domain/constants";
 import { roomsOverlap, findOverlappingBooking, resolveDuplicateCheckin } from "../domain/bookingLogic";
 
 function emptyBooking() {
   return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", amountTendered: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", settled: false, notes: "", imported: false, needsRoomReview: false, duplicateConfirmed: false };
 }
 
-export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, onUpdateBooking, onDeleteBooking, onLog, showToast, pendingEditId, onConsumeEditRequest }) {
+export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onDeleteBooking, onLog, showToast, pendingEditId, onConsumeEditRequest }) {
   const [form, setForm] = useState(null);
   const [filter, setFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -85,15 +85,9 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
     return true;
   }).sort((a, b) => b.checkin.localeCompare(a.checkin));
 
-  function exportCSV() {
-    const headers = ["كود", "الغرفة", "النزيل", "الهاتف", "دخول", "خروج", "الليالي", "السعر لليلة", "العملة", "إجمالي الغرفة", "غسيل", "كافيتيريا", "جولات", "بيك أب", "الإجمالي الكلي", "المدفوع", "المتبقي", "طريقة الدفع", "المصدر", "الحالة"];
-    const rows = list.map((b) => { const gt = bookingGrandTotal(b); return [b.code, b.room, b.guestName, b.phone, b.checkin, b.checkout, nightsBetween(b.checkin, b.checkout), b.priceNight, b.currency, b.totalRoom, b.extras?.laundry, b.extras?.cafeteria, b.extras?.tours, b.extras?.pickup, gt, b.amountPaid, gt - (Number(b.amountPaid) || 0), b.paymentMethod, b.source, b.status]; });
-    downloadCSV("bookings.csv", headers, rows);
-  }
-
   return (
     <div style={{ padding: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+      <div className="cx-no-print" style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input className="cx-input" style={{ maxWidth: 220 }} placeholder="بحث برقم الغرفة أو الاسم أو الكود" value={filter} onChange={(e) => setFilter(e.target.value)} />
           <input className="cx-input" type="date" title="من تاريخ" style={{ width: 150 }} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
@@ -101,13 +95,29 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
           {(dateFrom || dateTo) && <button className="cx-btn cx-btn-outline" onClick={() => { setDateFrom(""); setDateTo(""); }}>مسح الفترة</button>}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="cx-btn cx-btn-outline" onClick={exportCSV}><Download size={13} /> تصدير CSV</button>
+          <button className="cx-btn cx-btn-outline" onClick={() => window.print()}><Printer size={13} /> طباعة القائمة</button>
           {(perms.editBookings || perms.canCreateBookings) && <button className="cx-btn cx-btn-gold" onClick={startNew}><Plus size={14} /> حجز جديد</button>}
         </div>
       </div>
 
+      {/* ترويسة الطباعة - بنفس شكل باقي تقارير السيستم بالظبط */}
+      <div className="cx-print-only cx-print-header">
+        <div className="cx-print-head-row">
+          <div className="cx-print-brand">
+            <Logo size={30} />
+            {HOTEL_NAME && <div className="cx-print-hotel-name">{HOTEL_NAME}</div>}
+          </div>
+          <div className="cx-print-meta">
+            <div className="cx-print-title">قائمة الحجوزات</div>
+            <div>{dateFrom || dateTo ? `${dateFrom || "—"} → ${dateTo || "—"}` : "كل الحجوزات"}{filter ? ` · بحث: ${filter}` : ""}</div>
+            <div>تاريخ الإصدار: {arabicDateLong(todayStr())}{profile?.name ? ` · أُعِد بواسطة: ${profile.name}` : ""}</div>
+          </div>
+        </div>
+        <div className="cx-print-rule" />
+      </div>
+
       {form && (
-        <div className="cx-card" style={{ padding: 14, marginBottom: 14 }}>
+        <div className="cx-card cx-no-print" style={{ padding: 14, marginBottom: 14 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>كود الحجز (اختياري)</label><input className="cx-input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الغرفة</label><select className="cx-select" value={form.room} onChange={(e) => onRoomChange(e.target.value)}><option value="">اختر</option>{rooms.map((r) => <option key={r.number} value={r.number}>{r.number} - {r.type}</option>)}</select>
@@ -219,7 +229,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.checkin} → {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {b.pax} أفراد {b.code && `· كود ${b.code}`}</div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.source} · {b.paymentMethod}{b.paymentDetails?.senderName ? ` (${b.paymentDetails.senderName} · ${b.paymentDetails.senderNumber})` : ""} · الإجمالي {fmt(gt)} {b.currency} {due > 0 && !b.paymentDetails?.onlinePaid && <span style={{ color: "var(--rust)" }}>· متبقي {fmt(due)}</span>}</div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="cx-no-print" style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span className="cx-pill" style={{ background: "#00000010", color: b.status === "ملغي" ? "var(--rust)" : "var(--teal)" }}>{b.status}</span>
               {perms.editBookings && (<>
                 <button className="cx-btn cx-btn-outline" onClick={() => startEdit(b)}><Pencil size={13} /></button>
@@ -230,8 +240,19 @@ export function BookingsPanel({ rooms, bookings, perms, role, onInsertBooking, o
                 )}
               </>)}
             </div>
+            <div className="cx-print-only">
+              <span className="cx-pill" style={{ background: "#00000010", color: b.status === "ملغي" ? "var(--rust)" : "var(--teal)" }}>{b.status}</span>
+            </div>
           </div>
         ); })}
+      </div>
+
+      <div className="cx-print-only cx-print-footer">
+        <div className="cx-print-sign">
+          <span>توقيع المسؤول: ______________________</span>
+          <span>الختم:</span>
+        </div>
+        <div className="cx-print-generated">تم إصدار هذا المستند أوتوماتيكيًا من نظام إدارة الفندق Calma</div>
       </div>
     </div>
   );

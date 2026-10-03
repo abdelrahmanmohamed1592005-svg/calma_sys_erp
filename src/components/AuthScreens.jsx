@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { Info, Download } from "lucide-react";
-import { GlobalStyle, Logo, downloadCSV } from "./shared";
+import { Info, Printer } from "lucide-react";
+import { GlobalStyle, Logo } from "./shared";
 import { arabicWeekday, arabicDateLong, todayStr } from "../domain/dates";
 import { validatePasswordStrength, validateUsername } from "../domain/security";
+import { HOTEL_NAME } from "../domain/constants";
 
 export function SetupScreen({ onCreate }) {
   const [name, setName] = useState(""); const [username, setUsername] = useState(""); const [pw, setPw] = useState(""); const [pw2, setPw2] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
@@ -74,19 +75,34 @@ export function LoginScreen({ onLogin }) {
 
 export function LogoutReportScreen({ user, actions, onExportAndLogout }) {
   const date = todayStr();
-  function handleExport() {
-    const headers = ["الوقت", "الإجراء"];
-    const rows = actions.map((a) => [new Date(a.ts).toLocaleString("ar-EG"), a.action]);
-    downloadCSV(`تقرير-${user.username}-${date}.csv`, headers, rows);
+  function handlePrintAndLogout() {
+    // window.print() بتوقف تنفيذ الكود لحد ما نافذة الطباعة تقفل (طباعة أو
+    // إلغاء)، وبعدها نكمل تسجيل الخروج - زي ما كان بالظبط وقت التصدير CSV.
+    window.print();
     onExportAndLogout();
   }
   return (
     <div className="calma-app" dir="rtl" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <GlobalStyle />
       <div className="cx-card" style={{ width: "100%", maxWidth: 520, padding: "26px 22px" }}>
-        <div style={{ textAlign: "center", marginBottom: 12 }}><Logo /></div>
-        <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 6, textAlign: "center" }}>لازم تصدّر تقرير تعديلاتك قبل الخروج</div>
-        <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14, textAlign: "center" }}>عملت {actions.length} تعديل/إجراء النهارده ({arabicWeekday(date)} · {date}) — دوس "تصدير وتسجيل الخروج" عشان يتحفظلك ملف بكل حاجة عملتها.</div>
+        <div className="cx-print-only cx-print-header">
+          <div className="cx-print-head-row">
+            <div className="cx-print-brand">
+              <Logo size={30} />
+              {HOTEL_NAME && <div className="cx-print-hotel-name">{HOTEL_NAME}</div>}
+            </div>
+            <div className="cx-print-meta">
+              <div className="cx-print-title">تقرير جلسة عمل</div>
+              <div>{user.name} ({user.username}) — {arabicWeekday(date)} · {date}</div>
+              <div>تاريخ الإصدار: {arabicDateLong(date)}</div>
+            </div>
+          </div>
+          <div className="cx-print-rule" />
+        </div>
+
+        <div className="cx-no-print" style={{ textAlign: "center", marginBottom: 12 }}><Logo /></div>
+        <div className="cx-no-print" style={{ fontWeight: 800, fontSize: 16, marginBottom: 6, textAlign: "center" }}>لازم تطبع تقرير تعديلاتك قبل الخروج</div>
+        <div className="cx-no-print" style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14, textAlign: "center" }}>عملت {actions.length} تعديل/إجراء النهارده ({arabicWeekday(date)} · {date}) — دوس "طباعة وتسجيل الخروج" عشان تاخد ورقة بكل حاجة عملتها.</div>
         <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--hair)", borderRadius: 8, marginBottom: 14 }}>
           {actions.map((a) => (
             <div key={a.id} style={{ padding: "8px 10px", borderBottom: "1px solid var(--hair)", fontSize: 12.5, display: "flex", justifyContent: "space-between", gap: 8 }}>
@@ -94,7 +110,15 @@ export function LogoutReportScreen({ user, actions, onExportAndLogout }) {
             </div>
           ))}
         </div>
-        <button className="cx-btn cx-btn-gold" style={{ width: "100%", justifyContent: "center" }} onClick={handleExport}><Download size={14} /> تصدير التقرير وتسجيل الخروج</button>
+        <button className="cx-btn cx-btn-gold cx-no-print" style={{ width: "100%", justifyContent: "center" }} onClick={handlePrintAndLogout}><Printer size={14} /> طباعة التقرير وتسجيل الخروج</button>
+
+        <div className="cx-print-only cx-print-footer">
+          <div className="cx-print-sign">
+            <span>توقيع: ______________________</span>
+            <span>الختم:</span>
+          </div>
+          <div className="cx-print-generated">تم إصدار هذا التقرير أوتوماتيكيًا من نظام إدارة الفندق Calma</div>
+        </div>
       </div>
     </div>
   );

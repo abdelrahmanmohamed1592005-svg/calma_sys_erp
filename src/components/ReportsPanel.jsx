@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { AlertTriangle, Copy, Download, Printer } from "lucide-react";
-import { downloadCSV, Logo } from "./shared";
+import { AlertTriangle, Copy, Printer } from "lucide-react";
+import { Logo } from "./shared";
 import { emptyMoney, computeShiftTotals, bookingGrandTotal, onlineNetAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, HOTEL_NAME } from "../domain/constants";
 import { todayStr, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
@@ -151,12 +151,6 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   }
   async function copySummary() { const t = buildSummaryText(); setCopyText(t); try { await navigator.clipboard.writeText(t); } catch (e) {} }
 
-  function exportCSV() {
-    const headers = ["التاريخ", "الشيفت", "الموظف", "الحالة", ...reportCurrencies.flatMap((c) => [`تحصيل ${c}`, `مصاريف ${c}`, `رصيد ${c}`])];
-    const rows = records.map((r) => { const t = r.closed ? r : computeShiftTotals(r); return [r.date, SHIFTS.find((s) => s.key === r.shiftKey)?.label, r.staffName, r.closed ? "مقفول" : "مفتوح", ...reportCurrencies.flatMap((c) => [t.totalCollections?.[c] || 0, t.totalExpenses?.[c] || 0, t.closingCash?.[c] || 0])]; });
-    downloadCSV(`تقرير-${effFrom}-الى-${effTo}.csv`, headers, rows);
-  }
-
   return (
     <div style={{ padding: 14 }}>
       <div className="cx-no-print" style={{ marginBottom: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -170,8 +164,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
           <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>من</label><input className="cx-input" type="date" style={{ width: 160 }} value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></div>
           <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>إلى</label><input className="cx-input" type="date" style={{ width: 160 }} value={toDate} onChange={(e) => setToDate(e.target.value)} /></div>
         </>)}
-        <button className="cx-btn cx-btn-outline" onClick={exportCSV}><Download size={13} /> تصدير CSV</button>
-        <button className="cx-btn cx-btn-outline" onClick={() => window.print()}><Printer size={13} /> طباعة</button>
+        <button className="cx-btn cx-btn-gold" onClick={() => window.print()}><Printer size={13} /> طباعة التقرير</button>
       </div>
 
       {loading ? <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>جارِ التحميل...</div> : (

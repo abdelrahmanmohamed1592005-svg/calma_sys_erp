@@ -62,6 +62,16 @@ export function GlobalStyle() {
         table.cx-table th.cx-th{ background:#F0EDE2 !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
         table.cx-table tr{ break-inside:avoid; page-break-inside:avoid; }
         * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+        /* أي حقل إدخال (ليفل اليومية، نموذج الحجوزات، إلخ) بيتحول شكله وقت
+           الطباعة لنص عادي بدل مربع فورم - عشان كل ورقة مطبوعة في السيستم،
+           مش بس شاشة التقارير، تطلع بشكل ورقة رسمية موحّدة. */
+        .cx-input, .cx-select, .cx-textarea{ border:none !important; background:transparent !important; padding:1px 2px !important; color:#161D27 !important; -webkit-appearance:none; appearance:none; }
+        .cx-input:disabled, .cx-select:disabled, .cx-textarea:disabled{ color:#161D27 !important; -webkit-text-fill-color:#161D27 !important; opacity:1 !important; }
+
+        /* أي صندوق فيه قص/سكرول (قوائم طويلة، جداول عريضة) لازم يبان كامل
+           في الورقة المطبوعة - السكرول مفهوم بس على الشاشة. */
+        [style*="overflow"]{ overflow:visible !important; max-height:none !important; }
       }
     `}</style>
   );

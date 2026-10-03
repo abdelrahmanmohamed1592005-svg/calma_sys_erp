@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Lock, Unlock, AlertTriangle, Download, History, Plus } from "lucide-react";
-import { downloadCSV } from "./shared";
+import { Lock, Unlock, AlertTriangle, History, Plus, Printer } from "lucide-react";
+import { Logo } from "./shared";
 import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals } from "../domain/money";
-import { SHIFTS } from "../domain/constants";
-import { todayStr, arabicWeekday, defaultShiftForNow, prevShiftOf } from "../domain/dates";
+import { SHIFTS, HOTEL_NAME } from "../domain/constants";
+import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, prevShiftOf } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
 import { getShiftRecord, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow } from "../data/shifts";
 
@@ -307,18 +307,36 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     setRefreshKey((k) => k + 1);
   }
 
-  function exportCSV(rec) {
-    const headers = ["الغرفة", "بند", "بيان المصاريف", "مبلغ المصاريف", "عملة المصاريف", "بيان التحصيل", "مبلغ التحصيل", "عملة التحصيل", "طريقة الدفع", "اسم المرسل", "رقم المرسل", "رقم العملية", "ملاحظات"];
-    const rows = [...rec.rows, { ...rec.cafeteria, room: "كافيتيريا" }].map((r) => [r.room, r.expenseCategory, r.expenseDesc, r.expenseAmt, r.expenseCurrency, r.collectionDesc, r.collectionAmt, r.collectionCurrency, r.collectionMethod, r.paymentDetails?.senderName, r.paymentDetails?.senderNumber, r.paymentDetails?.ref, r.notes]);
-    downloadCSV(`ledger-${rec.date}-${rec.shiftKey}.csv`, headers, rows);
-  }
+  // سجل الشيفت اللي هيظهر فعليًا في ترويسة الطباعة - شيفتي النهارده في وضع
+  // "live"، أو الشيفت المحدد في وضع "history".
+  const printRecord = mode === "live" ? record : histRecord;
 
   return (
     <div style={{ padding: 14 }}>
-      <div className="cx-no-print" style={{ marginBottom: 10, display: "flex", gap: 8 }}>
+      <div className="cx-no-print" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         {perms.editLedger && <button className={"cx-btn " + (mode === "live" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("live")}>شيفتي النهارده</button>}
         <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> استعراض شيفتات سابقة (قراءة فقط)</button>
+        {printRecord && <button className="cx-btn cx-btn-outline" onClick={() => window.print()}><Printer size={13} /> طباعة اليومية</button>}
       </div>
+
+      {/* ترويسة الطباعة - بتظهر بس في الورقة المطبوعة، بنفس شكل تقرير
+          التقارير بالظبط (الشعار واسم الفندق وتفاصيل الشيفت ومين طبعها). */}
+      {printRecord && (
+        <div className="cx-print-only cx-print-header">
+          <div className="cx-print-head-row">
+            <div className="cx-print-brand">
+              <Logo size={30} />
+              {HOTEL_NAME && <div className="cx-print-hotel-name">{HOTEL_NAME}</div>}
+            </div>
+            <div className="cx-print-meta">
+              <div className="cx-print-title">يومية شيفت</div>
+              <div>{arabicWeekday(printRecord.date)} {printRecord.date} · {SHIFTS.find((s) => s.key === printRecord.shiftKey)?.label} ({printRecord.staffName})</div>
+              <div>تاريخ الإصدار: {arabicDateLong(todayStr())}{profile?.name ? ` · أُعِد بواسطة: ${profile.name}` : ""}</div>
+            </div>
+          </div>
+          <div className="cx-print-rule" />
+        </div>
+      )}
 
       {mode === "live" ? (
         loading ? <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>جارِ التحميل...</div> : !myShiftKey ? (
@@ -330,7 +348,6 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
               <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>شيفتك</label><div style={{ fontWeight: 700, fontSize: 13, padding: "6px 2px" }}>{SHIFTS.find((s) => s.key === myShiftKey)?.label} ({SHIFTS.find((s) => s.key === myShiftKey)?.time})</div></div>
               <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>الاسم</label><div style={{ fontSize: 13, padding: "6px 2px" }}>{record.staffName}</div></div>
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
-              <button className="cx-btn cx-btn-outline" onClick={() => exportCSV(record)}><Download size={13} /> CSV</button>
             </div>
             <LedgerTable record={record} locked={locked} onUpdateRow={updateRow} onUpdateCafeteria={updateCafeteria} />
             <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
@@ -341,28 +358,41 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
               <textarea className="cx-textarea" rows={2} placeholder="ملاحظات الشيفت" disabled={locked} value={record.shiftNotes} onChange={(e) => persist({ ...record, shiftNotes: e.target.value }, { silent: true })} />
             </div>
             <ShiftSummaryFooter record={record} totals={totals} locked={locked} onChangeHandover={updateHandover} onAddCurrency={addCurrency} prevClosing={prevClosing} onChangeMethodHandover={updateMethodHandover} onAddMethodTracking={addMethodTracking} prevMethodClosing={prevMethodClosing} />
-            <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div className="cx-no-print" style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {!record.closed && perms.closeShift && <button className="cx-btn cx-btn-gold" onClick={closeShift}><Lock size={14} /> إقفال الشيفت</button>}
               {record.closed && <span style={{ fontSize: 12, color: "var(--muted)" }}>أُقفل بواسطة {record.closedBy} في {new Date(record.closedAt).toLocaleString("ar-EG")} — الشيفت ده خلص ومش هتقدر ترجعله تاني</span>}
             </div>
+            <LedgerPrintFooter />
           </>
         )
       ) : (
         <>
-          <div className="cx-card" style={{ padding: 12, marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div className="cx-card cx-no-print" style={{ padding: 12, marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>التاريخ</label><input className="cx-input" type="date" value={histDate} onChange={(e) => setHistDate(e.target.value)} style={{ width: 150 }} /></div>
             <div style={{ display: "flex", gap: 6 }}>{SHIFTS.map((s) => <button key={s.key} onClick={() => setHistShift(s.key)} className={"cx-btn " + (histShift === s.key ? "cx-btn-gold" : "cx-btn-outline")} style={{ fontSize: 12 }}>{s.label}</button>)}</div>
           </div>
           {!histRecord ? <div style={{ color: "var(--muted)", fontSize: 13, padding: 20, textAlign: "center" }}>لا يوجد سجل لهذا الشيفت</div> : (
             <>
-              <button className="cx-btn cx-btn-outline cx-no-print" style={{ marginBottom: 10 }} onClick={() => exportCSV(histRecord)}><Download size={13} /> CSV</button>
               <LedgerTable record={histRecord} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
               <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
+              <LedgerPrintFooter />
             </>
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function LedgerPrintFooter() {
+  return (
+    <div className="cx-print-only cx-print-footer">
+      <div className="cx-print-sign">
+        <span>توقيع الموظف المسؤول عن الشيفت: ______________________</span>
+        <span>الختم:</span>
+      </div>
+      <div className="cx-print-generated">تم إصدار هذا المستند أوتوماتيكيًا من نظام إدارة الفندق Calma</div>
     </div>
   );
 }
