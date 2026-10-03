@@ -190,13 +190,18 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
                 <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>نسبة عمولة المنصة %</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.paymentDetails.commissionPct} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, commissionPct: e.target.value } })} /></div>
                 <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>السعر من غير عمولة</label><div style={{ fontWeight: 700, padding: "6px 0" }}>{fmt(grandTotal)} {form.currency}</div></div>
                 <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>السعر بالعمولة (الصافي للفندق)</label><div style={{ fontWeight: 700, padding: "6px 0", color: "var(--teal)" }}>{fmt(onlineNetAmount(grandTotal, form.paymentDetails.commissionPct))} {form.currency}</div></div>
+                {/* الحجز ده مدفوع من خلال منصة حجز (زي Booking.com) مش تحويل
+                    مباشر من النزيل - فمفيش "اسم مرسل" أو "رقم محفظة" أصلًا.
+                    اسم المنصة نفسها متسجل في "جهة الحجز" فوق، وده بس ملاحظة/
+                    كود تأكيد اختياري يخص حجز المنصة. */}
+                <div style={{ gridColumn: "1 / -1" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رقم تأكيد الحجز على المنصة / ملاحظة (اختياري)</label><input className="cx-input" placeholder="مثلاً: رقم حجز Booking.com" disabled={moneyLocked} value={form.paymentDetails.ref} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, ref: e.target.value } })} /></div>
               </div>
             )}
           </div>
 
-          {(ONLINE_METHODS.includes(form.paymentMethod) || form.paymentDetails.onlinePaid) && (
+          {ONLINE_METHODS.includes(form.paymentMethod) && !form.paymentDetails.onlinePaid && (
             <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>تفاصيل الدفع الأونلاين {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>تفاصيل التحويل المباشر {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
                 <input className="cx-input" placeholder="اسم المرسل" disabled={moneyLocked} value={form.paymentDetails.senderName} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, senderName: e.target.value } })} />
                 <input className="cx-input" placeholder={form.paymentMethod === "فيزا" ? "آخر ٤ أرقام الكارت" : "رقم المحفظة / الهاتف"} disabled={moneyLocked} value={form.paymentDetails.senderNumber} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, senderNumber: e.target.value } })} />

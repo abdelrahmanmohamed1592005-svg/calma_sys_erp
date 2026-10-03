@@ -293,7 +293,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
             {bAgg.items.length > 0 ? (
               <div style={{ overflowX: "auto" }}>
                 <table className="cx-table" style={{ fontSize: 12, minWidth: 620 }}>
-                  <thead><tr><th className="cx-th">الغرفة / النزيل</th><th className="cx-th">التواريخ</th><th className="cx-th">من غير عمولة</th><th className="cx-th">العمولة %</th><th className="cx-th">الصافي</th><th className="cx-th">تفاصيل الدفع</th></tr></thead>
+                  <thead><tr><th className="cx-th">الغرفة / النزيل</th><th className="cx-th">التواريخ</th><th className="cx-th">من غير عمولة</th><th className="cx-th">العمولة %</th><th className="cx-th">الصافي</th><th className="cx-th">ملاحظة / تأكيد الحجز</th></tr></thead>
                   <tbody>
                     {bAgg.items.map((it) => (
                       <tr key={it.id}>
@@ -302,7 +302,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
                         <td>{fmt(it.gross)} {it.currency}</td>
                         <td>{it.commissionPct}%</td>
                         <td style={{ fontWeight: 700, color: "var(--teal)" }}>{fmt(it.net)} {it.currency}</td>
-                        <td style={{ fontSize: 11, color: "var(--muted)" }}>{it.paymentDetails?.senderName || "—"} {it.paymentDetails?.ref ? `· ${it.paymentDetails.ref}` : ""}</td>
+                        <td style={{ fontSize: 11, color: "var(--muted)" }}>{it.paymentDetails?.ref || "—"}</td>
                       </tr>
                     ))}
                   </tbody>

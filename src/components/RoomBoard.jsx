@@ -162,8 +162,13 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>عدد الليالي</div><div style={{ fontWeight: 700 }}>{nightsBetween(b.checkin, b.checkout)}</div></div>
                 <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>سعر الليلة × المدة</div><div style={{ fontWeight: 700 }}>{fmt(b.priceNight)} × {nightsBetween(b.checkin, b.checkout)} = {fmt(b.totalRoom)} {b.currency}</div></div>
                 <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>طريقة الدفع</div><div style={{ fontWeight: 700 }}>{b.paymentMethod}</div></div>
-                {(ONLINE_METHODS.includes(b.paymentMethod) || b.paymentDetails?.onlinePaid) && b.paymentDetails?.senderName && (
-                  <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>تفاصيل الدفع الأونلاين</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.senderName} · {b.paymentDetails.senderNumber} {b.paymentDetails.ref && `· ${b.paymentDetails.ref}`}</div></div>
+                {/* حجز مدفوع من خلال منصة حجز (مش تحويل مباشر من النزيل) -
+                    مفيش اسم مرسل هنا أصلًا، بس ممكن يكون فيه رقم تأكيد/ملاحظة. */}
+                {b.paymentDetails?.onlinePaid && b.paymentDetails?.ref && (
+                  <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>ملاحظة حجز المنصة</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.ref}</div></div>
+                )}
+                {!b.paymentDetails?.onlinePaid && ONLINE_METHODS.includes(b.paymentMethod) && b.paymentDetails?.senderName && (
+                  <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>تفاصيل التحويل المباشر</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.senderName} · {b.paymentDetails.senderNumber} {b.paymentDetails.ref && `· ${b.paymentDetails.ref}`}</div></div>
                 )}
                 <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>الإجمالي الكلي</div><div style={{ fontWeight: 700 }}>{fmt(gt)} {b.currency}</div></div>
                 {!b.paymentDetails?.onlinePaid && (<>
