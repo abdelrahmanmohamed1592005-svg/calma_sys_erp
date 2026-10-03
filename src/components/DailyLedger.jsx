@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer } from "lucide-react";
 import { Logo } from "./shared";
 import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals } from "../domain/money";
-import { SHIFTS, HOTEL_NAME } from "../domain/constants";
+import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, prevShiftOf } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
 import { getShiftRecord, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow } from "../data/shifts";
@@ -17,7 +17,7 @@ function CurrencyPicker({ value, onChange, disabled, width }) {
   );
 }
 
-function LedgerTable({ record, locked, onUpdateRow, onUpdateCafeteria }) {
+function LedgerTable({ record, rooms, locked, onUpdateRow, onUpdateCafeteria }) {
   return (
     <div style={{ overflowX: "auto" }}>
       <table className="cx-table" style={{ fontSize: 12, minWidth: 860 }}>
@@ -25,7 +25,7 @@ function LedgerTable({ record, locked, onUpdateRow, onUpdateCafeteria }) {
         <tbody>
           {record.rows.map((row, idx) => (
             <tr key={row.room}>
-              <td style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff" }}>{row.room}</td>
+              <td style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}>{roomLabel(rooms, row.room)}</td>
               <td>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={row.expenseCategory} onChange={(e) => onUpdateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
@@ -349,7 +349,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
               <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>الاسم</label><div style={{ fontSize: 13, padding: "6px 2px" }}>{record.staffName}</div></div>
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
-            <LedgerTable record={record} locked={locked} onUpdateRow={updateRow} onUpdateCafeteria={updateCafeteria} />
+            <LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} onUpdateCafeteria={updateCafeteria} />
             <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <input type="checkbox" checked={record.flagged} disabled={locked} onChange={(e) => persist({ ...record, flagged: e.target.checked }, { immediate: true })} />
@@ -373,7 +373,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
           </div>
           {!histRecord ? <div style={{ color: "var(--muted)", fontSize: 13, padding: 20, textAlign: "center" }}>لا يوجد سجل لهذا الشيفت</div> : (
             <>
-              <LedgerTable record={histRecord} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
+              <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
               <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
               <LedgerPrintFooter />

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
 import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, ONLINE_METHODS, PAYMENT_METHODS } from "../domain/money";
 import { todayStr, nightsBetween, addDays } from "../domain/dates";
-import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_BOOKING } from "../domain/constants";
+import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_BOOKING, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomsOverlap } from "../domain/bookingLogic";
 import { getShiftRecord } from "../data/shifts";
 
@@ -43,7 +43,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
   async function saveOverride(statusKey) {
     const res = await onSaveOverride(selected, statusKey);
     if (res?.error) { showToast(res.error); return; }
-    onLog(`تغيير حالة الغرفة ${selected} إلى: ${MANUAL_STATUS_OPTIONS.find((o) => o.key === statusKey)?.label}`);
+    onLog(`تغيير حالة ${roomLabel(rooms, selected)} إلى: ${MANUAL_STATUS_OPTIONS.find((o) => o.key === statusKey)?.label}`);
     showToast("تم تحديث حالة الغرفة");
   }
   // تسجيل تحصيل كامل المبلغ لازم يسجل طريقة الدفع الفعلية (فيزا/انستاباي/
@@ -54,13 +54,13 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
     const gt = bookingGrandTotal(booking);
     const res = await onUpdateBooking(booking.id, { ...booking, paymentMethod: collectMethod, amountPaid: gt, settled: true });
     if (res?.error) { showToast(res.error); return; }
-    onLog(`تحصيل كامل مبلغ الحجز (${collectMethod}) - غرفة ${booking.room} - ${booking.guestName}`);
+    onLog(`تحصيل كامل مبلغ الحجز (${collectMethod}) - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
     showToast("تم تسجيل التحصيل الكامل");
   }
   async function undoSettled(booking) {
     const res = await onToggleSettled(booking, false);
     if (res?.error) { showToast(res.error); return; }
-    onLog(`إلغاء تحصيل كامل مبلغ الحجز - غرفة ${booking.room} - ${booking.guestName}`);
+    onLog(`إلغاء تحصيل كامل مبلغ الحجز - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
     showToast("تم إلغاء علامة التحصيل");
   }
   // تمديد الحجز بليلة/ليالي إضافية: بتحرك تاريخ الخروج قدام، وبتزود إجمالي
@@ -77,7 +77,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
     const newTotalRoom = (Number(booking.totalRoom) || 0) + addedRoomCharge;
     const res = await onUpdateBooking(booking.id, { ...booking, checkout: newCheckout, totalRoom: newTotalRoom });
     if (res?.error) { showToast(res.error); return; }
-    onLog(`تمديد حجز غرفة ${booking.room} - ${booking.guestName} بـ${n} ليلة/ليالي - تشيك أوت جديد ${newCheckout}`);
+    onLog(`تمديد حجز ${roomLabel(rooms, booking.room)} - ${booking.guestName} بـ${n} ليلة/ليالي - تشيك أوت جديد ${newCheckout}`);
     showToast(`تم تمديد الحجز لحد ${newCheckout}`);
     setExtendNights(1);
   }
@@ -88,7 +88,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
     const res = await onUpdateBooking(booking.id, { ...booking, extras: clamped });
     if (res?.error) { showToast(res.error); return; }
     setExtrasDraft(clamped);
-    onLog(`تعديل الرسوم الإضافية - غرفة ${booking.room} - ${booking.guestName}`);
+    onLog(`تعديل الرسوم الإضافية - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
     showToast("تم حفظ الرسوم الإضافية");
   }
 
@@ -115,7 +115,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px,1fr))", gap: 10 }}>
         {rooms.map((r) => { const s = computeRoomStatus(r.number, bookings, overrides, date); return (
           <div key={r.number} onClick={() => setSelected(r.number)} className={"cx-tile " + (selected === r.number ? "selected" : "")} style={{ borderRightColor: STATUS_COLORS[s.key], borderRightWidth: 5, background: STATUS_TINTS[s.key] || "var(--paper)" }}>
-            <div style={{ fontWeight: 800, fontSize: 20 }}>{r.number}</div>
+            <div style={{ fontWeight: 800, fontSize: r.name ? 14.5 : 20, lineHeight: 1.15, wordBreak: "break-word" }}>{r.name || r.number}</div>
             {s.guest && <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4 }}>{s.guest}</div>}
           </div>
         ); })}
@@ -124,7 +124,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
       {room && status && (
         <div className="cx-card" style={{ marginTop: 16, padding: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>غرفة {room.number}</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{roomLabel(rooms, room.number)}</div>
             <button className="cx-btn cx-btn-outline" onClick={() => setSelected(null)}><X size={14} /></button>
           </div>
 

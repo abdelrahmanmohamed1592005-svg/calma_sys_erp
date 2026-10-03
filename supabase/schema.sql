@@ -66,12 +66,19 @@ create policy "profiles update" on profiles for update using (is_gm()) with chec
 -- --------------------------------------------------------------------------
 create table if not exists rooms (
   number integer primary key,
-  type text not null,
-  price numeric not null default 0,
-  currency text not null default 'USD',
-  capacity integer not null default 2,
-  beds text default ''
+  name text
 );
+
+-- الغرفة بقت بس رقمها + اسمها (الاسم/الكود اللي الفندق فعليًا بيستخدمه على
+-- الباب)؛ مفيش نوع غرفة ولا سعر ثابت ولا سعة ولا أسرّة محفوظة على الغرفة -
+-- كل ده بيتحدد من الحجز نفسه. الأعمدة القديمة دي بتُشال هنا (لو لسه موجودة
+-- من نسخة قديمة) من غير ما تبوّظ حاجة، لأن الكود مش بيقراها خالص دلوقتي.
+alter table rooms add column if not exists name text;
+alter table rooms drop column if exists type;
+alter table rooms drop column if exists price;
+alter table rooms drop column if exists currency;
+alter table rooms drop column if exists capacity;
+alter table rooms drop column if exists beds;
 
 alter table rooms enable row level security;
 drop policy if exists "rooms select" on rooms;
@@ -79,24 +86,27 @@ create policy "rooms select" on rooms for select using (auth.uid() is not null);
 drop policy if exists "rooms write" on rooms;
 create policy "rooms write" on rooms for all using (is_active_user()) with check (is_active_user());
 
-insert into rooms (number, type, price, currency, capacity, beds) values
-  (601, 'غرفة مزدوجة - إطلالة داخلية', 50, 'USD', 2, 'سرير مزدوج'),
-  (602, 'غرفة بسرير كينج - إطلالة داخلية', 50, 'USD', 2, 'سرير كينج'),
-  (603, 'غرفة عائلية (٣ أسرة)', 80, 'USD', 4, '٣ أسرة مفردة'),
-  (604, 'غرفة مزدوجة - بلكونة فرنسية', 70, 'USD', 2, 'سرير مزدوج'),
-  (605, 'غرفة مزدوجة - بلكونة', 70, 'USD', 2, 'سرير مزدوج'),
-  (606, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (607, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (608, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (609, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (610, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (611, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (612, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (613, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (614, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (615, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج'),
-  (616, 'غرفة مزدوجة', 60, 'USD', 2, 'سرير مزدوج')
-on conflict (number) do nothing;
+-- بيانات الغرف الحقيقية (الاسم/الكود المكتوب على كل باب فعليًا). "on
+-- conflict ... do update" يعني تشغيل السكريبت ده تاني (بعد ما تغيّري اسم
+-- غرفة من هنا) بيحدّث الاسم المسجّل من غير ما يضيف صف جديد أو يلمس أي حجوزات.
+insert into rooms (number, name) values
+  (601, '(t)601داخلي'),
+  (602, '602(S/D)داخلي'),
+  (603, '603(T)تراس'),
+  (604, '(W)604(D)'),
+  (605, '(b)605(D)'),
+  (606, '(W)606(T)'),
+  (607, '(W)607(T)'),
+  (608, '(b)608(D)'),
+  (609, '(b)609(D)'),
+  (610, '(W)610(D)'),
+  (611, '(W)611(D)'),
+  (612, '(b)612(D)'),
+  (613, '(B)613(T)'),
+  (614, '(W)614(Q)'),
+  (615, '615(S)داخلي'),
+  (616, '616(S)داخلي')
+on conflict (number) do update set name = excluded.name;
 
 -- --------------------------------------------------------------------------
 -- 3) حالة الغرف اليدوية (صيانة / تنظيف / غادر مبكرًا...)
@@ -311,8 +321,8 @@ returns boolean language sql security definer stable set search_path = public as
 $$;
 
 -- دالة جديدة: هل المستخدم الحالي "مدير حجوزات" - ده الدور اللي فعليًا معاه
--- editBookings / canApproveBookings / editRoomConfig = true في كود التطبيق
--- (constants.js) - مش gm ولا accounts زي ما كنت مفتكر أول مرة
+-- editBookings / canApproveBookings = true في كود التطبيق (constants.js) -
+-- مش gm ولا accounts زي ما كنت مفتكر أول مرة
 create or replace function is_reservations_manager()
 returns boolean language sql security definer stable set search_path = public as $$
   select exists (
@@ -531,18 +541,9 @@ exception when duplicate_object then null; end $$;
 create unique index if not exists bookings_code_unique_idx
   on bookings (code) where code is not null;
 
-do $$ begin
-  alter table rooms add constraint rooms_price_nonneg check (price >= 0);
-exception when duplicate_object then null; end $$;
-
-do $$ begin
-  alter table rooms add constraint rooms_capacity_positive check (capacity > 0);
-exception when duplicate_object then null; end $$;
-
-alter table rooms drop constraint if exists rooms_currency_chk;
-do $$ begin
-  alter table rooms add constraint rooms_currency_chk check (char_length(currency) between 1 and 10);
-exception when duplicate_object then null; end $$;
+-- شيلنا قيود rooms_price_nonneg / rooms_capacity_positive / rooms_currency_chk
+-- القديمة لأن الأعمدة اللي كانت بتتحقق منها (price/capacity/currency) بقت
+-- متشالة من الغرفة خالص (انظر تعليق قسم "٢) الغرف" فوق).
 
 -- العهدة (handover) بقت ممكن تتسجل بأي عملة، مش لازم تكون فيها EGP/USD
 -- بالتحديد - شيلنا الشرط القديم اللي كان بيجبرها تبقى فيها الاتنين دول بس
@@ -585,8 +586,9 @@ end $$;
 -- 9) تعديل صلاحيات الكتابة (RLS Policies) لتقييد العمليات الحساسة
 -- --------------------------------------------------------------------------
 
--- الغرف: التسعير وإضافة/حذف الغرف لمدير الحجوزات (اللي عنده editRoomConfig
--- فعليًا في التطبيق)، مش المدير العام. عرضها متاح للجميع.
+-- الغرف: الكتابة (مثلاً تعديل اسم غرفة مباشرة من قاعدة البيانات) لمدير
+-- الحجوزات بس، مش المدير العام. عرضها متاح للجميع. التطبيق نفسه مفيهوش أي
+-- شاشة تعدّل الغرف - القيد ده دفاع إضافي لو حد حاول يكتب عن طريق الـ API.
 drop policy if exists "rooms write" on rooms;
 create policy "rooms write" on rooms for all using (is_reservations_manager()) with check (is_reservations_manager());
 

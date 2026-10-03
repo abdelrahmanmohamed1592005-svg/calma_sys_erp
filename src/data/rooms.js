@@ -1,9 +1,10 @@
 import { supabase } from "../lib/supabaseClient";
 
-// الغرفة بقت بس رقمها - كل تفاصيلها (السعر، العملة، النوع، إلخ) بقت
-// بتتحدد من الحجز نفسه مش من بيانات الغرفة الثابتة (انظر domain/constants.js).
+// الغرفة بقت بس رقمها واسمها - كل تفاصيلها التانية (السعر، العملة، النوع،
+// إلخ) بقت بتتحدد من الحجز نفسه مش من بيانات الغرفة الثابتة (انظر
+// domain/constants.js).
 function roomFromRow(r) {
-  return { number: r.number };
+  return { number: r.number, name: r.name || "" };
 }
 
 export async function getRooms() {

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer } from "lucide-react";
 import { Logo } from "./shared";
 import { emptyMoney, computeShiftTotals, bookingGrandTotal, onlineNetAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
-import { SHIFTS, HOTEL_NAME } from "../domain/constants";
+import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getShiftRecord } from "../data/shifts";
 
@@ -297,7 +297,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
                   <tbody>
                     {bAgg.items.map((it) => (
                       <tr key={it.id}>
-                        <td>غرفة {it.room} · {it.guestName}</td>
+                        <td>{roomLabel(rooms, it.room)} · {it.guestName}</td>
                         <td style={{ whiteSpace: "nowrap" }}>{it.checkin} → {it.checkout}</td>
                         <td>{fmt(it.gross)} {it.currency}</td>
                         <td>{it.commissionPct}%</td>
@@ -323,7 +323,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {bAgg.outstanding.map((b) => (
                   <div key={b.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}>
-                    <span>غرفة {b.room} · {b.guestName} {b.onlineExtrasOnly && <span style={{ color: "var(--muted)", fontSize: 10.5 }}>(خدمات إضافية - الحجز مدفوع أونلاين)</span>}</span>
+                    <span>{roomLabel(rooms, b.room)} · {b.guestName} {b.onlineExtrasOnly && <span style={{ color: "var(--muted)", fontSize: 10.5 }}>(خدمات إضافية - الحجز مدفوع أونلاين)</span>}</span>
                     <span style={{ color: "var(--rust)", fontWeight: 700 }}>{fmt(b.due)} {b.currency}</span>
                   </div>
                 ))}

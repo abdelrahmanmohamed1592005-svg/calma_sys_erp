@@ -47,12 +47,36 @@ export const STAFF_ALLOWED_ON_ACTIVE_BOOKING = ["early_checkout"];
    الألوان كمان. */
 export const STATUS_COLORS = { available: "#2F7A4A", occupied_paid: "#8C6D00", occupied_unpaid: "#E63946", reserved: "#6B4FA0", maintenance: "#6B5B4D", cleaning: "#2E6B9E", early_checkout: "#C9702B" };
 
-/* الغرفة بقت بس رقمها المسجل في قاعدة البيانات - مفيش نوع غرفة ولا سعر
-   ثابت ولا سعة ولا أسرّة محفوظة على الغرفة نفسها. كل تفاصيل الحجز (السعر،
-   العملة، عدد الأفراد، إلخ) بتتحدد وقت إنشاء/تعديل الحجز في شاشة الحجوزات
-   نفسها، مش من بيانات الغرفة. */
+/* الغرفة بقت بس رقمها واسمها (الاسم/الكود المكتوب فعليًا على باب الغرفة في
+   الفندق) المسجّلين في قاعدة البيانات - مفيش نوع غرفة ولا سعر ثابت ولا سعة
+   ولا أسرّة محفوظة على الغرفة نفسها. كل تفاصيل الحجز (السعر، العملة، عدد
+   الأفراد، إلخ) بتتحدد وقت إنشاء/تعديل الحجز في شاشة الحجوزات نفسها، مش من
+   بيانات الغرفة. الأسماء دي نسخة احتياطية (fallback) بس لحد ما البيانات
+   تتحمّل من قاعدة البيانات - التعديل الحقيقي لأسماء الغرف يتم من هناك
+   (supabase/schema.sql أو تعديل مباشر في جدول rooms). */
 export const ROOMS_DEFAULT = [
-  { number: 601 }, { number: 602 }, { number: 603 }, { number: 604 }, { number: 605 }, { number: 606 },
-  { number: 607 }, { number: 608 }, { number: 609 }, { number: 610 }, { number: 611 }, { number: 612 },
-  { number: 613 }, { number: 614 }, { number: 615 }, { number: 616 },
+  { number: 601, name: "(t)601داخلي" },
+  { number: 602, name: "602(S/D)داخلي" },
+  { number: 603, name: "603(T)تراس" },
+  { number: 604, name: "(W)604(D)" },
+  { number: 605, name: "(b)605(D)" },
+  { number: 606, name: "(W)606(T)" },
+  { number: 607, name: "(W)607(T)" },
+  { number: 608, name: "(b)608(D)" },
+  { number: 609, name: "(b)609(D)" },
+  { number: 610, name: "(W)610(D)" },
+  { number: 611, name: "(W)611(D)" },
+  { number: 612, name: "(b)612(D)" },
+  { number: 613, name: "(B)613(T)" },
+  { number: 614, name: "(W)614(Q)" },
+  { number: 615, name: "615(S)داخلي" },
+  { number: 616, name: "616(S)داخلي" },
 ];
+
+// التسمية الكاملة الجاهزة للعرض/السجل لغرفة معينة - "غرفة" + اسمها الحقيقي
+// لو متسجل، وإلا "غرفة" + رقمها كاحتياط (مثلاً لو غرفة جديدة اتضافت في
+// قاعدة البيانات من غير اسم لسه).
+export function roomLabel(rooms, number) {
+  const r = rooms?.find((x) => x.number === number);
+  return `غرفة ${(r && r.name) ? r.name : number}`;
+}

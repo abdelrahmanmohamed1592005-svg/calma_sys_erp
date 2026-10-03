@@ -3,7 +3,7 @@ import { Pencil, Trash2, AlertTriangle, Check, Plus, Printer, Lock } from "lucid
 import { TwoStepButton, PaymentDetailsInline, Logo } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, onlineNetAmount } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
-import { BOOKING_SOURCES, BOOKING_STATUSES, HOTEL_NAME } from "../domain/constants";
+import { BOOKING_SOURCES, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { roomsOverlap, findOverlappingBooking, resolveDuplicateCheckin } from "../domain/bookingLogic";
 
 function emptyBooking() {
@@ -76,10 +76,10 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     }
     const res = isExistingBooking ? await onUpdateBooking(cleaned.id, cleaned) : await onInsertBooking(cleaned);
     if (res?.error) { showToast(res.error); return; }
-    onLog(`${isExistingBooking ? "تعديل" : "إضافة"} حجز غرفة ${cleaned.room} — ${cleaned.guestName}${conflict ? " (تسكين مكرر معتمد يدويًا)" : ""}`);
+    onLog(`${isExistingBooking ? "تعديل" : "إضافة"} حجز ${roomLabel(rooms, cleaned.room)} — ${cleaned.guestName}${conflict ? " (تسكين مكرر معتمد يدويًا)" : ""}`);
     setForm(null); showToast("تم الحفظ");
   }
-  async function removeBooking(id) { const b = bookings.find((x) => x.id === id); const res = await onDeleteBooking(id); if (res?.error) { showToast(res.error); return; } onLog(`حذف حجز غرفة ${b?.room} — ${b?.guestName}`); showToast("تم الحذف"); }
+  async function removeBooking(id) { const b = bookings.find((x) => x.id === id); const res = await onDeleteBooking(id); if (res?.error) { showToast(res.error); return; } onLog(`حذف حجز ${roomLabel(rooms, b?.room)} — ${b?.guestName}`); showToast("تم الحذف"); }
 
   const list = bookings.filter((b) => {
     if (filter && !String(b.room).includes(filter) && !b.guestName.includes(filter) && !(b.code && b.code.includes(filter))) return false;
@@ -123,7 +123,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
         <div className="cx-card cx-no-print" style={{ padding: 14, marginBottom: 14 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>كود الحجز (اختياري)</label><input className="cx-input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الغرفة</label><select className="cx-select" value={form.room} onChange={(e) => onRoomChange(e.target.value)}><option value="">اختر</option>{rooms.map((r) => <option key={r.number} value={r.number}>غرفة {r.number}</option>)}</select></div>
+            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الغرفة</label><select className="cx-select" value={form.room} onChange={(e) => onRoomChange(e.target.value)}><option value="">اختر</option>{rooms.map((r) => <option key={r.number} value={r.number}>{r.name || `غرفة ${r.number}`}</option>)}</select></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>اسم النزيل</label><input className="cx-input" value={form.guestName} onChange={(e) => setForm({ ...form, guestName: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الهاتف</label><input className="cx-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>عدد الأفراد</label><input className="cx-input" type="number" min="1" value={form.pax} onChange={(e) => setForm({ ...form, pax: e.target.value })} /></div>
@@ -226,7 +226,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
         {list.map((b) => { const gt = bookingGrandTotal(b); const due = gt - (Number(b.amountPaid) || 0); return (
           <div key={b.id} className="cx-card" style={{ padding: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
             <div>
-              <div style={{ fontWeight: 800 }}>غرفة {b.room} · {b.guestName} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>مدفوع أونلاين</span>}</div>
+              <div style={{ fontWeight: 800 }}>{roomLabel(rooms, b.room)} · {b.guestName} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>مدفوع أونلاين</span>}</div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.checkin} → {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {b.pax} أفراد {b.code && `· كود ${b.code}`}</div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.source} · {b.paymentMethod}{b.paymentDetails?.senderName ? ` (${b.paymentDetails.senderName} · ${b.paymentDetails.senderNumber})` : ""} · الإجمالي {fmt(gt)} {b.currency} {due > 0 && !b.paymentDetails?.onlinePaid && <span style={{ color: "var(--rust)" }}>· متبقي {fmt(due)}</span>}</div>
             </div>
