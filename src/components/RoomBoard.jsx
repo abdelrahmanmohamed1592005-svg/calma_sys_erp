@@ -1,24 +1,26 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
 import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, ONLINE_METHODS, PAYMENT_METHODS } from "../domain/money";
-import { todayStr, nightsBetween } from "../domain/dates";
+import { todayStr, nightsBetween, addDays } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_BOOKING } from "../domain/constants";
-import { computeRoomStatus } from "../domain/bookingLogic";
+import { computeRoomStatus, roomsOverlap } from "../domain/bookingLogic";
 import { getShiftRecord } from "../data/shifts";
 
-const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#E3EDED", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
+const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#F5EFD6", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
 export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, onToggleSettled, onUpdateBooking, onEditBooking, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [extrasDraft, setExtrasDraft] = useState(null);
   const [collectMethod, setCollectMethod] = useState("كاش");
+  const [extendNights, setExtendNights] = useState(1);
   const date = todayStr();
   const room = rooms.find((r) => r.number === selected);
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date) : null;
 
   useEffect(() => { if (status?.booking) setExtrasDraft({ laundry: status.booking.extras?.laundry || "", cafeteria: status.booking.extras?.cafeteria || "", tours: status.booking.extras?.tours || "", pickup: status.booking.extras?.pickup || "" }); else setExtrasDraft(null); }, [selected, status?.booking?.id]);
   useEffect(() => { if (status?.booking) setCollectMethod(status.booking.paymentMethod || "كاش"); }, [selected, status?.booking?.id]);
+  useEffect(() => { setExtendNights(1); }, [selected, status?.booking?.id]);
 
   useEffect(() => {
     (async () => {
@@ -60,6 +62,24 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
     if (res?.error) { showToast(res.error); return; }
     onLog(`إلغاء تحصيل كامل مبلغ الحجز - غرفة ${booking.room} - ${booking.guestName}`);
     showToast("تم إلغاء علامة التحصيل");
+  }
+  // تمديد الحجز بليلة/ليالي إضافية: بتحرك تاريخ الخروج قدام، وبتزود إجمالي
+  // سعر الغرفة بقيمة الليالي الجديدة على نفس سعر الليلة المتفق عليه
+  // (من غير ما تلمس أي رسوم إضافية أو مدفوعات سابقة)، فكل حاجة تبعها -
+  // الإجمالي الكلي، المتبقي، التقارير - بتتحدث تلقائي لوحدها. وبتتأكد الأول
+  // إن الغرفة مش متحجزة لحد تاني في الليالي الإضافية دي قبل ما تأكد.
+  async function extendBooking(booking) {
+    const n = Math.max(1, Number(extendNights) || 1);
+    const newCheckout = addDays(booking.checkout, n);
+    const conflict = roomsOverlap(bookings, booking.room, booking.checkout, newCheckout, booking.id);
+    if (conflict) { showToast("الغرفة محجوزة لحد تاني في الليلة/الليالي الجديدة - مينفعش تمدد بالتاريخ ده"); return; }
+    const addedRoomCharge = (Number(booking.priceNight) || 0) * n;
+    const newTotalRoom = (Number(booking.totalRoom) || 0) + addedRoomCharge;
+    const res = await onUpdateBooking(booking.id, { ...booking, checkout: newCheckout, totalRoom: newTotalRoom });
+    if (res?.error) { showToast(res.error); return; }
+    onLog(`تمديد حجز غرفة ${booking.room} - ${booking.guestName} بـ${n} ليلة/ليالي - تشيك أوت جديد ${newCheckout}`);
+    showToast(`تم تمديد الحجز لحد ${newCheckout}`);
+    setExtendNights(1);
   }
   async function saveExtras(booking) {
     // منع أي قيمة سالبة من غير داعي تضرب قيد قاعدة البيانات (bookings_extras_nonneg)
@@ -154,6 +174,18 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
                 </div>
               )}
               {b.earlyCheckin?.applied && b.earlyCheckin.note && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر: {b.earlyCheckin.note}</div>}
+
+              {perms.editBookings && (
+                <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>النزيل طلب يمدد؟ حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي هيتحدثوا لوحدهم تلقائي</div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <input className="cx-input" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
+                    <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
+                    <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => extendBooking(b)}>تمديد الحجز</button>
+                  </div>
+                </div>
+              )}
+
               <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 {perms.markPaymentReceived && !b.paymentDetails?.onlinePaid && (
                   status.paid ? (

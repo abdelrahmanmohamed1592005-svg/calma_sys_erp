@@ -42,8 +42,10 @@ export const MANUAL_STATUS_OPTIONS = [
 export const STAFF_ALLOWED_ON_ACTIVE_BOOKING = ["early_checkout"];
 
 /* لون "مشغولة - متبقي فلوس" لازم يكون واضح وبارز ومختلف تمامًا عن باقي
-   الألوان (دي أهم حالة تحتاج متابعة فورية - فيه فلوس متأخرة على نزيل). */
-export const STATUS_COLORS = { available: "#2F7A4A", occupied_paid: "#1F4B4A", occupied_unpaid: "#E63946", reserved: "#6B4FA0", maintenance: "#6B5B4D", cleaning: "#2E6B9E", early_checkout: "#C9702B" };
+   الألوان (دي أهم حالة تحتاج متابعة فورية - فيه فلوس متأخرة على نزيل).
+   و"مشغولة - متحصّلة" بقى أصفر قاتم (مستردي/خردلي) واضح ومختلف عن باقي
+   الألوان كمان. */
+export const STATUS_COLORS = { available: "#2F7A4A", occupied_paid: "#8C6D00", occupied_unpaid: "#E63946", reserved: "#6B4FA0", maintenance: "#6B5B4D", cleaning: "#2E6B9E", early_checkout: "#C9702B" };
 
 /* الغرفة بقت بس رقمها المسجل في قاعدة البيانات - مفيش نوع غرفة ولا سعر
    ثابت ولا سعة ولا أسرّة محفوظة على الغرفة نفسها. كل تفاصيل الحجز (السعر،

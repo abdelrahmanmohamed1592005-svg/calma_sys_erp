@@ -319,8 +319,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
               بيك أب/دخول مبكر) متحصّلتش لسه، لأي حجز سواء أونلاين أو مباشر. */}
           {bAgg.outstanding.length > 0 && (
             <div className="cx-card" style={{ padding: 12, marginBottom: 14, borderColor: "var(--rust)" }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2, color: "var(--rust)" }}>مبالغ متبقية على نزلاء ({bAgg.outstanding.length})</div>
-              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>للحجوزات المدفوعة أونلاين، المتبقي هنا بس خدمات إضافية مش متحصّلة - سعر الغرفة نفسه متسوّى أونلاين ومحسوبش هنا.</div>
+              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 8, color: "var(--rust)" }}>مبالغ متبقية على نزلاء ({bAgg.outstanding.length})</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {bAgg.outstanding.map((b) => (
                   <div key={b.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}>
