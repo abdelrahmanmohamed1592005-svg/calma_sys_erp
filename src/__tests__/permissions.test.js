@@ -30,4 +30,14 @@ describe("permission matrix sanity", () => {
     expect(PERMISSIONS.staff.roomStatusRestricted).toBe(true);
     expect(PERMISSIONS.reservations.roomStatusRestricted).toBe(false);
   });
+
+  // مدير الحجوزات يضيف الحجوزات ويحدد سعرها، لكن "استلمنا الفلوس فعليًا
+  // ولا لأ" قرار موظف الشيفت بس - لو رجع markPaymentReceived يتفعّل لمدير
+  // الحجوزات تاني، اختبار ده هيفشل وينبّه إن حد رجّع الصلاحية دي بالغلط.
+  it("only staff can mark a booking's payment as collected", () => {
+    expect(PERMISSIONS.staff.markPaymentReceived).toBe(true);
+    expect(PERMISSIONS.reservations.markPaymentReceived).toBe(false);
+    expect(PERMISSIONS.accounts.markPaymentReceived).toBe(false);
+    expect(PERMISSIONS.gm.markPaymentReceived).toBe(false);
+  });
 });

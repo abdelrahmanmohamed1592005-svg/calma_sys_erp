@@ -30,6 +30,11 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
   const isExistingBooking = form ? bookings.some((b) => b.id === form.id) : false;
   const originalBooking = form && isExistingBooking ? bookings.find((b) => b.id === form.id) : null;
   const moneyLocked = role === "reservations" && isExistingBooking;
+  // مدير الحجوزات يضيف حجز ويحدد سعره عادي (فوق)، لكن "استلمنا الفلوس فعليًا
+  // ولا لأ" (المدفوع/المتحصّل/الباقي) مش شغله خالص - ده قرار موظف الشيفت
+  // اللي قدام النزيل فعليًا. القفل ده شامل حتى وقت إنشاء حجز جديد، مش بس
+  // وقت تعديل حجز قديم زي moneyLocked فوق.
+  const collectionLocked = role === "reservations";
 
   // الغرفة بقت بس رقم - مفيش سعر ثابت أو نوع متسجل عليها نرجع نعبّي بيه
   // السعر/العملة تلقائيًا؛ الموظف بيكتب سعر الليلة والعملة بنفسه كل مرة حسب
@@ -57,6 +62,11 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     let cleaned = { ...form, room: Number(form.room), totalRoom: form.totalRoom !== "" ? Number(form.totalRoom) : autoTotalRoom, extras: clampedExtras, earlyCheckin: clampedEarlyCheckin, needsRoomReview: false, approvalStatus: "approved" };
     if (moneyLocked && originalBooking) {
       cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: originalBooking.totalRoom, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails, amountPaid: originalBooking.amountPaid, amountTendered: originalBooking.amountTendered, settled: originalBooking.settled };
+    } else if (collectionLocked) {
+      // دفاع إضافي من غير الاعتماد على تعطيل الحقول في الواجهة بس: حجز جديد
+      // أو حجز مش مقفول بالكامل - نفرض خانات التحصيل على قيمتها الأصلية
+      // (أو صفر لحجز جديد) حتى لو الواجهة اتلعب فيها بأي طريقة.
+      cleaned = { ...cleaned, amountPaid: originalBooking ? originalBooking.amountPaid : 0, amountTendered: originalBooking ? originalBooking.amountTendered : 0, settled: originalBooking ? originalBooking.settled : false };
     }
     // "تسكين مكرر": الضيف القديم خرج بدري. قبل ما نحفظ الحجز الجديد، نتعامل
     // مع الحجز القديم المتعارض بطريقتين حسب تواريخه:
@@ -205,14 +215,15 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
             <div className="cx-card" style={{ marginTop: 10, padding: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
                 <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي الكلي (غرفة + رسوم)</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{fmt(grandTotal)} {form.currency}</div></div>
-                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المدفوع حتى الآن {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.amountPaid} onChange={(e) => setForm({ ...form, amountPaid: e.target.value })} /></div>
+                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المدفوع حتى الآن {(moneyLocked || collectionLocked) && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={moneyLocked || collectionLocked} value={form.amountPaid} onChange={(e) => setForm({ ...form, amountPaid: e.target.value })} /></div>
                 <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المتبقي على النزيل</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0", color: balanceDue > 0 ? "var(--rust)" : "var(--sage)" }}>{fmt(balanceDue)} {form.currency}</div></div>
                 {form.paymentMethod === "كاش" && (<>
-                  <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المبلغ المُستلم نقدًا</label><input className="cx-input" type="number" disabled={moneyLocked} value={form.amountTendered} onChange={(e) => setForm({ ...form, amountTendered: e.target.value })} /></div>
+                  <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المبلغ المُستلم نقدًا</label><input className="cx-input" type="number" disabled={moneyLocked || collectionLocked} value={form.amountTendered} onChange={(e) => setForm({ ...form, amountTendered: e.target.value })} /></div>
                   <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الباقي (الفكة)</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{changeDue != null ? fmt(changeDue) : "—"} {form.currency}</div></div>
                 </>)}
               </div>
-              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" disabled={moneyLocked} checked={form.settled} onChange={(e) => setForm({ ...form, settled: e.target.checked })} /><span style={{ fontSize: 12.5 }}>تم تحصيل كامل المبلغ (مُصفّى)</span></div>
+              {collectionLocked && !moneyLocked && <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Lock size={11} /> تسجيل التحصيل من صلاحية موظف الشيفت بس - إنت تقدر تحدد سعر الحجز، لكن تأكيد استلام الفلوس يتم من اليومية وقت الشيفت.</div>}
+              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" disabled={moneyLocked || collectionLocked} checked={form.settled} onChange={(e) => setForm({ ...form, settled: e.target.checked })} /><span style={{ fontSize: 12.5 }}>تم تحصيل كامل المبلغ (مُصفّى)</span></div>
             </div>
           )}
 

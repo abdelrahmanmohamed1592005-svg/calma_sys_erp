@@ -786,6 +786,41 @@ create policy "activity select" on activity_log for select using (
   or (is_active_user() and username = (select username from profiles where id = auth.uid()))
 );
 
+-- --------------------------------------------------------------------------
+-- 14) قرار عمل جديد: مدير الحجوزات يضيف حجوزات ويحدد سعرها عادي، لكن
+--     "استلمنا الفلوس فعليًا ولا لأ" (amount_paid / amount_tendered /
+--     settled) مش شغله خالص - ده قرار موظف الشيفت اللي قدام النزيل فعليًا
+--     وقت التحصيل. الواجهة بقت تقفل الحقول دي له (BookingsPanel.jsx)، وده
+--     نفس القرار لكن على مستوى قاعدة البيانات - دفاع حقيقي لو حد حاول
+--     يتخطى الواجهة ويبعت تحديث مباشر. مدير الحجوزات لسه يقدر يغيّر أي حاجة
+--     تانية في الحجز (سعر، تواريخ، غرفة، حالة...) عادي، القيد ده بس على
+--     الثلاث خانات دول.
+-- --------------------------------------------------------------------------
+create or replace function prevent_reservations_collection_edit()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  old_paid numeric; old_tendered numeric; old_settled boolean;
+begin
+  if is_reservations_manager() then
+    if TG_OP = 'INSERT' then
+      old_paid := 0; old_tendered := 0; old_settled := false;
+    else
+      old_paid := old.amount_paid; old_tendered := old.amount_tendered; old_settled := old.settled;
+    end if;
+    if (new.amount_paid is distinct from old_paid)
+       or (new.amount_tendered is distinct from old_tendered)
+       or (new.settled is distinct from old_settled) then
+      raise exception 'تسجيل التحصيل (المدفوع/المتحصّل) من صلاحية موظف الشيفت بس، مش مدير الحجوزات';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_reservations_collection_guard on bookings;
+create trigger bookings_reservations_collection_guard before insert or update on bookings
+  for each row execute function prevent_reservations_collection_edit();
+
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):
 --

@@ -22,7 +22,11 @@ export const TAB_LABELS = { board: "لوحة الغرف", ledger: "اليومي�
    كل حاجة باينة للمدير العام باينة كمان لمديرة الحسابات ومدير الحجوزات - عرض بس، غير الصلاحيات المحددة لكل دور. */
 export const PERMISSIONS = {
   staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true },
-  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: true },
+  // markPaymentReceived بقت false لمدير الحجوزات عمدًا - شغله يضيف الحجوزات
+  // ويحدد سعرها بس، أما "استلمنا الفلوس فعليًا ولا لأ" فده قرار موظف الشيفت
+  // اللي قدام النزيل فعليًا، مش مدير الحجوزات. هو يقدر يشوف المتبقي/المتحصّل
+  // (متابعة بس) لكن ميقدرش يغيّره.
+  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false },
   accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false },
   gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false },
 };
