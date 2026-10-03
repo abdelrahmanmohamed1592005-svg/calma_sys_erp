@@ -1,19 +1,20 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
 import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, ONLINE_METHODS, PAYMENT_METHODS } from "../domain/money";
-import { todayStr, nightsBetween, addDays } from "../domain/dates";
+import { todayStr, nightsBetween, addDays, defaultShiftForNow } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_BOOKING, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomsOverlap } from "../domain/bookingLogic";
-import { getShiftRecord } from "../data/shifts";
+import { getShiftRecord, getClaimsForDate } from "../data/shifts";
 
 const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#F5EFD6", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
-export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, onToggleSettled, onUpdateBooking, onEditBooking, onLog, showToast, dataVersion }) {
+export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOverride, onToggleSettled, onUpdateBooking, onEditBooking, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [extrasDraft, setExtrasDraft] = useState(null);
   const [collectMethod, setCollectMethod] = useState("كاش");
   const [extendNights, setExtendNights] = useState(1);
+  const [claims, setClaims] = useState({});
   const date = todayStr();
   const room = rooms.find((r) => r.number === selected);
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date) : null;
@@ -37,10 +38,25 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
     })();
   }, [date, dataVersion]);
 
+  // موظف الشيفت (staff) يقدر يغيّر حالة الغرف بس وهو في شيفته الفعلي
+  // اللي حاجزه - عشان نمنع موظف يدخل بره معاده ويعدل على حاجة مش شغله.
+  // باقي الأدوار (مدير الحجوزات/الحسابات/المدير العام) مش مربوطة بشيفت أصلًا
+  // (roomStatusRestricted: false) فمش بيأثر عليهم.
+  useEffect(() => {
+    if (!perms.roomStatusRestricted) return;
+    (async () => { setClaims(await getClaimsForDate(date)); })();
+  }, [date, dataVersion, perms.roomStatusRestricted]);
+
+  const currentShiftKey = defaultShiftForNow();
+  const myClaim = claims?.[currentShiftKey];
+  const isMyShiftNow = !!myClaim && !!profile && myClaim.username === profile.username;
+  const offShift = perms.roomStatusRestricted && !isMyShiftNow;
+
   const bookingActiveOnRoom = selected ? bookings.some((b) => b.room === selected && b.status !== "ملغي" && b.checkin <= date && date < b.checkout) : false;
   const statusEditLocked = perms.roomStatusRestricted && bookingActiveOnRoom;
 
   async function saveOverride(statusKey) {
+    if (offShift) { showToast("مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه"); return; }
     const res = await onSaveOverride(selected, statusKey);
     if (res?.error) { showToast(res.error); return; }
     onLog(`تغيير حالة ${roomLabel(rooms, selected)} إلى: ${MANUAL_STATUS_OPTIONS.find((o) => o.key === statusKey)?.label}`);
@@ -201,7 +217,11 @@ export function RoomBoard({ rooms, overrides, bookings, perms, onSaveOverride, o
           ); })()}
 
           {perms.editRoomStatus ? (
-            statusEditLocked ? (
+            offShift ? (
+              <div style={{ marginTop: 12, fontSize: 12, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 10, display: "flex", alignItems: "center", gap: 4 }}>
+                <AlertTriangle size={13} /> مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه.
+              </div>
+            ) : statusEditLocked ? (
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 12, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 10, marginBottom: 8 }}><AlertTriangle size={13} style={{ verticalAlign: -2 }} /> الغرفة عليها حجز نشط - تغيير حالتها بشكل عام يتم من مدير الحجوزات فقط، عشان نتجنب أي دبل بوكينج.</div>
                 <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>لو النزيل غادر قبل معاده</div>

@@ -144,7 +144,7 @@ export default function App() {
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} />
       {loadingData ? <LoadingScreen /> : (
         <>
-          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} onSaveOverride={handleSaveOverride} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "ledger" && <DailyLedger rooms={rooms} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDeleteBooking={handleDeleteBooking} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} />}
           {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
