@@ -46,6 +46,9 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
 
   async function saveBooking() {
     if (!form.room || !form.guestName.trim()) { showToast("لازم تحدد الغرفة واسم النزيل"); return; }
+    // تاريخ الخروج لازم يكون بعد تاريخ الدخول - من غير الفحص ده هنوصل لقيد
+    // قاعدة البيانات (bookings_dates_valid) وتظهر رسالة تقنية مش مفهومة.
+    if (!form.checkin || !form.checkout || form.checkout <= form.checkin) { showToast("تاريخ الخروج لازم يكون بعد تاريخ الدخول"); return; }
     if (conflict && !form.duplicateConfirmed) { showToast('الغرفة متعارضة مع حجز موجود - لو ده تسكين مكرر شرعي فعّل تأكيد "تسكين مكرر" تحت'); return; }
     // منع أي قيمة سالبة في الرسوم الإضافية/رسم الدخول المبكر من غير داعي
     // تضرب قيد قاعدة البيانات وتطلّع رسالة خطأ تقنية مش مفهومة.
@@ -127,8 +130,8 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>اسم النزيل</label><input className="cx-input" value={form.guestName} onChange={(e) => setForm({ ...form, guestName: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الهاتف</label><input className="cx-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>عدد الأفراد</label><input className="cx-input" type="number" min="1" value={form.pax} onChange={(e) => setForm({ ...form, pax: e.target.value })} /></div>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>تاريخ الدخول</label><input className="cx-input" type="date" value={form.checkin} onChange={(e) => setForm({ ...form, checkin: e.target.value })} /></div>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>تاريخ الخروج</label><input className="cx-input" type="date" value={form.checkout} onChange={(e) => setForm({ ...form, checkout: e.target.value })} /></div>
+            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>تاريخ الدخول</label><input className="cx-input" type="date" value={form.checkin} onChange={(e) => { const newCheckin = e.target.value; setForm((f) => ({ ...f, checkin: newCheckin, checkout: f.checkout && f.checkout > newCheckin ? f.checkout : addDays(newCheckin, 1) })); }} /></div>
+            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>تاريخ الخروج</label><input className="cx-input" type="date" min={form.checkin ? addDays(form.checkin, 1) : undefined} value={form.checkout} onChange={(e) => setForm({ ...form, checkout: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>السعر لليلة {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={moneyLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value })} /><input className="cx-input" list="currencies" disabled={moneyLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} style={{ width: 80 }} /><datalist id="currencies">{COMMON_CURRENCIES.map((c) => <option key={c} value={c} />)}</datalist></div></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={moneyLocked} placeholder={String(autoTotalRoom)} value={form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>طريقة الدفع {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><select className="cx-select" disabled={moneyLocked} value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
