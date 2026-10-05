@@ -21,17 +21,29 @@ export const TAB_LABELS = { board: "لوحة الغرف", ledger: "اليومي�
 /* staff: يشتغل باليومية والحجوزات (عرض + إضافة حجز مباشر) وحالة الغرف (بقيود).
    كل حاجة باينة للمدير العام باينة كمان لمديرة الحسابات ومدير الحجوزات - عرض بس، غير الصلاحيات المحددة لكل دور. */
 export const PERMISSIONS = {
-  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true },
+  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true, reopenShift: false },
   // markPaymentReceived بقت false لمدير الحجوزات عمدًا - شغله يضيف الحجوزات
   // ويحدد سعرها بس، أما "استلمنا الفلوس فعليًا ولا لأ" فده قرار موظف الشيفت
   // اللي قدام النزيل فعليًا، مش مدير الحجوزات. هو يقدر يشوف المتبقي/المتحصّل
   // (متابعة بس) لكن ميقدرش يغيّره.
-  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false },
-  accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false },
-  gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false },
+  // reopenShift: لو موظف قفل شيفته بالغلط، مدير الحجوزات والمدير العام بس
+  // يقدروا يفتحوه تاني (انظر قسم ١٦ في schema.sql).
+  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false, reopenShift: true },
+  accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false, reopenShift: false },
+  gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false, reopenShift: true },
 };
 
-export const BOOKING_SOURCES = ["مباشر", "Booking.com", "Trip.com", "Airbnb", "وسيط"];
+// جهات الحجز مثبّتة على الخمسة دول بس (مش نص حر تاني) - نفس فكرة تثبيت
+// العملات وطرق الدفع بالظبط. "بوكينج" يقصد بيه Booking.com و"تريب دوت كوم"
+// يقصد بيه Trip.com.
+export const BOOKING_SOURCES = ["مباشر", "سوشيال ميديا", "Booking.com", "Expedia", "Trip.com"];
+/* قائمة اختيار جهة الحجز اللي تعرض القيمة المحفوظة فعليًا حتى لو كانت جهة
+   قديمة (زي "Airbnb" أو "وسيط" من قبل التثبيت) مش موجودة في BOOKING_SOURCES
+   الجديدة - من غيرها الـ <select> هيعرض فاضي لحجز قديم من غير ما يغيّر
+   القيمة المحفوظة فعليًا. */
+export function sourceOptionsFor(currentValue) {
+  return currentValue && !BOOKING_SOURCES.includes(currentValue) ? [...BOOKING_SOURCES, currentValue] : BOOKING_SOURCES;
+}
 export const BOOKING_STATUSES = ["مؤكد", "تم تسجيل الدخول", "تم تسجيل الخروج", "ملغي"];
 
 /* شيلنا خيار "متاحة يدويًا" نهائيًا - مفيش فايدة منه لأن الغرفة أصلاً بترجع

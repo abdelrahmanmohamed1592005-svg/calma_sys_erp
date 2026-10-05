@@ -1,5 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, onlineNetAmount, emptyPaymentDetails, directBookingPaymentsByMethod, DEFAULT_ONLINE_COMMISSION_PCT } from "../domain/money";
+import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, onlineNetAmount, emptyPaymentDetails, directBookingPaymentsByMethod, DEFAULT_ONLINE_COMMISSION_PCT, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS } from "../domain/money";
+
+// انستاباي والتحويل البنكي وسيلة واحدة فعليًا - اتدمجوا في خيار واحد بدل
+// خيارين مختلفين، وفضلت العملات المعتمدة خمسة بس.
+describe("payment methods and currencies are fixed lists", () => {
+  it("merges Instapay and bank transfer into a single payment method", () => {
+    expect(PAYMENT_METHODS.filter((m) => m.includes("انستاباي") || m.includes("تحويل بنكي"))).toHaveLength(1);
+    expect(PAYMENT_METHODS).not.toContain("انستاباي");
+    expect(PAYMENT_METHODS).not.toContain("تحويل بنكي");
+  });
+  it("keeps the merged method in the online methods list", () => {
+    expect(ONLINE_METHODS.some((m) => m.includes("انستاباي"))).toBe(true);
+  });
+  it("supports exactly five fixed currencies", () => {
+    expect(COMMON_CURRENCIES).toEqual(["EGP", "USD", "EUR", "SAR", "GBP"]);
+  });
+});
 
 describe("computeShiftTotals", () => {
   it("separates EGP and USD totals correctly", () => {
@@ -176,6 +192,52 @@ describe("directBookingPaymentsByMethod (تحصيل الحجوزات بطرق ا
     const bookings = [{ id: "b1", paymentMethod: "فيزا", currency: "EGP", amountPaid: 0 }];
     const result = directBookingPaymentsByMethod(bookings);
     expect(result["فيزا"]).toBeUndefined();
+  });
+
+  it("excludes bookings already journaled into a shift ledger (avoids double-counting)", () => {
+    const bookings = [{ id: "b1", paymentMethod: "فيزا", currency: "EGP", amountPaid: 1500 }];
+    const journaledIds = new Set(["b1"]);
+    const result = directBookingPaymentsByMethod(bookings, journaledIds);
+    expect(result["فيزا"]).toBeUndefined();
+  });
+});
+
+describe("computeShiftTotals - bookingCollections (تحصيل الحجوزات التلقائي من بلوك الغرف/الحجوزات)", () => {
+  it("adds an auto-posted cash collection into totalCollections, cashCollections and closingCash", () => {
+    const rooms = [{ number: 601 }];
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 1000 });
+    record.bookingCollections = [{ id: "e1", bookingId: "b1", room: 601, amount: 500, currency: "EGP", method: "كاش" }];
+    const t = computeShiftTotals(record);
+    expect(t.totalCollections.EGP).toBe(500);
+    expect(t.cashCollections.EGP).toBe(500);
+    expect(t.closingCash.EGP).toBe(1500);
+  });
+
+  it("adds an auto-posted non-cash collection into byMethodCurrency without touching cash", () => {
+    const rooms = [{ number: 601 }];
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 0 });
+    record.bookingCollections = [{ id: "e1", bookingId: "b1", room: 601, amount: 300, currency: "EGP", method: "فيزا" }];
+    const t = computeShiftTotals(record);
+    expect(t.totalCollections.EGP).toBe(300);
+    expect(t.byMethodCurrency["فيزا"].EGP).toBe(300);
+    expect(t.cashCollections.EGP || 0).toBe(0);
+  });
+
+  it("a negative entry (refund for a cancelled booking) reduces totals and the cash drawer", () => {
+    const rooms = [{ number: 601 }];
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 1000 });
+    record.bookingCollections = [{ id: "e1", bookingId: "b1", room: 601, amount: -400, currency: "EGP", method: "كاش" }];
+    const t = computeShiftTotals(record);
+    expect(t.totalCollections.EGP).toBe(-400);
+    expect(t.closingCash.EGP).toBe(600);
+  });
+
+  it("is a no-op when bookingCollections is missing (older records / backward compatibility)", () => {
+    const rooms = [{ number: 601 }];
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 1000 });
+    delete record.bookingCollections;
+    const t = computeShiftTotals(record);
+    expect(t.closingCash.EGP).toBe(1000);
   });
 });
 

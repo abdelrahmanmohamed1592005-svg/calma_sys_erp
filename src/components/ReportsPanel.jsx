@@ -80,7 +80,7 @@ function aggregateShifts(records) {
   return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, flaggedShifts, netCash, methodOpening, methodClosingNow, cashOpening, cashClosingNow };
 }
 
-function aggregateBookings(bookings, fromDate, toDate) {
+function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   const toDate2 = addDays(toDate, 1);
   // "المبالغ المتبقية على نزلاء" لازم تفضل مبنية على أي حجز شغال أو قريب من
   // الفترة المختارة (overlap) - ده رصيد مستحق لحظي، صح يتكرر ظهوره في كل
@@ -109,7 +109,7 @@ function aggregateBookings(bookings, fromDate, toDate) {
   // المبالغ اللي بتتسجل وقت "تسجيل تحصيل" على الحجز نفسه (فيزا/انستاباي/
   // فودافون كاش/تحويل بنكي...) ومش بتمر على يومية الشيفت، فلازم تتجمع هنا
   // عشان تظهر في التقرير.
-  const byMethodCurrency = directBookingPaymentsByMethod(directBookings);
+  const byMethodCurrency = directBookingPaymentsByMethod(directBookings, journaledIds);
   // المبالغ المتبقية على النزلاء: للحجز المدفوع أونلاين، سعر الغرفة نفسه
   // متسوّى بالفعل عن طريق منصة الحجز (ده اللي قسم "الحجوزات الأونلاين" فوق
   // بيتابعه بالعمولة) - فمينفعش يفضل ظاهر كـ"متبقي" تاني هنا. اللي ممكن
@@ -155,7 +155,16 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   }, [rangeMode, date, fromDate, toDate, dataVersion]);
 
   const agg = useMemo(() => aggregateShifts(records), [records]);
-  const bAgg = useMemo(() => aggregateBookings(bookings, effFrom, effTo), [bookings, effFrom, effTo]);
+  // أي حجز تحصيله اتسجل فعليًا في يومية شيفت ضمن السجلات دي (تلقائيًا من
+  // بلوك الغرف/شاشة الحجوزات - انظر appendBookingCollection في data/shifts.js)
+  // بنستبعده من "تحصيل الحجوزات المباشر" تحت عشان ميتحسبش مرتين (مرة من
+  // اليومية ومرة من قيمة amountPaid على الحجز نفسها).
+  const journaledBookingIds = useMemo(() => {
+    const set = new Set();
+    records.forEach((r) => (r.bookingCollections || []).forEach((e) => { if (e.bookingId) set.add(e.bookingId); }));
+    return set;
+  }, [records]);
+  const bAgg = useMemo(() => aggregateBookings(bookings, effFrom, effTo, journaledBookingIds), [bookings, effFrom, effTo, journaledBookingIds]);
   // دمج تحصيل اليومية (كاش غالبًا) مع تحصيل الحجوزات المباشر بطرق الدفع
   // التانية (فيزا/انستاباي/فودافون كاش/تحويل بنكي...) عشان "التحصيل حسب
   // طريقة الدفع" و"إجمالي التحصيل" يعكسوا الصورة الحقيقية كاملة.
@@ -176,6 +185,18 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     return out;
   }, [agg, bAgg]);
   const reportCurrencies = useMemo(() => currencyKeysOf(agg.totalCollections, agg.totalExpenses, agg.netCash, combinedTotalCollections), [agg, combinedTotalCollections]);
+  // قائمة وسائل الدفع المعروضة في التقرير: القائمة الحالية (PAYMENT_METHODS)
+  // + أي اسم وسيلة دفع قديم فعليًا موجود في البيانات نفسها (مثلاً "انستاباي"
+  // أو "تحويل بنكي" من قبل الدمج) - عشان حجوزات/شيفتات قديمة بالاسم القديم
+  // تفضل تظهر في التقرير بدل ما تختفي لمجرد إننا دمجنا الاسمين في قائمة
+  // الاختيار الجديدة.
+  const allMethods = useMemo(() => {
+    const set = new Set(PAYMENT_METHODS);
+    Object.keys(combinedByMethodCurrency || {}).forEach((m) => set.add(m));
+    Object.keys(agg.methodOpening || {}).forEach((m) => set.add(m));
+    Object.keys(agg.byMethodCurrency || {}).forEach((m) => set.add(m));
+    return Array.from(set);
+  }, [combinedByMethodCurrency, agg]);
   const daySpan = Math.max(1, nightsBetween(effFrom, effTo) + 1);
   const avgOccupancy = useMemo(() => {
     let sum = 0, d = effFrom, n = 0;
@@ -189,7 +210,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     let txt = `تقرير فندق Calma\n${rangeMode === "day" ? `${arabicWeekday(date)} ${arabicDateLong(date)}` : `من ${fromDate} إلى ${toDate}`}\n\n`;
     if (rangeMode === "day") { SHIFTS.forEach((s) => { const r = dayRecords[s.key]; if (!r) { txt += `${s.label}: لا يوجد سجل\n`; return; } const t = r.closed ? r : computeShiftTotals(r); txt += `${s.label} (${r.staffName}) — ${r.closed ? "مقفول" : "مفتوح"}\nتحصيل: ${moneyLine(t.totalCollections)} | مصاريف: ${moneyLine(t.totalExpenses)} | رصيد الخزينة: ${moneyLine(t.closingCash)}\n`; if (r.flagged) txt += `تنبيه متابعة: ${r.shiftNotes || "—"}\n`; txt += `\n`; }); }
     txt += `إجمالي التحصيل: ${moneyLine(combinedTotalCollections)}\nإجمالي المصاريف: ${moneyLine(agg.totalExpenses)}\nصافي النقدية (الدرج): ${moneyLine(agg.netCash)}\n`;
-    PAYMENT_METHODS.forEach((m) => { const obj = combinedByMethodCurrency[m]; if (obj && currencyKeysOf(obj).length) txt += `  - ${m}: ${moneyLine(obj)}\n`; });
+    allMethods.forEach((m) => { const obj = combinedByMethodCurrency[m]; if (obj && currencyKeysOf(obj).length) txt += `  - ${m}: ${moneyLine(obj)}\n`; });
     txt += `إيراد الحجوزات الأونلاين (بالعمولة): ${moneyLine(bAgg.netRevenue)}\nنسبة الإشغال: ${avgOccupancy}%`;
     return txt;
   }
@@ -254,10 +275,10 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>التحصيل حسب طريقة الدفع والعملة</div>
             <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>الكاش من اليومية (درج الشيفت)، وباقي الطرق (فيزا/انستاباي/فودافون كاش/تحويل بنكي...) من المبالغ المسجَّلة على الحجوزات نفسها.</div>
-            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 12 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{PAYMENT_METHODS.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
+            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 12 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{allMethods.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
           </div>
 
-          {PAYMENT_METHODS.some((m) => currencyKeysOf(m === "كاش" ? agg.cashOpening : agg.methodOpening?.[m], m === "كاش" ? agg.cashCollections : agg.byMethodCurrency?.[m]).length > 0) && (
+          {allMethods.some((m) => currencyKeysOf(m === "كاش" ? agg.cashOpening : agg.methodOpening?.[m], m === "كاش" ? agg.cashCollections : agg.byMethodCurrency?.[m]).length > 0) && (
             <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>متابعة العهدة والتحصيل حسب وسيلة الدفع والعملة</div>
               <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>مبنية على العهدة المسجَّلة في أول شيفت بالفترة وتحصيل/مصاريف اليومية فقط (بكل عملة اتكتبت فيها) - مطابقة لرصيد الدرج وقراءة الجهاز خطوة بخطوة. الكاش بس عليه مصاريف لأن المصاريف بتُدفع منه.</div>
@@ -265,7 +286,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
                 <table className="cx-table" style={{ fontSize: 12 }}>
                   <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">مصاريف الفترة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
                   <tbody>
-                    {PAYMENT_METHODS.flatMap((m) => {
+                    {allMethods.flatMap((m) => {
                       const isCash = m === "كاش";
                       const opening = isCash ? agg.cashOpening : agg.methodOpening?.[m];
                       const collected = isCash ? agg.cashCollections : agg.byMethodCurrency?.[m];

@@ -1,7 +1,25 @@
+// العملات دي بس اللي النظام بيتعامل بيها - مثبّتة في قوائم اختيار في كل
+// مكان فيه عملة (مش نص حر تاني)، ونفس الخمسة مقيّدة في قاعدة البيانات
+// (bookings_currency_chk في schema.sql).
 export const COMMON_CURRENCIES = ["EGP", "USD", "EUR", "SAR", "GBP"];
 export const CURRENCY_LABEL = { EGP: "جنيه", USD: "دولار", EUR: "يورو", SAR: "ريال سعودي", GBP: "جنيه إسترليني" };
-export const PAYMENT_METHODS = ["كاش", "فيزا", "انستاباي", "فودافون كاش", "تحويل بنكي"];
-export const ONLINE_METHODS = ["فيزا", "انستاباي", "فودافون كاش", "تحويل بنكي"];
+// "انستاباي" و"تحويل بنكي" وسيلة واحدة فعليًا (انستاباي هو تحويل بنكي) -
+// دمجناهم في خيار واحد بدل ما يظهروا كاختيارين مختلفين. لو فيه حجوزات/شيفتات
+// قديمة مسجلة بأي من الاسمين القديمين لوحده، تفضل تتعرض بنص القيمة المحفوظة
+// زي ما هي (مش نص حر مقيّد في قاعدة البيانات)، بس أي اختيار جديد من دلوقتي
+// هيكون بالاسم المدمج ده بس.
+export const PAYMENT_METHODS = ["كاش", "فيزا", "تحويل بنكي / انستاباي", "فودافون كاش"];
+// لازم نفضل نتعرف على الاسمين القديمين (قبل الدمج) في حجوزات/شيفتات قديمة
+// فعلاً مسجلة بيهم، عشان قسم "تفاصيل التحويل المباشر" ميختفيش منها.
+export const ONLINE_METHODS = ["فيزا", "تحويل بنكي / انستاباي", "فودافون كاش", "انستاباي", "تحويل بنكي"];
+
+/* قائمة اختيار وسيلة الدفع اللي تعرض القيمة المحفوظة فعليًا حتى لو كانت
+   باسم قديم (قبل دمج انستاباي/تحويل بنكي) مش موجود في PAYMENT_METHODS
+   الجديدة - من غيرها الـ <select> هيعرض فاضي لحجز/صف قديم من غير ما يغيّر
+   القيمة المحفوظة فعليًا. */
+export function methodOptionsFor(currentValue) {
+  return currentValue && !PAYMENT_METHODS.includes(currentValue) ? [...PAYMENT_METHODS, currentValue] : PAYMENT_METHODS;
+}
 export const EXPENSE_CATEGORIES = ["كهرباء ومياه", "مشتريات ومطبخ", "صيانة", "مرتبات وحوافز", "نظافة", "أخرى"];
 export const DEFAULT_ONLINE_COMMISSION_PCT = 15;
 
@@ -47,6 +65,14 @@ export function freshShiftRecord(date, shiftKey, staffName, staffUsername, rooms
     methodHandover: (methodHandover && Object.keys(methodHandover).length > 0) ? methodHandover : {},
     rows: rooms.map((r) => emptyLedgerRow(r.number)),
     cafeteria: emptyLedgerRow("كافيتيريا"),
+    // تحصيل الحجوزات (بلوك الغرف/شاشة الحجوزات) بيتسجل هنا تلقائيًا أول ما
+    // يحصل - كل عنصر {id, bookingId, room, guestName, amount, currency,
+    // method, note, at}. amount ممكن يكون سالب لو ده "رد فلوس" (حجز اتلغى
+    // وكان عليه مبلغ متحصّل). انظر computeShiftTotals تحت وملف data/shifts.js
+    // (appendBookingCollection) - ده اللي كان قاعد ناقص قبل كده وخلى تحصيل
+    // الحجوزات المباشر (غير الكاش خصوصًا الكاش) ميظهرش في رصيد الدرج أو
+    // "تحصيل اليوم" في بلوك الغرف إلا لو الموظف دخلها يدويًا تاني في اليومية.
+    bookingCollections: [],
     shiftNotes: "", flagged: false, closed: false, closedBy: null, closedAt: null,
   };
 }
@@ -72,6 +98,20 @@ export function computeShiftTotals(record) {
       byMethodCurrency[r.collectionMethod][cur] = (byMethodCurrency[r.collectionMethod][cur] || 0) + col;
       if (r.collectionMethod === "كاش") cashCollections[cur] = (cashCollections[cur] || 0) + col;
     }
+  });
+  // تحصيل الحجوزات التلقائي (تسجيل تحصيل كامل المبلغ أو حجز جديد بمبلغ مقدّم
+  // من بلوك الغرف/شاشة الحجوزات)، وكذلك رد الفلوس (مبلغ سالب) لحجز اتلغى.
+  // بيتجمع بالظبط زي صفوف اليومية العادية فوق - فيدخل في إجمالي التحصيل
+  // ورصيد الخزينة (لو كاش) تلقائيًا من غير ما الموظف يحتاج يكتبه تاني يدويًا.
+  (record.bookingCollections || []).forEach((e) => {
+    const amt = Number(e.amount) || 0;
+    if (!amt) return;
+    const cur = e.currency || "EGP";
+    const method = e.method || "كاش";
+    totalCollections[cur] = (totalCollections[cur] || 0) + amt;
+    byMethodCurrency[method] = byMethodCurrency[method] || emptyMoney();
+    byMethodCurrency[method][cur] = (byMethodCurrency[method][cur] || 0) + amt;
+    if (method === "كاش") cashCollections[cur] = (cashCollections[cur] || 0) + amt;
   });
   const handover = record.handover && typeof record.handover === "object" ? record.handover : { EGP: Number(record.handover) || 0 };
   const closingCash = {};
@@ -99,10 +139,16 @@ export function computeShiftTotals(record) {
    فودافون كاش/تحويل بنكي...) ومش بتمر على يومية الشيفت أبدًا - فمن غير
    الدالة دي كانت بتختفي من التقرير بالكامل. الكاش مستبعد عمدًا لأنه بيتسجل
    من اليومية نفسها (تسوية درج الكاش الفعلي)، فمحسبوش هنا منعًا للتكرار. */
-export function directBookingPaymentsByMethod(bookings) {
+// journaledIds: مجموعة (Set) بأرقام الحجوزات اللي تحصيلها اتسجل فعليًا في
+// يومية شيفت (bookingCollections - انظر computeShiftTotals فوق) ضمن
+// السجلات اللي التقرير شايفها دلوقتي. من غيرها كنا هنحسب نفس المبلغ مرتين:
+// مرة من اليومية (byMethodCurrency في aggregateShifts) ومرة تاني هنا من قيمة
+// amountPaid على الحجز نفسها. أي حجز معاه في المجموعة دي بنتجاهله هنا تمامًا.
+export function directBookingPaymentsByMethod(bookings, journaledIds) {
   const byMethodCurrency = {};
   (bookings || []).forEach((b) => {
     if (b.paymentDetails?.onlinePaid) return;
+    if (journaledIds && journaledIds.has(b.id)) return;
     const paid = Number(b.amountPaid) || 0;
     if (paid <= 0) return;
     const method = b.paymentMethod || "كاش";

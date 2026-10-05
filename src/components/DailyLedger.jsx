@@ -1,19 +1,51 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Lock, Unlock, AlertTriangle, History, Plus, Printer } from "lucide-react";
-import { Logo } from "./shared";
-import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals } from "../domain/money";
+import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, Trash2 } from "lucide-react";
+import { Logo, TwoStepButton } from "./shared";
+import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
-import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, prevShiftOf } from "../domain/dates";
+import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { getShiftRecord, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow } from "../data/shifts";
+import { getShiftRecord, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord } from "../data/shifts";
 
-function CurrencyPicker({ value, onChange, disabled, width }) {
-  const listId = "ledger-currencies";
+// تحصيل الحجوزات التلقائي (من بلوك الغرف/شاشة الحجوزات - بيتسجل لوحده، انظر
+// appendBookingCollection في data/shifts.js) بيظهر هنا لمراجعته أو تصحيحه
+// لو احتاج الأمر (مثلاً غلط طريقة الدفع وقت التحصيل) - مش جدول يدوي من
+// الصفر، ده سجل بيتولّد تلقائيًا وقابل للتعديل/الحذف بس لو حصل خطأ. المبلغ
+// السالب معناه "رد فلوس" لحجز اتلغى.
+function BookingCollectionsTable({ entries, rooms, locked, onUpdateEntry, onRemoveEntry }) {
+  if (!entries || entries.length === 0) return null;
   return (
-    <>
-      <input className="cx-input" list={listId} disabled={disabled} value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} style={{ width: width || 62 }} />
-      <datalist id={listId}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c} />)}</datalist>
-    </>
+    <div className="cx-card" style={{ marginTop: 14, padding: 12 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>تحصيل الحجوزات (تلقائي من بلوك الغرف/شاشة الحجوزات)</div>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>اتسجل لوحده لحظة التحصيل أو رد الفلوس - داخل ضمن إجمالي التحصيل ورصيد الخزينة فوق تلقائيًا. عدّلي أو احذفي بس لو فيه خطأ (مثلاً طريقة دفع غلط).</div>
+      <div style={{ overflowX: "auto" }}>
+        <table className="cx-table" style={{ fontSize: 12, minWidth: 640 }}>
+          <thead><tr><th className="cx-th">الغرفة / النزيل</th><th className="cx-th">المبلغ</th><th className="cx-th">العملة</th><th className="cx-th">طريقة الدفع</th><th className="cx-th">ملاحظة</th>{!locked && <th className="cx-th"></th>}</tr></thead>
+          <tbody>
+            {entries.map((e, idx) => (
+              <tr key={e.id || idx}>
+                <td>{roomLabel(rooms, e.room)} {e.guestName ? `· ${e.guestName}` : ""}</td>
+                <td><input className="cx-input" type="number" disabled={locked} value={e.amount} onChange={(ev) => onUpdateEntry(idx, { amount: Number(ev.target.value) || 0 })} style={{ width: 90, color: e.amount < 0 ? "var(--rust)" : undefined, fontWeight: 700 }} /></td>
+                <td><select className="cx-select" disabled={locked} value={e.currency} onChange={(ev) => onUpdateEntry(idx, { currency: ev.target.value })} style={{ width: 72 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></td>
+                <td><select className="cx-select" disabled={locked} value={e.method} onChange={(ev) => onUpdateEntry(idx, { method: ev.target.value })} style={{ width: 130 }}>{methodOptionsFor(e.method).map((m) => <option key={m} value={m}>{m}</option>)}</select></td>
+                <td style={{ color: "var(--muted)", fontSize: 11 }}>{e.note || "—"}</td>
+                {!locked && <td>{<TwoStepButton label="" confirmLabel="حذف؟" icon={<Trash2 size={13} />} onConfirm={() => onRemoveEntry(idx)} />}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
+// كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
+function CurrencyPicker({ value, onChange, disabled, width }) {
+  return (
+    <select className="cx-select" disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)} style={{ width: width || 72, fontSize: 12 }}>
+      {COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+    </select>
   );
 }
 
@@ -38,7 +70,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, onUpdateCafeteria }) 
               </td>
               <td>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => onUpdateRow(idx, { collectionMethod: e.target.value })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                  <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => onUpdateRow(idx, { collectionMethod: e.target.value })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
                   <input className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={row.collectionDesc} onChange={(e) => onUpdateRow(idx, { collectionDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
                     <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.collectionAmt} onChange={(e) => onUpdateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
@@ -64,7 +96,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, onUpdateCafeteria }) 
             </td>
             <td>
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <select className="cx-select" disabled={locked} value={record.cafeteria.collectionMethod} onChange={(e) => onUpdateCafeteria({ collectionMethod: e.target.value })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                <select className="cx-select" disabled={locked} value={record.cafeteria.collectionMethod} onChange={(e) => onUpdateCafeteria({ collectionMethod: e.target.value })}>{methodOptionsFor(record.cafeteria.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
                 <input className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={record.cafeteria.collectionDesc} onChange={(e) => onUpdateCafeteria({ collectionDesc: e.target.value })} />
                 <div style={{ display: "flex", gap: 3 }}>
                   <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={record.cafeteria.collectionAmt} onChange={(e) => onUpdateCafeteria({ collectionAmt: e.target.value })} style={{ flex: 1 }} />
@@ -86,8 +118,11 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
   const [newMethod, setNewMethod] = useState("فيزا");
   const [newMethodCur, setNewMethodCur] = useState("EGP");
   const activeCurrencies = currencyKeysOf(record.handover, totals.totalCollections, totals.totalExpenses, totals.closingCash);
-  // وسائل الدفع (غير الكاش) اللي ليها عهدة متابَعة أو تحصيل في الشيفت ده
-  const activeMethods = PAYMENT_METHODS.filter((m) => m !== "كاش" && (currencyKeysOf(record.methodHandover?.[m]).length > 0 || currencyKeysOf(totals.byMethodCurrency?.[m]).length > 0));
+  // وسائل الدفع (غير الكاش) اللي ليها عهدة متابَعة أو تحصيل في الشيفت ده -
+  // بنضم القائمة الحالية لأي اسم وسيلة قديم فعليًا متسجل في بيانات الشيفت
+  // ده (مثلاً "انستاباي" قبل الدمج) عشان بياناته القديمة ماتختفيش من العرض.
+  const candidateMethods = Array.from(new Set([...PAYMENT_METHODS, ...Object.keys(record.methodHandover || {}), ...Object.keys(totals.byMethodCurrency || {})]));
+  const activeMethods = candidateMethods.filter((m) => m !== "كاش" && (currencyKeysOf(record.methodHandover?.[m]).length > 0 || currencyKeysOf(totals.byMethodCurrency?.[m]).length > 0));
   return (
     <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
@@ -108,11 +143,13 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
           </div>
         ))}
       </div>
-      {!locked && (
+      {!locked && COMMON_CURRENCIES.filter((c) => !activeCurrencies.includes(c)).length > 0 && (
         <div style={{ marginTop: 12, display: "flex", gap: 6, alignItems: "center" }}>
-          <input className="cx-input" list="ledger-add-currency" placeholder="أضف عملة تانية (مثلاً EUR)" value={newCur} onChange={(e) => setNewCur(e.target.value.toUpperCase())} style={{ maxWidth: 180 }} />
-          <datalist id="ledger-add-currency">{COMMON_CURRENCIES.filter((c) => !activeCurrencies.includes(c)).map((c) => <option key={c} value={c} />)}</datalist>
-          <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} disabled={!newCur.trim()} onClick={() => { onAddCurrency(newCur.trim()); setNewCur(""); }}><Plus size={13} /> إضافة</button>
+          <select className="cx-select" style={{ maxWidth: 180, fontSize: 12 }} value={newCur} onChange={(e) => setNewCur(e.target.value)}>
+            <option value="">أضف عملة تانية...</option>
+            {COMMON_CURRENCIES.filter((c) => !activeCurrencies.includes(c)).map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} disabled={!newCur} onClick={() => { onAddCurrency(newCur); setNewCur(""); }}><Plus size={13} /> إضافة</button>
         </div>
       )}
 
@@ -147,9 +184,8 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
           {!locked && (
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <select className="cx-select" style={{ fontSize: 12, width: 130 }} value={newMethod} onChange={(e) => setNewMethod(e.target.value)}>{PAYMENT_METHODS.filter((m) => m !== "كاش").map((m) => <option key={m} value={m}>{m}</option>)}</select>
-              <input className="cx-input" list="ledger-method-currency" placeholder="العملة" value={newMethodCur} onChange={(e) => setNewMethodCur(e.target.value.toUpperCase())} style={{ width: 80 }} />
-              <datalist id="ledger-method-currency">{COMMON_CURRENCIES.map((c) => <option key={c} value={c} />)}</datalist>
-              <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} disabled={!newMethod || !newMethodCur.trim()} onClick={() => onAddMethodTracking(newMethod, newMethodCur.trim())}><Plus size={13} /> متابعة عهدة {newMethod}</button>
+              <select className="cx-select" style={{ width: 90, fontSize: 12 }} value={newMethodCur} onChange={(e) => setNewMethodCur(e.target.value)}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} disabled={!newMethod || !newMethodCur} onClick={() => onAddMethodTracking(newMethod, newMethodCur)}><Plus size={13} /> متابعة عهدة {newMethod}</button>
             </div>
           )}
         </div>
@@ -224,6 +260,16 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
           const created = await createShiftRecord(fresh);
           rec = created.data || fresh;
         }
+        // انتهى هامش الأوفر تايم (ساعتين بعد نهاية معاد الشيفت) ولسه مقفول
+        // لحد دلوقتي - نقفله تلقائيًا بنفس بيانات لحظة الدخول دي، عشان الشيفت
+        // ميفضلش مفتوح وبيعطّل تقرير النهارده، ومديرة الحجوزات/المدير العام
+        // يقدروا يفتحوه تاني من هنا لو الموظف لسه محتاج يكمل فيه.
+        if (rec && !rec.closed && !isShiftActiveNow(sk)) {
+          const t = computeShiftTotals(rec);
+          const autoClosed = { ...rec, closed: true, closedBy: `${rec.staffName} (إقفال تلقائي - انتهى هامش الأوفر تايم)`, closedAt: Date.now(), ...t };
+          const res = await updateShiftRecordIfUnchanged(today, sk, rec.updatedAt, autoClosed);
+          if (res.data) { rec = res.data; onLog(`إقفال تلقائي لشيفت ${SHIFTS.find((s) => s.key === sk)?.label} ليوم ${today} بعد انتهاء هامش الأوفر تايم (${SHIFT_OVERTIME_GRACE_HOURS} ساعة)`); }
+        }
         if (cancelled) return;
         setMyShiftKey(sk); setRecord(rec); setPrevClosing(prev?.cash || null); setPrevMethodClosing(prev?.method || null);
       } else { setMyShiftKey(null); setRecord(null); }
@@ -281,6 +327,8 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   }
   function updateRow(idx, patch) { const rows = record.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)); persist({ ...record, rows }, { silent: true }); }
   function updateCafeteria(patch) { persist({ ...record, cafeteria: { ...record.cafeteria, ...patch } }, { silent: true }); }
+  function updateBookingCollection(idx, patch) { const bookingCollections = (record.bookingCollections || []).map((e, i) => (i === idx ? { ...e, ...patch } : e)); persist({ ...record, bookingCollections }, { immediate: true }); }
+  function removeBookingCollection(idx) { const bookingCollections = (record.bookingCollections || []).filter((_, i) => i !== idx); persist({ ...record, bookingCollections }, { immediate: true }); onLog(`حذف قيد تحصيل حجز تلقائي من يومية ${SHIFTS.find((s) => s.key === myShiftKey)?.label} ليوم ${today}`); }
   function updateHandover(cur, val) { persist({ ...record, handover: { ...record.handover, [cur]: Number(val) || 0 } }, { silent: true }); }
   function addCurrency(cur) { if (!cur || record.handover?.[cur] != null) return; persist({ ...record, handover: { ...record.handover, [cur]: 0 } }, { silent: true, immediate: true }); }
   function updateMethodHandover(method, cur, val) { persist({ ...record, methodHandover: { ...record.methodHandover, [method]: { ...(record.methodHandover?.[method] || {}), [cur]: Number(val) || 0 } } }, { silent: true }); }
@@ -290,7 +338,10 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   }
 
   const totals = record ? computeShiftTotals(record) : null;
-  const locked = !record || record.closed || !perms.editLedger;
+  // الشيفت يتقفل (يبقى غير قابل للتعديل من موظف الشيفت) لو اتقفل فعليًا، أو
+  // لو انتهى هامش الأوفر تايم بتاعه (ساعتين بعد نهاية معاده) - في الحالة
+  // التانية هيتقفل تلقائيًا فعليًا عند أول تحميل للشاشة (انظر الإيفكت فوق).
+  const locked = !record || record.closed || !perms.editLedger || (!!myShiftKey && !isShiftActiveNow(myShiftKey));
 
   async function closeShift() {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
@@ -305,6 +356,19 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     const summary = currencyKeysOf(t.closingCash).map((c) => `${money(t.closingCash, c)} ${c}`).join(" / ") || "0";
     onLog(`أقفل ${SHIFTS.find((s) => s.key === myShiftKey)?.label} ليوم ${today} — رصيد الخزينة ${summary}`);
     setRefreshKey((k) => k + 1);
+  }
+
+  // إعادة فتح/إقفال شيفت من وضع "استعراض شيفتات سابقة" - صلاحية مدير
+  // الحجوزات/المدير العام بس (perms.reopenShift)، لحالة شيفت قفله موظف
+  // بالغلط أو احتاج تصحيح بعد الإقفال (انظر قسم ١٦ في schema.sql).
+  async function reopenHistoryShift() {
+    if (!histRecord) return;
+    const res = await reopenShiftRecord(histDate, histShift, histRecord.updatedAt, histRecord);
+    if (res.conflict) { showToast("⚠ فيه تعديل حصل من مكان تاني على نفس الشيفت - جاري تحديث البيانات"); setHistRecord(await getShiftRecord(histDate, histShift)); return; }
+    if (res.error) { showToast(res.error); return; }
+    setHistRecord(res.data);
+    onLog(`إعادة فتح شيفت ${SHIFTS.find((s) => s.key === histShift)?.label} ليوم ${histDate} (كان مقفول بواسطة ${histRecord.closedBy || "—"})`);
+    showToast("تم إعادة فتح الشيفت - الموظف يقدر يكمل فيه تاني");
   }
 
   // سجل الشيفت اللي هيظهر فعليًا في ترويسة الطباعة - شيفتي النهارده في وضع
@@ -350,6 +414,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
             <LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} onUpdateCafeteria={updateCafeteria} />
+            <BookingCollectionsTable entries={record.bookingCollections} rooms={rooms} locked={locked} onUpdateEntry={updateBookingCollection} onRemoveEntry={removeBookingCollection} />
             <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <input type="checkbox" checked={record.flagged} disabled={locked} onChange={(e) => persist({ ...record, flagged: e.target.checked }, { immediate: true })} />
@@ -360,7 +425,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
             <ShiftSummaryFooter record={record} totals={totals} locked={locked} onChangeHandover={updateHandover} onAddCurrency={addCurrency} prevClosing={prevClosing} onChangeMethodHandover={updateMethodHandover} onAddMethodTracking={addMethodTracking} prevMethodClosing={prevMethodClosing} />
             <div className="cx-no-print" style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {!record.closed && perms.closeShift && <button className="cx-btn cx-btn-gold" onClick={closeShift}><Lock size={14} /> إقفال الشيفت</button>}
-              {record.closed && <span style={{ fontSize: 12, color: "var(--muted)" }}>أُقفل بواسطة {record.closedBy} في {new Date(record.closedAt).toLocaleString("ar-EG")} — الشيفت ده خلص ومش هتقدر ترجعله تاني</span>}
+              {record.closed && <span style={{ fontSize: 12, color: "var(--muted)" }}>أُقفل بواسطة {record.closedBy} في {new Date(record.closedAt).toLocaleString("ar-EG")} — لو محتاج تصحّح حاجة كلّم مدير الحجوزات أو المدير العام يفتحوه تاني</span>}
             </div>
             <LedgerPrintFooter />
           </>
@@ -373,7 +438,20 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
           </div>
           {!histRecord ? <div style={{ color: "var(--muted)", fontSize: 13, padding: 20, textAlign: "center" }}>لا يوجد سجل لهذا الشيفت</div> : (
             <>
+              {perms.reopenShift && (
+                <div className="cx-card cx-no-print" style={{ padding: 10, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  {histRecord.closed ? (
+                    <>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}><Lock size={12} style={{ verticalAlign: -1 }} /> مقفول بواسطة {histRecord.closedBy} في {histRecord.closedAt ? new Date(histRecord.closedAt).toLocaleString("ar-EG") : "—"}</span>
+                      <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={reopenHistoryShift}><LockOpen size={13} /> إعادة فتح الشيفت</button>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "var(--sage)" }}><Unlock size={12} style={{ verticalAlign: -1 }} /> الشيفت ده مفتوح لسه (أو اتفتح تاني) - الموظف يقدر يكمل فيه</span>
+                  )}
+                </div>
+              )}
               <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
+              <BookingCollectionsTable entries={histRecord.bookingCollections} rooms={rooms} locked={true} onUpdateEntry={() => {}} onRemoveEntry={() => {}} />
               <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
               <LedgerPrintFooter />

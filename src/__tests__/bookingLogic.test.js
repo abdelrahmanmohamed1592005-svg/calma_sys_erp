@@ -91,18 +91,20 @@ describe("resolveDuplicateCheckin (early-checkout / duplicate check-in fix)", ()
     expect(resolution).toEqual({ action: "trim", checkout: "2026-09-07" });
   });
 
-  it("cancels the old booking instead of producing an invalid checkout<=checkin when both start the same day", () => {
+  it("refuses to auto-resolve (needs manual cancel) instead of producing an invalid checkout<=checkin when both start the same day", () => {
     // ده بالظبط السيناريو اللي كان بيرمي خطأ bookings_dates_valid: الحجز
     // القديم بيبدأ في نفس يوم الحجز الجديد، فتقصيره كان هيخلي checkout==checkin.
+    // دلوقتي ده مش تسكين مكرر حقيقي (الحجز القديم لسه لم يبدأ) - لازم إلغاء
+    // يدوي حقيقي من مدير الحجوزات، مش "ملغي" تلقائي من موظف شيفت.
     const clash = makeBooking({ checkin: "2026-09-07", checkout: "2026-09-10" });
     const resolution = resolveDuplicateCheckin(clash, "2026-09-07");
-    expect(resolution).toEqual({ action: "cancel" });
+    expect(resolution).toEqual({ action: "needs_manual_cancel" });
   });
 
-  it("cancels the old booking when it starts after the new check-in", () => {
+  it("refuses to auto-resolve (needs manual cancel) when the old booking starts after the new check-in", () => {
     const clash = makeBooking({ checkin: "2026-09-08", checkout: "2026-09-10" });
     const resolution = resolveDuplicateCheckin(clash, "2026-09-07");
-    expect(resolution).toEqual({ action: "cancel" });
+    expect(resolution).toEqual({ action: "needs_manual_cancel" });
   });
 
   it("returns null when there is no clashing booking", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addDays, nightsBetween, parseDateFlexible, nextShiftOf, prevShiftOf, isSameDay } from "../domain/dates";
+import { addDays, nightsBetween, parseDateFlexible, nextShiftOf, prevShiftOf, isSameDay, isShiftActiveNow } from "../domain/dates";
 
 describe("addDays", () => {
   it("adds positive days across month boundary", () => {
@@ -43,6 +43,28 @@ describe("shift ordering", () => {
   });
   it("prevShiftOf rolls back to previous day before morning", () => {
     expect(prevShiftOf("2026-09-05", "morning")).toEqual({ date: "2026-09-04", shiftKey: "night" });
+  });
+});
+
+describe("isShiftActiveNow (overtime grace window)", () => {
+  it("is active during the normal morning window", () => {
+    expect(isShiftActiveNow("morning", 2, new Date(2026, 8, 5, 10, 0))).toBe(true);
+  });
+  it("is still active in the first minute of overtime after the morning shift ends (16:00)", () => {
+    expect(isShiftActiveNow("morning", 2, new Date(2026, 8, 5, 16, 1))).toBe(true);
+  });
+  it("is no longer active once the overtime grace period has fully elapsed (18:01)", () => {
+    expect(isShiftActiveNow("morning", 2, new Date(2026, 8, 5, 18, 1))).toBe(false);
+  });
+  it("handles the evening shift's overtime correctly past midnight (01:00 next day)", () => {
+    expect(isShiftActiveNow("evening", 2, new Date(2026, 8, 6, 1, 0))).toBe(true);
+  });
+  it("evening shift is no longer active once well past its overtime window (03:00)", () => {
+    expect(isShiftActiveNow("evening", 2, new Date(2026, 8, 6, 3, 0))).toBe(false);
+  });
+  it("night shift overtime extends a couple hours past 08:00", () => {
+    expect(isShiftActiveNow("night", 2, new Date(2026, 8, 5, 9, 30))).toBe(true);
+    expect(isShiftActiveNow("night", 2, new Date(2026, 8, 5, 10, 1))).toBe(false);
   });
 });
 

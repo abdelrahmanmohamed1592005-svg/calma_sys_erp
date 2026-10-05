@@ -867,6 +867,216 @@ drop trigger if exists bookings_staff_core_edit_guard on bookings;
 create trigger bookings_staff_core_edit_guard before update on bookings
   for each row execute function prevent_staff_core_booking_edit();
 
+-- --------------------------------------------------------------------------
+-- 16) مدير الحجوزات والمدير العام يقدروا "يفتحوا تاني" شيفت قفله موظف
+--     بالغلط (أو احتاج تصحيح بعد الإقفال) - غير إعادة الفتح دي، أي تعديل
+--     تاني على محتوى شيفت لسه مقفول يفضل للمدير العام/الحسابات بس زي ما كان.
+-- --------------------------------------------------------------------------
+create or replace function is_gm_or_reservations()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (
+    select 1 from profiles
+    where id = auth.uid() and role in ('gm','reservations') and active = true
+  );
+$$;
+grant execute on function is_gm_or_reservations() to authenticated;
+
+create or replace function prevent_closed_shift_edit()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.closed = true then
+    if new.closed = false then
+      -- إعادة فتح شيفت مقفول: مدير الحجوزات أو المدير العام أو الحسابات بس
+      if not (is_gm_or_reservations() or can_manage_financials()) then
+        raise exception 'إعادة فتح شيفت مقفول من صلاحية المدير العام أو مدير الحجوزات بس';
+      end if;
+    else
+      -- الشيفت فاضل مقفول وبيتم تعديل محتواه (مش عملية إعادة فتح) - المدير العام/الحسابات بس زي ما كان
+      if not can_manage_financials() then
+        raise exception 'لا يمكن تعديل شيفت مقفول إلا من المدير العام أو الحسابات';
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop policy if exists "shifts update" on shift_records;
+create policy "shifts update" on shift_records for update using (
+  is_staff() or can_manage_financials() or (closed = true and is_gm_or_reservations())
+) with check (
+  is_staff() or can_manage_financials() or is_gm_or_reservations()
+);
+
+-- --------------------------------------------------------------------------
+-- 17) لو الحجز اتسجل "متحصّل بالكامل" (settled)، ميتغيّرش أي حاجة تخص قيمة
+--     الحجز (سعر الليلة/الإجمالي/الرسوم الإضافية/رسوم الدخول المبكر) إلا لو
+--     حد لغى علامة التحصيل الأول - عشان المبلغ المتحصّل يفضل متطابق مع اللي
+--     استُحق فعليًا وقت التحصيل، ومتظهرش فروق أو "لغبطة" بعد كده في التقرير.
+--     الواجهة بقت تقفل الحقول دي (BookingsPanel.jsx / RoomBoard.jsx)، وده
+--     نفس القرار على مستوى قاعدة البيانات لو حد حاول يتخطى الواجهة.
+-- --------------------------------------------------------------------------
+create or replace function prevent_charge_edit_when_settled()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.settled = true and new.settled = true then
+    if (new.total_room is distinct from old.total_room)
+       or (new.price_night is distinct from old.price_night)
+       or (new.extras is distinct from old.extras)
+       or (new.early_checkin is distinct from old.early_checkin)
+       or (new.payment_method is distinct from old.payment_method)
+       or (new.payment_details is distinct from old.payment_details) then
+      raise exception 'الحجز متحصّل بالكامل - لازم تلغي علامة التحصيل الأول عشان تقدر تعدّل السعر/الرسوم/طريقة الدفع';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_settled_charge_guard on bookings;
+create trigger bookings_settled_charge_guard before update on bookings
+  for each row execute function prevent_charge_edit_when_settled();
+
+-- --------------------------------------------------------------------------
+-- 18) أعمدة إضافية على الحجز:
+--     - created_by_role: دور مين أضاف الحجز وقت الإضافة (يُستخدم في رسالة
+--       تحذير واضحة لو موظف الشيفت حاول يمدد حجز والغرفة متعارضة مع حجز
+--       أضافه مدير الحجوزات في نفس الفترة).
+--     - left_early / duplicate_placement: لتوضيح حالة "تسكين مكرر" بدون
+--       اللجوء لـ status='ملغي' غلط - استخدام 'ملغي' هنا كان عيب حقيقي لأنه
+--       كان يشيل من التقرير إيراد الليالي اللي النزيل القديم قعدها فعليًا.
+--       دلوقتي الحجز القديم يتقصّر (تاريخ خروج = تاريخ دخول الحجز الجديد)
+--       ويُعلّم left_early، والحجز الجديد يُعلّم duplicate_placement - و
+--       status='ملغي' يفضل فعل حقيقي من مدير الحجوزات بس (زرار الإلغاء
+--       اليدوي في شاشة الحجوزات)، مش نتيجة جانبية لعملية تسكين مكرر تلقائية.
+-- --------------------------------------------------------------------------
+alter table bookings add column if not exists created_by_role text;
+alter table bookings add column if not exists left_early boolean not null default false;
+alter table bookings add column if not exists duplicate_placement boolean not null default false;
+
+create or replace function set_actor_fields()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_username text;
+  v_name text;
+  v_role text;
+begin
+  select username, name, role into v_username, v_name, v_role
+  from profiles where id = auth.uid();
+
+  if TG_TABLE_NAME = 'activity_log' then
+    new.username := coalesce(v_username, new.username);
+    new.user_name := coalesce(v_name, new.user_name);
+    new.role := coalesce(v_role, new.role);
+  elsif TG_TABLE_NAME = 'shift_records' then
+    new.staff_username := coalesce(v_username, new.staff_username);
+    new.staff_name := coalesce(v_name, new.staff_name);
+  elsif TG_TABLE_NAME = 'bookings' then
+    new.created_by := coalesce(v_username, new.created_by);
+    new.created_by_role := coalesce(v_role, new.created_by_role);
+  elsif TG_TABLE_NAME = 'shift_claims' then
+    new.username := coalesce(v_username, new.username);
+    new.name := coalesce(v_name, new.name);
+  elsif TG_TABLE_NAME = 'room_overrides' then
+    new.updated_by := coalesce(v_username, new.updated_by);
+  end if;
+
+  return new;
+end;
+$$;
+
+-- --------------------------------------------------------------------------
+-- 19) تثبيت العملات المستخدمة فعليًا على خمس عملات بس (جنيه، دولار، يورو،
+--     ريال سعودي، جنيه إسترليني) بدل النص الحر - الواجهة بقت قائمة اختيار
+--     ثابتة بنفس الخمسة في كل مكان فيه عملة، وده نفس القرار على مستوى
+--     قاعدة البيانات. لو فيه حجوزات قديمة بعملة غير دول، القيد مش هيتضاف
+--     (NOTICE) وتحتاجي تصلّحيها يدويًا الأول (UPDATE على العمود currency).
+-- --------------------------------------------------------------------------
+alter table bookings drop constraint if exists bookings_currency_chk;
+do $$ begin
+  alter table bookings add constraint bookings_currency_chk check (currency in ('EGP','USD','EUR','SAR','GBP'));
+exception
+  when duplicate_object then null;
+  when others then raise notice 'تعذر تثبيت قيد العملات - فيه حجوزات قديمة بعملة مش من الخمسة المعتمدة (EGP/USD/EUR/SAR/GBP). راجعيها يدويًا ثم نفذي هذا الجزء تاني بمفرده.';
+end $$;
+
+-- --------------------------------------------------------------------------
+-- 20) تثبيت جهات الحجز على الخمسة المعتمدة (مباشر/سوشيال ميديا/Booking.com/
+--     Expedia/Trip.com) بدل النص الحر، بنفس أسلوب تثبيت العملات فوق بالظبط -
+--     لو فيه حجوزات قديمة بجهة غير دول (مثلاً "Airbnb" أو "وسيط" من قبل
+--     التثبيت) القيد مش هيتضاف (NOTICE) وتحتاجي تصلّحيها يدويًا الأول.
+-- --------------------------------------------------------------------------
+alter table bookings drop constraint if exists bookings_source_chk;
+do $$ begin
+  alter table bookings add constraint bookings_source_chk check (source in ('مباشر','سوشيال ميديا','Booking.com','Expedia','Trip.com'));
+exception
+  when duplicate_object then null;
+  when others then raise notice 'تعذر تثبيت قيد جهة الحجز - فيه حجوزات قديمة بجهة مش من الخمسة المعتمدة. راجعيها يدويًا ثم نفذي هذا الجزء تاني بمفرده.';
+end $$;
+
+-- --------------------------------------------------------------------------
+-- 21) رد فلوس حجز ملغي: لو مدير الحجوزات لغى حجز كان عليه مبلغ متحصّل فعليًا،
+--     لازم يترد للنزيل - refund_pending بتتحدد تلقائيًا true لحظة ما الحالة
+--     تتحول لـ"ملغي" (لو اتلغى الإلغاء/رجعت الحالة تاني، بترجع false من
+--     تلقائيًا كمان). موظف الشيفت (من الواجهة - BookingsPanel.jsx) هو اللي
+--     يسجّل إن الفلوس ارتدت فعليًا، وده بيصفّر refund_pending ويسجّل
+--     refunded_amount/refunded_by/refunded_at.
+-- --------------------------------------------------------------------------
+alter table bookings add column if not exists refund_pending boolean not null default false;
+alter table bookings add column if not exists refunded_amount numeric;
+alter table bookings add column if not exists refunded_by text;
+alter table bookings add column if not exists refunded_at timestamptz;
+
+create or replace function set_refund_pending_on_cancel()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.status = 'ملغي' and old.status is distinct from 'ملغي' then
+    if coalesce(new.amount_paid, 0) > 0 then
+      new.refund_pending := true;
+    end if;
+  elsif new.status is distinct from 'ملغي' and old.status = 'ملغي' then
+    -- اتراجع عن الإلغاء (رجّعت الحالة) - رد الفلوس بقى مش مطلوب
+    new.refund_pending := false;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_refund_pending_guard on bookings;
+create trigger bookings_refund_pending_guard before update on bookings
+  for each row execute function set_refund_pending_on_cancel();
+
+-- --------------------------------------------------------------------------
+-- 22) تحصيل الحجوزات التلقائي (من بلوك الغرف/شاشة الحجوزات) بيتسجل جوه
+--     يومية الشيفت في العمود ده - عنصر لكل تحصيل أو رد فلوس، بدل ما الموظف
+--     يحتاج يكتب نفس المبلغ تاني يدويًا في جدول اليومية (انظر
+--     appendBookingCollection في src/data/shifts.js وcomputeShiftTotals في
+--     src/domain/money.js).
+-- --------------------------------------------------------------------------
+alter table shift_records add column if not exists booking_collections jsonb not null default '[]'::jsonb;
+
+-- --------------------------------------------------------------------------
+-- 23) الإلغاء (status = 'ملغي') يفضل حصريًا فعل يدوي من مدير الحجوزات -
+--     موظف الشيفت أصلًا مش بيشوف اختيار الحالة في الواجهة وقت إضافة حجز
+--     جديد (walk-in)، لكن ده تحصين حقيقي على مستوى القاعدة لو حد حاول
+--     يتخطى الواجهة ويبعت تحديث/إضافة مباشر بالـ API بحالة "ملغي". سارٍ على
+--     INSERT وUPDATE الاتنين (عكس تحصين قسم ١٥ اللي بس على UPDATE)، عشان
+--     يقفل كمان احتمال حجز جديد يتضاف من موظف الشيفت بحالة "ملغي" من الأساس.
+-- --------------------------------------------------------------------------
+create or replace function prevent_staff_cancel_status()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if is_staff() and new.status = 'ملغي' and (TG_OP = 'INSERT' or old.status is distinct from 'ملغي') then
+    raise exception 'إلغاء الحجز (ملغي) من صلاحية مدير الحجوزات بس';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_staff_cancel_guard on bookings;
+create trigger bookings_staff_cancel_guard before insert or update on bookings
+  for each row execute function prevent_staff_cancel_status();
+
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):
 --

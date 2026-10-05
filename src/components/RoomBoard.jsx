@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
-import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, ONLINE_METHODS, PAYMENT_METHODS } from "../domain/money";
-import { todayStr, nightsBetween, addDays, defaultShiftForNow } from "../domain/dates";
+import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, ONLINE_METHODS, PAYMENT_METHODS, methodOptionsFor } from "../domain/money";
+import { todayStr, nightsBetween, addDays, uid } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_BOOKING, roomLabel } from "../domain/constants";
-import { computeRoomStatus, roomsOverlap } from "../domain/bookingLogic";
-import { getShiftRecord, getClaimsForDate } from "../data/shifts";
+import { computeRoomStatus, roomsOverlap, findOverlappingBooking } from "../domain/bookingLogic";
+import { getShiftRecord, appendBookingCollection } from "../data/shifts";
+import { useShiftGate } from "../hooks/useShiftGate";
 
 const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#F5EFD6", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
@@ -14,7 +15,6 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   const [extrasDraft, setExtrasDraft] = useState(null);
   const [collectMethod, setCollectMethod] = useState("كاش");
   const [extendNights, setExtendNights] = useState(1);
-  const [claims, setClaims] = useState({});
   const date = todayStr();
   const room = rooms.find((r) => r.number === selected);
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date) : null;
@@ -38,57 +38,76 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     })();
   }, [date, dataVersion]);
 
-  // موظف الشيفت (staff) يقدر يغيّر حالة الغرف بس وهو في شيفته الفعلي
-  // اللي حاجزه - عشان نمنع موظف يدخل بره معاده ويعدل على حاجة مش شغله.
-  // باقي الأدوار (مدير الحجوزات/الحسابات/المدير العام) مش مربوطة بشيفت أصلًا
-  // (roomStatusRestricted: false) فمش بيأثر عليهم.
-  useEffect(() => {
-    if (!perms.roomStatusRestricted) return;
-    (async () => { setClaims(await getClaimsForDate(date)); })();
-  }, [date, dataVersion, perms.roomStatusRestricted]);
-
-  const currentShiftKey = defaultShiftForNow();
-  const myClaim = claims?.[currentShiftKey];
-  const isMyShiftNow = !!myClaim && !!profile && myClaim.username === profile.username;
-  const offShift = perms.roomStatusRestricted && !isMyShiftNow;
+  // موظف الشيفت (staff) يقدر يغيّر حالة الغرف ويحصّل الفلوس بس وهو في شيفته
+  // الفعلي اللي حاجزه ولسه مفتوح (مش مقفول) - عشان نمنع موظف يدخل بره معاده
+  // أو بعد ما يكون قفل شيفته يعدل على حاجة مش شغله. الهوك ده نفسه بالظبط
+  // المستخدم في BookingsPanel.jsx عشان الاتنين يتفقوا على نفس القرار بدون
+  // أي تضارب. باقي الأدوار (مدير الحجوزات/الحسابات/المدير العام) مش مربوطة
+  // بشيفت أصلًا (roomStatusRestricted: false) فمش بيأثر عليهم.
+  const { offShift, shiftClosed, myActiveShiftKey } = useShiftGate(profile, perms, dataVersion);
 
   const bookingActiveOnRoom = selected ? bookings.some((b) => b.room === selected && b.status !== "ملغي" && b.checkin <= date && date < b.checkout) : false;
   const statusEditLocked = perms.roomStatusRestricted && bookingActiveOnRoom;
 
   async function saveOverride(statusKey) {
-    if (offShift) { showToast("مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه"); return; }
+    if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني الأول" : "مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه"); return; }
     const res = await onSaveOverride(selected, statusKey);
     if (res?.error) { showToast(res.error); return; }
     onLog(`تغيير حالة ${roomLabel(rooms, selected)} إلى: ${MANUAL_STATUS_OPTIONS.find((o) => o.key === statusKey)?.label}`);
     showToast("تم تحديث حالة الغرفة");
   }
-  // تسجيل تحصيل كامل المبلغ لازم يسجل طريقة الدفع الفعلية (فيزا/انستاباي/
-  // فودافون كاش/تحويل بنكي...) مش بس يعلّم "متحصّل" - عشان التقرير يقدر
-  // يحسب كل طريقة دفع صح، فبنحدّث amountPaid وطريقة الدفع مع علامة التحصيل
-  // في تحديث واحد بدل ما نسيب طريقة الدفع زي ما كانت وقت إنشاء الحجز.
+  // تسجيل تحصيل كامل المبلغ لازم يسجل طريقة الدفع الفعلية (فيزا/تحويل بنكي/
+  // فودافون كاش...) مش بس يعلّم "متحصّل" - عشان التقرير يقدر يحسب كل طريقة
+  // دفع صح، فبنحدّث amountPaid وطريقة الدفع مع علامة التحصيل في تحديث واحد.
+  // بعد كده الإجمالي/الرسوم الإضافية بقت مقفولة (قاعدة البيانات نفسها بترفض
+  // أي تعديل عليها - انظر قسم ١٧ في schema.sql) لحد ما حد يلغي علامة التحصيل
+  // دي الأول - عشان "خلاص اتحصّل" يفضل معناها خلاص فعليًا، مش حاجة ممكن
+  // تتغيّر من تحتها وتبوّظ المبلغ اللي فعليًا استلمناه.
   async function collectFullPayment(booking) {
     const gt = bookingGrandTotal(booking);
     const res = await onUpdateBooking(booking.id, { ...booking, paymentMethod: collectMethod, amountPaid: gt, settled: true });
     if (res?.error) { showToast(res.error); return; }
     onLog(`تحصيل كامل مبلغ الحجز (${collectMethod}) - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
-    showToast("تم تسجيل التحصيل الكامل");
+    // سجّل المبلغ المتحصّل فعليًا دلوقتي (المتبقي اللي كان على النزيل) تلقائيًا
+    // في يومية شيفت موظف الشيفت النهارده - انظر appendBookingCollection في
+    // data/shifts.js. من غيرها كان التحصيل (خصوصًا الكاش) ممكن ميظهرش في
+    // رصيد الدرج أو "تحصيل اليوم" فوق إلا لو الموظف دخّله يدويًا تاني في
+    // اليومية.
+    const paidDelta = gt - (Number(booking.amountPaid) || 0);
+    let ledgerWarning = "";
+    if (paidDelta !== 0 && myActiveShiftKey) {
+      const ledgerRes = await appendBookingCollection(todayStr(), myActiveShiftKey, profile, rooms, {
+        id: uid(), bookingId: booking.id, room: booking.room, guestName: booking.guestName,
+        amount: paidDelta, currency: booking.currency, method: collectMethod,
+        note: "تحصيل كامل مبلغ الحجز", at: Date.now(),
+      });
+      if (ledgerRes?.error) ledgerWarning = " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
+    }
+    showToast("تم تسجيل التحصيل الكامل - السعر والرسوم الإضافية مقفولة دلوقتي، لو احتجتي تعدّليهم لازم تلغي التحصيل الأول" + ledgerWarning);
   }
   async function undoSettled(booking) {
     const res = await onToggleSettled(booking, false);
     if (res?.error) { showToast(res.error); return; }
     onLog(`إلغاء تحصيل كامل مبلغ الحجز - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
-    showToast("تم إلغاء علامة التحصيل");
+    showToast("تم إلغاء علامة التحصيل - السعر والرسوم بقت قابلة للتعديل تاني");
   }
   // تمديد الحجز بليلة/ليالي إضافية: بتحرك تاريخ الخروج قدام، وبتزود إجمالي
   // سعر الغرفة بقيمة الليالي الجديدة على نفس سعر الليلة المتفق عليه
   // (من غير ما تلمس أي رسوم إضافية أو مدفوعات سابقة)، فكل حاجة تبعها -
   // الإجمالي الكلي، المتبقي، التقارير - بتتحدث تلقائي لوحدها. وبتتأكد الأول
-  // إن الغرفة مش متحجزة لحد تاني في الليالي الإضافية دي قبل ما تأكد.
+  // إن الغرفة مش متحجزة لحد تاني في الليالي الإضافية دي قبل ما تأكد - لو فيه
+  // تعارض وكان هو حجز أضافه مدير الحجوزات، بنوضح ده صريح في رسالة الرفض.
   async function extendBooking(booking) {
+    if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
     const n = Math.max(1, Number(extendNights) || 1);
     const newCheckout = addDays(booking.checkout, n);
     const conflict = roomsOverlap(bookings, booking.room, booking.checkout, newCheckout, booking.id);
-    if (conflict) { showToast("الغرفة محجوزة لحد تاني في الليلة/الليالي الجديدة - مينفعش تمدد بالتاريخ ده"); return; }
+    if (conflict) {
+      const clash = findOverlappingBooking(bookings, booking.room, booking.checkout, newCheckout, booking.id);
+      if (clash?.createdByRole === "reservations") { showToast("مينفعش تمدد - مدير الحجوزات ضايف حجز على الغرفة دي في التاريخ ده"); return; }
+      showToast("الغرفة محجوزة لحد تاني في الليلة/الليالي الجديدة - مينفعش تمدد بالتاريخ ده");
+      return;
+    }
     const addedRoomCharge = (Number(booking.priceNight) || 0) * n;
     const newTotalRoom = (Number(booking.totalRoom) || 0) + addedRoomCharge;
     const res = await onUpdateBooking(booking.id, { ...booking, checkout: newCheckout, totalRoom: newTotalRoom });
@@ -98,6 +117,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     setExtendNights(1);
   }
   async function saveExtras(booking) {
+    if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
     // منع أي قيمة سالبة من غير داعي تضرب قيد قاعدة البيانات (bookings_extras_nonneg)
     // وتطلّع رسالة خطأ تقنية مش مفهومة للموظف - بنمنعها من هنا الأول.
     const clamped = { laundry: Math.max(0, Number(extrasDraft.laundry) || 0), cafeteria: Math.max(0, Number(extrasDraft.cafeteria) || 0), tours: Math.max(0, Number(extrasDraft.tours) || 0), pickup: Math.max(0, Number(extrasDraft.pickup) || 0) };
@@ -144,6 +164,16 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
             <button className="cx-btn cx-btn-outline" onClick={() => setSelected(null)}><X size={14} /></button>
           </div>
 
+          {/* لو فيه حجز تاني في الغرفة دي اختصر النهارده ("مشي بدري") عشان
+              يفسح للحجز الجديد الحالي (تسكين مكرر) - نعرض بطاقة صغيرة بتاريخ
+              مغادرته الفعلي، عشان الصورة الكاملة تبقى واضحة لموظف الشيفت. */}
+          {(() => { const departed = bookings.find((bk) => bk.room === selected && bk.leftEarly && bk.checkout === date && bk.id !== status.booking?.id); return departed ? (
+            <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "#FBE9DA" }}>
+              <span className="cx-pill" style={{ background: "#fff", color: "var(--rust)", fontSize: 11, marginRight: 6 }}>مشي بدري</span>
+              <span style={{ fontSize: 12.5 }}>{departed.guestName} - غادر النهارده ({departed.checkout}) عشان حجز تسكين مكرر</span>
+            </div>
+          ) : null; })()}
+
           {status.booking && (() => { const b = status.booking; const gt = bookingGrandTotal(b); const paid = Number(b.amountPaid) || 0; const due = gt - paid; const extrasList = [
               b.extras?.laundry > 0 && ["غسيل", b.extras.laundry],
               b.extras?.cafeteria > 0 && ["كافيتيريا", b.extras.cafeteria],
@@ -152,7 +182,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
               b.earlyCheckin?.applied && ["دخول مبكر", b.earlyCheckin.fee || 0],
             ].filter(Boolean); return (
             <div className="cx-card" style={{ marginTop: 10, padding: 12, background: "var(--paper2)" }}>
-              <div style={{ fontWeight: 800, marginBottom: 6 }}>بطاقة الحجز الحالي {b.code && <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 12 }}>· كود {b.code}</span>} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginRight: 6, fontSize: 11 }}>مدفوع أونلاين</span>}</div>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>بطاقة الحجز الحالي {b.code && <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 12 }}>· كود {b.code}</span>} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginRight: 6, fontSize: 11 }}>مدفوع أونلاين</span>} {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginRight: 6, fontSize: 11 }}>تسكين مكرر</span>} {b.settled && <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)", marginRight: 6, fontSize: 11 }}>متحصّل بالكامل - مقفول</span>}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 8, fontSize: 12.5 }}>
                 <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>النزيل</div><div style={{ fontWeight: 700 }}>{b.guestName}</div></div>
                 <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>عدد الأفراد</div><div style={{ fontWeight: 700 }}>{b.pax || 1}</div></div>
@@ -177,7 +207,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 </>)}
               </div>
 
-              {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift ? (
+              {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift && !b.settled ? (
                 <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
                   <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (تقدر تضيفها هنا على طول من غير ما تفتح الحجز كامل)</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
@@ -196,15 +226,15 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 </div>
               ) : extrasList.length > 0 && (
                 <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 10.5, color: "var(--muted)", marginBottom: 4 }}>خدمات إضافية أُخذت</div>
+                  <div style={{ fontSize: 10.5, color: "var(--muted)", marginBottom: 4 }}>خدمات إضافية أُخذت{b.settled && !offShift && (perms.editBookings || perms.markPaymentReceived) ? " (مقفولة - الحجز متحصّل بالكامل، لازم تلغي التحصيل الأول لو عايز تعدّل)" : ""}</div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{extrasList.map(([label, amt]) => <span key={label} className="cx-pill" style={{ background: "#fff" }}>{label}: {fmt(amt)}</span>)}</div>
                 </div>
               )}
               {b.earlyCheckin?.applied && b.earlyCheckin.note && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر: {b.earlyCheckin.note}</div>}
 
-              {perms.editBookings && (
+              {(perms.editBookings || perms.markPaymentReceived) && !offShift && (
                 <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>النزيل طلب يمدد؟ حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي هيتحدثوا لوحدهم تلقائي</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>النزيل طلب يمدد؟ حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي هيتحدثوا لوحدهم تلقائي (لو الغرفة محجوزة لحد تاني في التاريخ الجديد مش هيتسمحلك تمدد)</div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <input className="cx-input" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
                     <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
@@ -213,13 +243,13 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 </div>
               )}
 
-              {offShift && perms.markPaymentReceived && <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> تسجيل التحصيل مش متاح غير وقت شيفتك اللي حاجزه.</div>}
+              {offShift && (perms.markPaymentReceived || perms.editBookings) && <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعمل أي حاجة هنا." : "مش شيفتك دلوقتي - التحصيل والتعديل مش متاحين غير وقت شيفتك اللي حاجزه."}</div>}
               <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 {perms.markPaymentReceived && !offShift && !b.paymentDetails?.onlinePaid && (
                   status.paid ? (
                     <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => undoSettled(b)}>إلغاء علامة "متحصّل بالكامل"</button>
                   ) : (<>
-                    <select className="cx-select" style={{ fontSize: 12, width: 120 }} value={collectMethod} onChange={(e) => setCollectMethod(e.target.value)}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                    <select className="cx-select" style={{ fontSize: 12, width: 120 }} value={collectMethod} onChange={(e) => setCollectMethod(e.target.value)}>{methodOptionsFor(collectMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
                     <button className="cx-btn cx-btn-gold" style={{ fontSize: 12 }} onClick={() => collectFullPayment(b)}><Check size={13} /> تسجيل تحصيل كامل المبلغ</button>
                   </>)
                 )}
@@ -231,7 +261,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
           {perms.editRoomStatus ? (
             offShift ? (
               <div style={{ marginTop: 12, fontSize: 12, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 10, display: "flex", alignItems: "center", gap: 4 }}>
-                <AlertTriangle size={13} /> مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه.
+                <AlertTriangle size={13} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعدّل حالة الغرف." : "مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه."}
               </div>
             ) : statusEditLocked ? (
               <div style={{ marginTop: 12 }}>

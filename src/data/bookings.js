@@ -14,7 +14,18 @@ function bookingFromRow(r) {
     // دي بتتملى تلقائيًا في قاعدة البيانات، مينفعش حد يزوّرها). updatedAt
     // لازم عشان نقدر نمنع تعديلين في نفس اللحظة يبوّظوا بعض (انظر
     // updateBookingIfUnchanged تحت).
-    createdBy: r.created_by || null, updatedAt: r.updated_at,
+    createdBy: r.created_by || null, createdByRole: r.created_by_role || null, updatedAt: r.updated_at,
+    // leftEarly: الحجز ده اختصر (مشي بدري) لإفساح الغرفة لتسكين مكرر جديد.
+    // duplicatePlacement: الحجز ده هو التسكين المكرر اللي حل مكان حجز قديم.
+    // الاتنين بدائل عن استخدام status="ملغي" غلط في عملية تسكين مكرر تلقائية
+    // (انظر قسم ١٨ في schema.sql) - "ملغي" الحقيقي يفضل فعل يدوي من مدير الحجوزات بس.
+    leftEarly: !!r.left_early, duplicatePlacement: !!r.duplicate_placement,
+    // refundPending: الحجز اتلغى وكان عليه مبلغ متحصّل لسه لازم يترد للنزيل
+    // - بيتحدد تلقائيًا في قاعدة البيانات نفسها لحظة ما الحالة تتغيّر لـ
+    // "ملغي" (انظر قسم ٢١ في schema.sql)، وبيُتصفّر لحظة ما موظف الشيفت يسجّل
+    // رد الفلوس فعليًا (processRefund في BookingsPanel.jsx).
+    refundPending: !!r.refund_pending, refundedAmount: r.refunded_amount != null ? Number(r.refunded_amount) : null,
+    refundedBy: r.refunded_by || null, refundedAt: r.refunded_at ? new Date(r.refunded_at).getTime() : null,
   };
 }
 
@@ -27,6 +38,13 @@ function bookingToRow(b) {
     amount_paid: Number(b.amountPaid) || 0, amount_tendered: Number(b.amountTendered) || 0,
     source: b.source, status: b.status, approval_status: b.approvalStatus || "approved", settled: !!b.settled,
     notes: b.notes || "", imported: !!b.imported, needs_room_review: !!b.needsRoomReview,
+    left_early: !!b.leftEarly, duplicate_placement: !!b.duplicatePlacement,
+    // refund_pending نفسها بتتحدد تلقائيًا في قاعدة البيانات (trigger) لحظة
+    // الإلغاء - هنا بس بنبعت القيم اللي processRefund فعليًا بيغيّرها (تصفير
+    // refund_pending وتسجيل مين رد الفلوس وإمتى)، عشان نسيب القرار الأساسي
+    // (امتى تتحدد refund_pending = true) للـ trigger بس.
+    refund_pending: !!b.refundPending, refunded_amount: b.refundedAmount ?? null,
+    refunded_by: b.refundedBy || null, refunded_at: b.refundedAt ? new Date(b.refundedAt).toISOString() : null,
   };
 }
 

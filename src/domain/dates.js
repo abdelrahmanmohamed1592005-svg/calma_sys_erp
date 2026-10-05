@@ -48,6 +48,36 @@ export function defaultShiftForNow() {
   return "night";
 }
 
+// حدود وقت كل شيفت (نظام 24 ساعة) - الليلي بيعدي نص الليل فبنمثّله ٠-٨.
+const SHIFT_WINDOWS = { morning: { start: 8, end: 16 }, evening: { start: 16, end: 24 }, night: { start: 0, end: 8 } };
+
+// أقصى مدة "أوفر تايم" يفضل فيها الشيفت/اليومية مفتوحين تلقائيًا بعد نهاية
+// معاد الشيفت الرسمي، لو موظف الشيفت لسه مكمّلش قفل بنفسه. بعد المدة دي
+// النظام يعتبر الشيفت لازم يتقفل (المدير العام/مدير الحجوزات يقدروا يفتحوه
+// تاني وقت ما احتاج الأمر).
+export const SHIFT_OVERTIME_GRACE_HOURS = 2;
+
+/* هل دلوقتي لسه "وقت" الشيفت ده فعليًا - يا إما داخل معاده الرسمي، يا إما
+   داخل هامش الأوفر تايم (ساعتين) بعد نهايته مباشرة. بيتعامل مع حالة الشيفت
+   المسائي اللي أوفر التايم بتاعه بيعدي نص الليل (مثلاً ٢٤:٠٠ لحد ٢:٠٠ صباحًا). */
+export function isShiftActiveNow(shiftKey, graceHours = SHIFT_OVERTIME_GRACE_HOURS, now = new Date()) {
+  const win = SHIFT_WINDOWS[shiftKey];
+  if (!win) return false;
+  const h = now.getHours() + now.getMinutes() / 60;
+  if (h >= win.start && h < win.end) return true;
+  const otStart = win.end % 24;
+  const otEnd = otStart + graceHours;
+  if (otEnd <= 24) return h >= otStart && h < otEnd;
+  return h >= otStart || h < otEnd - 24;
+}
+
+/* كل مفاتيح الشيفتات النشطة دلوقتي (عادي أو أوفر تايم) - ممكن يرجع أكتر من
+   شيفت واحد في نفس اللحظة (مثلاً شيفت مسائي في أوفر تايم + شيفت ليلي بدأ
+   فعليًا في معاده الرسمي، الاتنين ممكن يكونوا "نشطين" في نفس الدقيقة). */
+export function activeShiftKeysNow(graceHours = SHIFT_OVERTIME_GRACE_HOURS, now = new Date()) {
+  return SHIFT_ORDER.filter((k) => isShiftActiveNow(k, graceHours, now));
+}
+
 export function nextShiftOf(date, shiftKey) {
   const idx = SHIFT_ORDER.indexOf(shiftKey);
   if (idx < 2) return { date, shiftKey: SHIFT_ORDER[idx + 1] };

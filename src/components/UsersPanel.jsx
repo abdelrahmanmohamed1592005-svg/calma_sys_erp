@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Info, UserPlus, Key, Check } from "lucide-react";
+import { Info, UserPlus, Key, Check, AlertTriangle } from "lucide-react";
+import { TwoStepButton } from "./shared";
 import { ROLES, SHIFTS } from "../domain/constants";
 import { todayStr } from "../domain/dates";
-import { getClaimsForDate, clearClaimRow } from "../data/shifts";
+import { getClaimsForDate, clearClaimRow, deleteShiftRecord } from "../data/shifts";
 import { adminCreateUser, setProfileActive, adminResetPassword } from "../lib/auth";
 import { validatePasswordStrength, validateUsername, sanitizeText } from "../domain/security";
 
@@ -15,12 +16,19 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
 
   useEffect(() => { if (!readOnly) (async () => setClaims(await getClaimsForDate(today)))(); }, [readOnly, dataVersion]);
 
+  // إلغاء اختيار شيفت غلط: بيمسح الاختيار نفسه + ورقة اليومية (shift_records)
+  // المرتبطة بيه تحديدًا (دي ورقة تخص الاختيار الغلط ده بس، فمسحها كاملة
+  // منطقي وآمن). لكن أي حجوزات أو تغييرات حالة غرف حصلت في نفس الوقت ده مش
+  // مرتبطة بشيفت معيّن في قاعدة البيانات، فمش بتُمسح أو تترجع تلقائيًا معاها -
+  // لو فيها خطأ حقيقي، المدير العام/مدير الحجوزات يراجعوها ويصلّحوها يدويًا
+  // من شاشة الحجوزات/بلوك الغرف (الصلاحية دي متاحة لهم بالفعل).
   async function clearClaim(shiftKey) {
     const res = await clearClaimRow(today, shiftKey);
     if (res.error) { showToast(res.error); return; }
+    await deleteShiftRecord(today, shiftKey);
     setClaims((prev) => { const next = { ...prev }; delete next[shiftKey]; return next; });
-    onLog(`المدير العام ألغى اختيار شيفت ${SHIFTS.find((s) => s.key === shiftKey)?.label} النهارده عشان تصحيح خطأ`);
-    showToast("اتلغى الاختيار - أي موظف يقدر يختاره تاني");
+    onLog(`المدير العام ألغى اختيار شيفت ${SHIFTS.find((s) => s.key === shiftKey)?.label} النهارده عشان تصحيح خطأ (ورقة اليومية بتاعة الشيفت ده اتمسحت معاه)`);
+    showToast("اتلغى الاختيار وورقة اليومية بتاعته - أي حجوزات أو تغييرات غرف حصلت في نفس الوقت تحتاج تتراجع يدويًا لو فيها خطأ");
   }
 
   function startNew() { setForm({ name: "", username: "", role: "staff", pw: "" }); }
@@ -59,12 +67,12 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
       {!readOnly && claims && (
         <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
           <div style={{ fontWeight: 800, marginBottom: 6 }}>شيفتات النهارده</div>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>لو حد اختار شيفت غلط بالغلط، تقدر تلغي اختياره من هنا عشان يقدر يختار تاني (تصحيح إداري بس).</div>
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>لو حد اختار شيفت غلط بالغلط، تقدر تلغي اختياره من هنا عشان يقدر يختار تاني (تصحيح إداري بس). تنبيه: ده بيمسح ورقة اليومية بتاعة الشيفت ده كاملة، أما أي حجوزات أو تغييرات غرف حصلت في نفس الوقت فمش بتُمسح أو تترجع تلقائيًا - لازم تراجعيها وتصلّحيها يدويًا لو فيها خطأ.</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {SHIFTS.map((s) => (
               <div key={s.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, borderBottom: "1px solid var(--hair)", padding: "6px 0" }}>
                 <span>{s.label}: {claims[s.key] ? claims[s.key].name : <span style={{ color: "var(--muted)" }}>لسه محدش اختاره</span>}</span>
-                {claims[s.key] && <button className="cx-btn cx-btn-outline" style={{ fontSize: 11.5 }} onClick={() => clearClaim(s.key)}>إلغاء الاختيار</button>}
+                {claims[s.key] && <TwoStepButton label="إلغاء الاختيار" confirmLabel="مسح ورقة اليومية وإلغاء الاختيار؟" icon={<AlertTriangle size={12} />} onConfirm={() => clearClaim(s.key)} />}
               </div>
             ))}
           </div>
