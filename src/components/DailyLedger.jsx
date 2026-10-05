@@ -1,43 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, Trash2 } from "lucide-react";
-import { Logo, TwoStepButton } from "./shared";
+import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen } from "lucide-react";
+import { Logo } from "./shared";
 import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
 import { getShiftRecord, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord } from "../data/shifts";
-
-// تحصيل الحجوزات التلقائي (من بلوك الغرف/شاشة الحجوزات - بيتسجل لوحده، انظر
-// appendBookingCollection في data/shifts.js) بيظهر هنا لمراجعته أو تصحيحه
-// لو احتاج الأمر (مثلاً غلط طريقة الدفع وقت التحصيل) - مش جدول يدوي من
-// الصفر، ده سجل بيتولّد تلقائيًا وقابل للتعديل/الحذف بس لو حصل خطأ. المبلغ
-// السالب معناه "رد فلوس" لحجز اتلغى.
-function BookingCollectionsTable({ entries, rooms, locked, onUpdateEntry, onRemoveEntry }) {
-  if (!entries || entries.length === 0) return null;
-  return (
-    <div className="cx-card" style={{ marginTop: 14, padding: 12 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>تحصيل الحجوزات (تلقائي من بلوك الغرف/شاشة الحجوزات)</div>
-      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>اتسجل لوحده لحظة التحصيل أو رد الفلوس - داخل ضمن إجمالي التحصيل ورصيد الخزينة فوق تلقائيًا. عدّلي أو احذفي بس لو فيه خطأ (مثلاً طريقة دفع غلط).</div>
-      <div style={{ overflowX: "auto" }}>
-        <table className="cx-table" style={{ fontSize: 12, minWidth: 640 }}>
-          <thead><tr><th className="cx-th">الغرفة / النزيل</th><th className="cx-th">المبلغ</th><th className="cx-th">العملة</th><th className="cx-th">طريقة الدفع</th><th className="cx-th">ملاحظة</th>{!locked && <th className="cx-th"></th>}</tr></thead>
-          <tbody>
-            {entries.map((e, idx) => (
-              <tr key={e.id || idx}>
-                <td>{roomLabel(rooms, e.room)} {e.guestName ? `· ${e.guestName}` : ""}</td>
-                <td><input className="cx-input" type="number" disabled={locked} value={e.amount} onChange={(ev) => onUpdateEntry(idx, { amount: Number(ev.target.value) || 0 })} style={{ width: 90, color: e.amount < 0 ? "var(--rust)" : undefined, fontWeight: 700 }} /></td>
-                <td><select className="cx-select" disabled={locked} value={e.currency} onChange={(ev) => onUpdateEntry(idx, { currency: ev.target.value })} style={{ width: 72 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></td>
-                <td><select className="cx-select" disabled={locked} value={e.method} onChange={(ev) => onUpdateEntry(idx, { method: ev.target.value })} style={{ width: 130 }}>{methodOptionsFor(e.method).map((m) => <option key={m} value={m}>{m}</option>)}</select></td>
-                <td style={{ color: "var(--muted)", fontSize: 11 }}>{e.note || "—"}</td>
-                {!locked && <td>{<TwoStepButton label="" confirmLabel="حذف؟" icon={<Trash2 size={13} />} onConfirm={() => onRemoveEntry(idx)} />}</td>}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -327,8 +295,6 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   }
   function updateRow(idx, patch) { const rows = record.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)); persist({ ...record, rows }, { silent: true }); }
   function updateCafeteria(patch) { persist({ ...record, cafeteria: { ...record.cafeteria, ...patch } }, { silent: true }); }
-  function updateBookingCollection(idx, patch) { const bookingCollections = (record.bookingCollections || []).map((e, i) => (i === idx ? { ...e, ...patch } : e)); persist({ ...record, bookingCollections }, { immediate: true }); }
-  function removeBookingCollection(idx) { const bookingCollections = (record.bookingCollections || []).filter((_, i) => i !== idx); persist({ ...record, bookingCollections }, { immediate: true }); onLog(`حذف قيد تحصيل حجز تلقائي من يومية ${SHIFTS.find((s) => s.key === myShiftKey)?.label} ليوم ${today}`); }
   function updateHandover(cur, val) { persist({ ...record, handover: { ...record.handover, [cur]: Number(val) || 0 } }, { silent: true }); }
   function addCurrency(cur) { if (!cur || record.handover?.[cur] != null) return; persist({ ...record, handover: { ...record.handover, [cur]: 0 } }, { silent: true, immediate: true }); }
   function updateMethodHandover(method, cur, val) { persist({ ...record, methodHandover: { ...record.methodHandover, [method]: { ...(record.methodHandover?.[method] || {}), [cur]: Number(val) || 0 } } }, { silent: true }); }
@@ -414,7 +380,6 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
             <LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} onUpdateCafeteria={updateCafeteria} />
-            <BookingCollectionsTable entries={record.bookingCollections} rooms={rooms} locked={locked} onUpdateEntry={updateBookingCollection} onRemoveEntry={removeBookingCollection} />
             <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <input type="checkbox" checked={record.flagged} disabled={locked} onChange={(e) => persist({ ...record, flagged: e.target.checked }, { immediate: true })} />
@@ -451,7 +416,6 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
                 </div>
               )}
               <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
-              <BookingCollectionsTable entries={histRecord.bookingCollections} rooms={rooms} locked={true} onUpdateEntry={() => {}} onRemoveEntry={() => {}} />
               <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
               <LedgerPrintFooter />

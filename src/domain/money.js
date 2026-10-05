@@ -65,13 +65,13 @@ export function freshShiftRecord(date, shiftKey, staffName, staffUsername, rooms
     methodHandover: (methodHandover && Object.keys(methodHandover).length > 0) ? methodHandover : {},
     rows: rooms.map((r) => emptyLedgerRow(r.number)),
     cafeteria: emptyLedgerRow("كافيتيريا"),
-    // تحصيل الحجوزات (بلوك الغرف/شاشة الحجوزات) بيتسجل هنا تلقائيًا أول ما
-    // يحصل - كل عنصر {id, bookingId, room, guestName, amount, currency,
-    // method, note, at}. amount ممكن يكون سالب لو ده "رد فلوس" (حجز اتلغى
-    // وكان عليه مبلغ متحصّل). انظر computeShiftTotals تحت وملف data/shifts.js
-    // (appendBookingCollection) - ده اللي كان قاعد ناقص قبل كده وخلى تحصيل
-    // الحجوزات المباشر (غير الكاش خصوصًا الكاش) ميظهرش في رصيد الدرج أو
-    // "تحصيل اليوم" في بلوك الغرف إلا لو الموظف دخلها يدويًا تاني في اليومية.
+    // سجل داخلي بس (مش بيظهر في أي شاشة) بيحفظ أرقام الحجوزات اللي تحصيلها
+    // اتضاف فعليًا لصف غرفتها في rows فوق (عن طريق appendBookingCollection في
+    // data/shifts.js) - كل عنصر {id, bookingId}. الهدف الوحيد منه إن تقرير
+    // "تحصيل الحجوزات بطرق الدفع الأخرى" في ReportsPanel.jsx مايحسبش نفس
+    // المبلغ مرتين (مرة من rows هنا، ومرة تاني من amountPaid على الحجز نفسه).
+    // التحصيل الفعلي نفسه موجود في خانة "التحصيل" العادية لصف الغرفة بالظبط
+    // زي ما لو الموظف كتبها بإيده - مفيش جدول تاني مستقل.
     bookingCollections: [],
     shiftNotes: "", flagged: false, closed: false, closedBy: null, closedAt: null,
   };
@@ -90,28 +90,18 @@ export function computeShiftTotals(record) {
       byCategory[cat] = byCategory[cat] || emptyMoney();
       byCategory[cat][cur] = (byCategory[cat][cur] || 0) + exp;
     }
+    // col ممكن يكون سالب دلوقتي (رد فلوس حجز ملغي بيتسجل في نفس الخانة دي -
+    // انظر appendBookingCollection في data/shifts.js) - عشان كده الشرط بقى
+    // "!= 0" مش "> 0"، ونفس الخانة بتدخل في إجمالي التحصيل ورصيد الخزينة
+    // (لو كاش) سواء كانت تحصيل أو رد فلوس.
     const col = Number(r.collectionAmt) || 0;
-    if (col > 0) {
+    if (col !== 0) {
       const cur = r.collectionCurrency || "EGP";
       totalCollections[cur] = (totalCollections[cur] || 0) + col;
       byMethodCurrency[r.collectionMethod] = byMethodCurrency[r.collectionMethod] || emptyMoney();
       byMethodCurrency[r.collectionMethod][cur] = (byMethodCurrency[r.collectionMethod][cur] || 0) + col;
       if (r.collectionMethod === "كاش") cashCollections[cur] = (cashCollections[cur] || 0) + col;
     }
-  });
-  // تحصيل الحجوزات التلقائي (تسجيل تحصيل كامل المبلغ أو حجز جديد بمبلغ مقدّم
-  // من بلوك الغرف/شاشة الحجوزات)، وكذلك رد الفلوس (مبلغ سالب) لحجز اتلغى.
-  // بيتجمع بالظبط زي صفوف اليومية العادية فوق - فيدخل في إجمالي التحصيل
-  // ورصيد الخزينة (لو كاش) تلقائيًا من غير ما الموظف يحتاج يكتبه تاني يدويًا.
-  (record.bookingCollections || []).forEach((e) => {
-    const amt = Number(e.amount) || 0;
-    if (!amt) return;
-    const cur = e.currency || "EGP";
-    const method = e.method || "كاش";
-    totalCollections[cur] = (totalCollections[cur] || 0) + amt;
-    byMethodCurrency[method] = byMethodCurrency[method] || emptyMoney();
-    byMethodCurrency[method][cur] = (byMethodCurrency[method][cur] || 0) + amt;
-    if (method === "كاش") cashCollections[cur] = (cashCollections[cur] || 0) + amt;
   });
   const handover = record.handover && typeof record.handover === "object" ? record.handover : { EGP: Number(record.handover) || 0 };
   const closingCash = {};

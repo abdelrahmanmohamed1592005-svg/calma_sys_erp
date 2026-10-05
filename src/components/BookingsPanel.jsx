@@ -89,6 +89,13 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     } else if (collectionLocked) {
       cleaned = { ...cleaned, amountPaid: originalBooking ? originalBooking.amountPaid : 0, amountTendered: originalBooking ? originalBooking.amountTendered : 0, settled: originalBooking ? originalBooking.settled : false };
     }
+    // مينفعش "متحصّل بالكامل" يتسجل والمدفوع لسه أقل من الإجمالي الكلي - دفاع
+    // إضافي هنا (الشرط الحقيقي في قاعدة البيانات - قسم ٢٤ في schema.sql)،
+    // عشان مايحصلش حجز متحصّل بالكامل وعليه متبقي في نفس الوقت.
+    if (!cleaned.paymentDetails?.onlinePaid && cleaned.settled) {
+      const gtNow = bookingGrandTotal(cleaned);
+      if ((Number(cleaned.amountPaid) || 0) < gtNow) { showToast(`مينفعش تعلّمي "متحصّل بالكامل" وفيه ${fmt(gtNow - (Number(cleaned.amountPaid) || 0))} ${cleaned.currency} لسه متبقية`); return; }
+    }
     // "تسكين مكرر": الضيف القديم خرج بدري عشان يفسح للحجز الجديد ده. قبل ما
     // نحفظ الحجز الجديد، نتعامل مع الحجز القديم المتعارض:
     // - لو الحجز القديم بدأ قبل الجديد فعلاً: نقصّر تاريخ خروجه لحد تاريخ
@@ -311,7 +318,13 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
                 </>)}
               </div>
               {collectionLocked && !moneyLocked && <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Lock size={11} /> تسجيل التحصيل من صلاحية موظف الشيفت بس - إنت تقدر تحدد سعر الحجز، لكن تأكيد استلام الفلوس يتم من اليومية وقت الشيفت.</div>}
-              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" disabled={moneyLocked || collectionLocked} checked={form.settled} onChange={(e) => setForm({ ...form, settled: e.target.checked })} /><span style={{ fontSize: 12.5 }}>تم تحصيل كامل المبلغ (مُصفّى)</span></div>
+              {/* "متحصّل بالكامل" لازم المدفوع يكون فعليًا وصل للإجمالي الكلي
+                  أول - مش علامة حرة تتحط من غير ما الفلوس تكون جت فعلًا (ده
+                  كان بيسمح بتضارب: حجز عليه متبقي ومعلّم "متحصّل بالكامل" في
+                  نفس الوقت). القفل ده في قاعدة البيانات نفسها كمان (قسم ٢٤
+                  في schema.sql). */}
+              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" disabled={moneyLocked || collectionLocked || balanceDue > 0} checked={form.settled} onChange={(e) => setForm({ ...form, settled: e.target.checked })} /><span style={{ fontSize: 12.5 }}>تم تحصيل كامل المبلغ (مُصفّى)</span></div>
+              {!moneyLocked && !collectionLocked && balanceDue > 0 && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--rust)" }}>مينفعش تعلّمي "متحصّل بالكامل" وفيه {fmt(balanceDue)} {form.currency} لسه متبقية - زوّدي "المدفوع حتى الآن" لحد الإجمالي الكلي الأول.</div>}
             </div>
           )}
 

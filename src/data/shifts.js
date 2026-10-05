@@ -115,19 +115,35 @@ export async function ensureShiftRecord(date, shiftKey, profile, rooms) {
 }
 
 /* تسجيل تحصيل (أو رد فلوس - amount سالب) حصل على حجز من بلوك الغرف أو شاشة
-   الحجوزات تلقائيًا في يومية شيفت موظف الشيفت الحالي - عشان رصيد الخزينة/
-   التحصيل حسب طريقة الدفع في اليومية والتقارير يعكسوا الحقيقة من غير ما
-   الموظف يحتاج يكتب نفس المبلغ تاني يدويًا في جدول اليومية (كان ده الفجوة
+   الحجوزات تلقائيًا في يومية شيفت موظف الشيفت الحالي - بيضاف فعليًا لخانة
+   "التحصيل" (المبلغ/الوسيلة/العملة) الخاصة بصف غرفة الحجز في جدول اليومية
+   العادي نفسه - زي بالظبط لو الموظف كتبه بإيده - مش في جدول منفصل تاني.
+   عشان رصيد الخزينة/التحصيل حسب طريقة الدفع في اليومية والتقارير يعكسوا
+   الحقيقة من غير ما الموظف يحتاج يكتب نفس المبلغ تاني بنفسه (كان ده الفجوة
    قبل كده: تحصيل الكاش خصوصًا من الحجز مباشرة كان مش بيظهر في رصيد الدرج
-   أصلًا إلا لو الموظف دخّله يدويًا تاني بنفسه).
+   أصلًا إلا لو الموظف دخّله يدويًا تاني بنفسه في اليومية).
    بتعيد المحاولة لو فيه تعارض (حد تاني عدّل نفس سجل اليومية في نفس اللحظة
-   بالظبط - نادر جدًا) لحد ٤ مرات قبل ما ترجّع خطأ. */
+   بالظبط - نادر جدًا، أو الموظف كان بيكتب في اليومية في نفس الوقت) لحد ٤
+   مرات قبل ما ترجّع خطأ. */
 export async function appendBookingCollection(date, shiftKey, profile, rooms, entry) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const rec = await ensureShiftRecord(date, shiftKey, profile, rooms);
     if (!rec) return { error: "تعذر الوصول ليومية الشيفت" };
-    const bookingCollections = [...(rec.bookingCollections || []), entry];
-    const res = await updateShiftRecordIfUnchanged(date, shiftKey, rec.updatedAt, { ...rec, bookingCollections });
+    const idx = (rec.rows || []).findIndex((r) => r.room === entry.room);
+    if (idx === -1) return { error: "الغرفة دي غير موجودة في جدول اليومية" };
+    const row = rec.rows[idx];
+    const label = `${entry.note || "تحصيل"}${entry.guestName ? " - " + entry.guestName : ""} (${entry.amount > 0 ? "+" : ""}${entry.amount} ${entry.currency})`;
+    const rows = rec.rows.map((r, i) => (i !== idx ? r : {
+      ...r,
+      collectionAmt: (Number(r.collectionAmt) || 0) + entry.amount,
+      collectionMethod: entry.method,
+      collectionCurrency: entry.currency,
+      collectionDesc: row.collectionDesc ? `${row.collectionDesc} / ${label}` : label,
+    }));
+    // تتبّع داخلي بس (مش ظاهر في أي شاشة) لمنع حساب نفس المبلغ مرتين في
+    // التقارير - انظر الملاحظة على bookingCollections في domain/money.js.
+    const bookingCollections = [...(rec.bookingCollections || []), { id: entry.id, bookingId: entry.bookingId }];
+    const res = await updateShiftRecordIfUnchanged(date, shiftKey, rec.updatedAt, { ...rec, rows, bookingCollections });
     if (res.data) return { data: res.data };
     if (res.error) return res;
     // conflict - حد تاني عدّل نفس السجل في نفس اللحظة، نجرّب تاني بأحدث نسخة

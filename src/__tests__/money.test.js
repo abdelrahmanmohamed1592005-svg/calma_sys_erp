@@ -202,37 +202,37 @@ describe("directBookingPaymentsByMethod (تحصيل الحجوزات بطرق ا
   });
 });
 
-describe("computeShiftTotals - bookingCollections (تحصيل الحجوزات التلقائي من بلوك الغرف/الحجوزات)", () => {
-  it("adds an auto-posted cash collection into totalCollections, cashCollections and closingCash", () => {
+describe("computeShiftTotals - room row collectionAmt can be negative (booking refund merged into the normal ledger row)", () => {
+  it("a positive collectionAmt on a room row still works exactly as before", () => {
     const rooms = [{ number: 601 }];
     const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 1000 });
-    record.bookingCollections = [{ id: "e1", bookingId: "b1", room: 601, amount: 500, currency: "EGP", method: "كاش" }];
+    record.rows[0] = { ...record.rows[0], collectionAmt: 500, collectionCurrency: "EGP", collectionMethod: "كاش" };
     const t = computeShiftTotals(record);
     expect(t.totalCollections.EGP).toBe(500);
     expect(t.cashCollections.EGP).toBe(500);
     expect(t.closingCash.EGP).toBe(1500);
   });
 
-  it("adds an auto-posted non-cash collection into byMethodCurrency without touching cash", () => {
-    const rooms = [{ number: 601 }];
-    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 0 });
-    record.bookingCollections = [{ id: "e1", bookingId: "b1", room: 601, amount: 300, currency: "EGP", method: "فيزا" }];
-    const t = computeShiftTotals(record);
-    expect(t.totalCollections.EGP).toBe(300);
-    expect(t.byMethodCurrency["فيزا"].EGP).toBe(300);
-    expect(t.cashCollections.EGP || 0).toBe(0);
-  });
-
-  it("a negative entry (refund for a cancelled booking) reduces totals and the cash drawer", () => {
+  it("a negative collectionAmt (refund for a cancelled booking, posted automatically) reduces totals and the cash drawer", () => {
     const rooms = [{ number: 601 }];
     const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 1000 });
-    record.bookingCollections = [{ id: "e1", bookingId: "b1", room: 601, amount: -400, currency: "EGP", method: "كاش" }];
+    record.rows[0] = { ...record.rows[0], collectionAmt: -400, collectionCurrency: "EGP", collectionMethod: "كاش" };
     const t = computeShiftTotals(record);
     expect(t.totalCollections.EGP).toBe(-400);
     expect(t.closingCash.EGP).toBe(600);
   });
 
-  it("is a no-op when bookingCollections is missing (older records / backward compatibility)", () => {
+  it("a negative non-cash collectionAmt affects byMethodCurrency but not the cash drawer", () => {
+    const rooms = [{ number: 601 }];
+    const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 1000 });
+    record.rows[0] = { ...record.rows[0], collectionAmt: -200, collectionCurrency: "EGP", collectionMethod: "فيزا" };
+    const t = computeShiftTotals(record);
+    expect(t.byMethodCurrency["فيزا"].EGP).toBe(-200);
+    expect(t.cashCollections.EGP || 0).toBe(0);
+    expect(t.closingCash.EGP).toBe(1000);
+  });
+
+  it("is a no-op when bookingCollections (internal double-count-prevention tracking) is missing", () => {
     const rooms = [{ number: 601 }];
     const record = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", rooms, { EGP: 1000 });
     delete record.bookingCollections;

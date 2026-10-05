@@ -1077,6 +1077,37 @@ drop trigger if exists bookings_staff_cancel_guard on bookings;
 create trigger bookings_staff_cancel_guard before insert or update on bookings
   for each row execute function prevent_staff_cancel_status();
 
+-- --------------------------------------------------------------------------
+-- 24) "متحصّل بالكامل" (settled) ما ينفعش يتسجل إلا لو المدفوع فعليًا وصل
+--     للإجمالي الكلي (سعر الغرفة + كل الرسوم الإضافية + رسم الدخول المبكر لو
+--     منطبق) - من غيره كان ممكن يحصل تضارب: حجز معلّم "متحصّل بالكامل" وعليه
+--     متبقي فعلي في نفس الوقت (حصل فعليًا في الواجهة قبل الإصلاح ده). الحجز
+--     المدفوع أونلاين مستثنى (مش بيستخدم amount_paid أصلًا - انظر قسم ١٧).
+-- --------------------------------------------------------------------------
+create or replace function prevent_invalid_settled()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  grand numeric;
+begin
+  if new.settled = true and not coalesce((new.payment_details->>'onlinePaid')::boolean, false) then
+    grand := coalesce(new.total_room, 0)
+      + coalesce((new.extras->>'laundry')::numeric, 0)
+      + coalesce((new.extras->>'cafeteria')::numeric, 0)
+      + coalesce((new.extras->>'tours')::numeric, 0)
+      + coalesce((new.extras->>'pickup')::numeric, 0)
+      + case when coalesce((new.early_checkin->>'applied')::boolean, false) then coalesce((new.early_checkin->>'fee')::numeric, 0) else 0 end;
+    if coalesce(new.amount_paid, 0) < grand then
+      raise exception 'مينفعش تعلّمي الحجز "متحصّل بالكامل" والمدفوع (%) لسه أقل من الإجمالي الكلي (%)', new.amount_paid, grand;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_settled_validity_guard on bookings;
+create trigger bookings_settled_validity_guard before insert or update on bookings
+  for each row execute function prevent_invalid_settled();
+
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):
 --
