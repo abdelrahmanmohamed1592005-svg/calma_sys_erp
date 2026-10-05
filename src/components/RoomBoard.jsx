@@ -177,12 +177,18 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 </>)}
               </div>
 
-              {extrasDraft && (perms.editBookings || perms.markPaymentReceived) ? (
+              {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift ? (
                 <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
                   <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (تقدر تضيفها هنا على طول من غير ما تفتح الحجز كامل)</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
-                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" min="0" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
-                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" min="0" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
+                    {/* مدير الحجوزات بس اللي ملوش دعوة بغسيل/كافيتيريا هنا -
+                        موظف الشيفت (markPaymentReceived) لسه يقدر يضيفهم
+                        زي ما كان، لأنه هو اللي فعليًا بيستقبل طلبات النزيل
+                        دي وقت الشيفت. */}
+                    {profile?.role !== "reservations" && (<>
+                      <div><label style={{ fontSize: 10, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" min="0" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
+                      <div><label style={{ fontSize: 10, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" min="0" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
+                    </>)}
                     <div><label style={{ fontSize: 10, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" min="0" value={extrasDraft.tours} onChange={(e) => setExtrasDraft({ ...extrasDraft, tours: e.target.value })} /></div>
                     <div><label style={{ fontSize: 10, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" min="0" value={extrasDraft.pickup} onChange={(e) => setExtrasDraft({ ...extrasDraft, pickup: e.target.value })} /></div>
                   </div>
@@ -207,8 +213,9 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 </div>
               )}
 
+              {offShift && perms.markPaymentReceived && <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> تسجيل التحصيل مش متاح غير وقت شيفتك اللي حاجزه.</div>}
               <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                {perms.markPaymentReceived && !b.paymentDetails?.onlinePaid && (
+                {perms.markPaymentReceived && !offShift && !b.paymentDetails?.onlinePaid && (
                   status.paid ? (
                     <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => undoSettled(b)}>إلغاء علامة "متحصّل بالكامل"</button>
                   ) : (<>

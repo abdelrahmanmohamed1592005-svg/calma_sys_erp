@@ -821,6 +821,52 @@ drop trigger if exists bookings_reservations_collection_guard on bookings;
 create trigger bookings_reservations_collection_guard before insert or update on bookings
   for each row execute function prevent_reservations_collection_edit();
 
+-- --------------------------------------------------------------------------
+-- 15) تحصين إضافي: موظف الشيفت (staff) ليه صلاحية يضيف حجوزات جديدة كاملة
+--     (canCreateBookings=true)، لكن لما يعدّل في حجز موجود بالفعل، شغله
+--     المفروض يكون محدود بالحاجات اللي بتحصل وقت الشيفت فعليًا: التحصيل
+--     (amount_paid/settled)، وسيلة الدفع، الرسوم الإضافية (extras)، وحالة/
+--     تاريخ الخروج والملاحظات (ده مطلوب فعليًا لحالة "تسكين مكرر" لما
+--     موظف الشيفت يحل تعارض حجزين على نفس الغرفة بتعديل حجز قديم تانِي -
+--     بيغيّر checkout أو status/notes بتاعه). أي تعديل على باقي بيانات
+--     الحجز (الغرفة، اسم/رقم النزيل، عدد الأفراد، تاريخ الدخول، السعر،
+--     العملة، إجمالي الغرفة، الدخول المبكر، تفاصيل الدفع الأونلاين، المتحصّل
+--     نقدًا tendered، مصدر الحجز، حالة الاعتماد، كود الحجز، استيراد/مراجعة
+--     الغرفة) ممنوع من موظف الشيفت على مستوى القاعدة - دفاع حقيقي لو حد
+--     حاول يتخطى الواجهة ويبعت تحديث مباشر بالـ API. ده سارٍ على UPDATE بس،
+--     مش INSERT، عشان ميأثرش على صلاحية موظف الشيفت في إضافة حجز جديد كامل.
+-- --------------------------------------------------------------------------
+create or replace function prevent_staff_core_booking_edit()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if is_staff() and TG_OP = 'UPDATE' then
+    if (new.room is distinct from old.room)
+       or (new.guest_name is distinct from old.guest_name)
+       or (new.phone is distinct from old.phone)
+       or (new.pax is distinct from old.pax)
+       or (new.checkin is distinct from old.checkin)
+       or (new.price_night is distinct from old.price_night)
+       or (new.currency is distinct from old.currency)
+       or (new.total_room is distinct from old.total_room)
+       or (new.early_checkin is distinct from old.early_checkin)
+       or (new.payment_details is distinct from old.payment_details)
+       or (new.amount_tendered is distinct from old.amount_tendered)
+       or (new.source is distinct from old.source)
+       or (new.approval_status is distinct from old.approval_status)
+       or (new.code is distinct from old.code)
+       or (new.imported is distinct from old.imported)
+       or (new.needs_room_review is distinct from old.needs_room_review) then
+      raise exception 'تعديل بيانات الحجز الأساسية مش من صلاحية موظف الشيفت - التحصيل/الرسوم/الحالة بس';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_staff_core_edit_guard on bookings;
+create trigger bookings_staff_core_edit_guard before update on bookings
+  for each row execute function prevent_staff_core_booking_edit();
+
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):
 --

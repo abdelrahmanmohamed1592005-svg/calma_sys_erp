@@ -82,9 +82,19 @@ function aggregateShifts(records) {
 
 function aggregateBookings(bookings, fromDate, toDate) {
   const toDate2 = addDays(toDate, 1);
+  // "المبالغ المتبقية على نزلاء" لازم تفضل مبنية على أي حجز شغال أو قريب من
+  // الفترة المختارة (overlap) - ده رصيد مستحق لحظي، صح يتكرر ظهوره في كل
+  // يوم لحد ما يُسدد.
   const inRange = bookings.filter((b) => b.status !== "ملغي" && b.checkin < toDate2 && b.checkout > fromDate);
-  const onlineBookings = inRange.filter((b) => b.paymentDetails?.onlinePaid);
-  const directBookings = inRange.filter((b) => !b.paymentDetails?.onlinePaid);
+  // لكن "الإيراد" (الحجوزات الأونلاين + التحصيل المباشر حسب طريقة الدفع)
+  // لازم يُحسب مرة واحدة بس لكل حجز، مش في كل يوم من أيام إقامته - وإلا
+  // حجز ٣ ليالي هيتحسب ٣ مرات (يوم الدخول + يومين إقامة) لو جمعتي تقارير
+  // أيام متتالية، وده كان بيضخّم الإيراد المُجمّع بشكل غير صحيح. الحل: نربط
+  // الإيراد بتاريخ تسجيل الدخول نفسه بس (يوم واحد ثابت لكل حجز) بدل التداخل
+  // مع كل أيام الإقامة.
+  const revenueBookings = bookings.filter((b) => b.status !== "ملغي" && b.checkin >= fromDate && b.checkin < toDate2);
+  const onlineBookings = revenueBookings.filter((b) => b.paymentDetails?.onlinePaid);
+  const directBookings = revenueBookings.filter((b) => !b.paymentDetails?.onlinePaid);
   const grossRevenue = emptyMoney(); const netRevenue = emptyMoney();
   const items = [];
   onlineBookings.forEach((b) => {
@@ -117,7 +127,7 @@ function aggregateBookings(bookings, fromDate, toDate) {
       if (due > 0) outstanding.push({ ...b, due, onlineExtrasOnly: false });
     }
   });
-  return { count: onlineBookings.length, totalCount: inRange.length, grossRevenue, netRevenue, items, outstanding, byMethodCurrency };
+  return { count: onlineBookings.length, totalCount: revenueBookings.length, grossRevenue, netRevenue, items, outstanding, byMethodCurrency };
 }
 
 export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
@@ -285,7 +295,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
 
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>الحجوزات الأونلاين ({bAgg.count} حجز مدفوع أونلاين من إجمالي {bAgg.totalCount} حجز في الفترة)</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>القسم ده بيشمل بس الحجوزات اللي اتحددت يدويًا كـ"مدفوعة أونلاين" وقت إنشاء أو تعديل الحجز.</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>القسم ده بيشمل بس الحجوزات اللي اتحددت يدويًا كـ"مدفوعة أونلاين" وقت إنشاء أو تعديل الحجز، وبيحسب كل حجز مرة واحدة بس في تقرير يوم تسجيل الدخول بتاعه (مش في كل يوم من أيام إقامته) - عشان مجموع تقارير أيام متتالية يفضل مطابق لتقرير الفترة كلها من غير تكرار.</div>
             <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 12 }}>
               <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي من غير عمولة</div><div style={{ fontWeight: 800 }}>{moneyLine(bAgg.grossRevenue)}</div></div>
               <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الصافي بعد العمولة</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{moneyLine(bAgg.netRevenue)}</div></div>

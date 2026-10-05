@@ -161,9 +161,11 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
 
           <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
             <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>رسوم إضافية {moneyLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</div>
+            {/* شيلنا "غسيل" و"كافيتيريا" من هنا - مبقوش يُضافوا كرسوم على
+                الحجز من شاشة الحجوزات. لو حجز قديم كان عليه قيمة فيهم
+                فعلاً، القيمة تفضل محفوظة ومحسوبة في الإجمالي زي ما هي -
+                بس مفيش إضافة جديدة منها عن طريق الواجهة. */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(100px,1fr))", gap: 8 }}>
-              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" min="0" disabled={moneyLocked} value={form.extras.laundry} onChange={(e) => setForm({ ...form, extras: { ...form.extras, laundry: e.target.value } })} /></div>
-              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" min="0" disabled={moneyLocked} value={form.extras.cafeteria} onChange={(e) => setForm({ ...form, extras: { ...form.extras, cafeteria: e.target.value } })} /></div>
               <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" min="0" disabled={moneyLocked} value={form.extras.tours} onChange={(e) => setForm({ ...form, extras: { ...form.extras, tours: e.target.value } })} /></div>
               <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" min="0" disabled={moneyLocked} value={form.extras.pickup} onChange={(e) => setForm({ ...form, extras: { ...form.extras, pickup: e.target.value } })} /></div>
             </div>
