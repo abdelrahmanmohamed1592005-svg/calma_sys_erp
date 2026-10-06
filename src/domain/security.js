@@ -13,6 +13,7 @@
 export function validatePasswordStrength(password) {
   const pw = String(password || "");
   if (pw.length < 8) return { ok: false, message: "كلمة المرور ٨ حروف على الأقل" };
+  if (pw.length > 128) return { ok: false, message: "كلمة المرور طويلة جدًا (الحد الأقصى ١٢٨ حرف)" };
   if (!/[A-Za-z]/.test(pw)) return { ok: false, message: "كلمة المرور لازم تحتوي على حرف واحد على الأقل" };
   if (!/[0-9]/.test(pw)) return { ok: false, message: "كلمة المرور لازم تحتوي على رقم واحد على الأقل" };
   return { ok: true, message: "" };

@@ -27,18 +27,21 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   useEffect(() => { setExtendNights(1); }, [selected, status?.booking?.id]);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       let rev = emptyMoney(), exp = emptyMoney(), flagged = 0;
       for (const s of SHIFTS) {
         const r = await getShiftRecord(shiftDayNow(), s.key);
+        if (cancelled) return;
         if (!r) continue;
         const t = computeShiftTotals(r);
         currencyKeysOf(t.totalCollections).forEach((c) => { rev[c] = (rev[c] || 0) + t.totalCollections[c]; });
         currencyKeysOf(t.totalExpenses).forEach((c) => { exp[c] = (exp[c] || 0) + t.totalExpenses[c]; });
         if (r.flagged) flagged += 1;
       }
-      setKpis({ rev, exp, flagged });
+      if (!cancelled) setKpis({ rev, exp, flagged });
     })();
+    return () => { cancelled = true; };
   }, [date, dataVersion]);
 
   // موظف الشيفت (staff) يقدر يغيّر حالة الغرف ويحصّل الفلوس بس وهو في شيفته
@@ -160,7 +163,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     showToast("تم حفظ الرسوم الإضافية");
   }
 
-  const counts = useMemo(() => { const c = { available: 0, occupied_paid: 0, occupied_unpaid: 0, reserved: 0, maintenance: 0, cleaning: 0, early_checkout: 0 }; rooms.forEach((r) => { const s = computeRoomStatus(r.number, bookings, overrides, date); c[s.key] = (c[s.key] || 0) + 1; }); return c; }, [rooms, bookings, overrides]);
+  const counts = useMemo(() => { const c = { available: 0, occupied_paid: 0, occupied_unpaid: 0, reserved: 0, maintenance: 0, cleaning: 0, early_checkout: 0 }; rooms.forEach((r) => { const s = computeRoomStatus(r.number, bookings, overrides, date); c[s.key] = (c[s.key] || 0) + 1; }); return c; }, [rooms, bookings, overrides, date]);
   const revCurrencies = kpis ? currencyKeysOf(kpis.rev, kpis.exp) : [];
 
   return (
@@ -168,7 +171,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
         <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>تحصيل اليوم</div><div style={{ fontWeight: 800, fontSize: 15 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.rev, c)} ${c}`).join(" + ") : "0") : "…"}</div></div>
         <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>مصاريف اليوم</div><div style={{ fontWeight: 800, fontSize: 15 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.exp, c)} ${c}`).join(" + ") : "0") : "…"}</div></div>
-        <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>نسبة الإشغال</div><div style={{ fontWeight: 800, fontSize: 20 }}>{Math.round((((counts.occupied_paid || 0) + (counts.occupied_unpaid || 0)) / rooms.length) * 100)}%</div></div>
+        <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>نسبة الإشغال</div><div style={{ fontWeight: 800, fontSize: 20 }}>{rooms.length ? Math.round((((counts.occupied_paid || 0) + (counts.occupied_unpaid || 0)) / rooms.length) * 100) : 0}%</div></div>
         <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>شيفتات تحتاج متابعة</div><div style={{ fontWeight: 800, fontSize: 20, color: kpis?.flagged ? "var(--rust)" : "var(--text)" }}>{kpis ? kpis.flagged : "…"}</div></div>
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, fontSize: 12.5 }}>

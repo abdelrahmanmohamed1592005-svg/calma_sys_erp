@@ -44,6 +44,7 @@ export function isRateLimited(key: string, maxRequests = 8, windowMs = 60_000): 
 export function validatePasswordStrength(password: unknown): { ok: boolean; message: string } {
   const pw = String(password || "");
   if (pw.length < 8) return { ok: false, message: "كلمة المرور ٨ حروف على الأقل" };
+  if (pw.length > 128) return { ok: false, message: "كلمة المرور طويلة جدًا (الحد الأقصى ١٢٨ حرف)" };
   if (!/[A-Za-z]/.test(pw)) return { ok: false, message: "كلمة المرور لازم تحتوي على حرف واحد على الأقل" };
   if (!/[0-9]/.test(pw)) return { ok: false, message: "كلمة المرور لازم تحتوي على رقم واحد على الأقل" };
   return { ok: true, message: "" };
@@ -58,4 +59,22 @@ export function safeServerError(context: string, error: unknown): string {
   // eslint-disable-next-line no-console
   console.error(`[${context}]`, error);
   return "حصل خطأ في السيرفر، حاول تاني أو كلّم الدعم الفني";
+}
+
+// التوكن من هيدر Authorization (Bearer) - بيرجّع "" لو مش موجود أو الصيغة غلط.
+export function bearerToken(req: Request): string {
+  const m = (req.headers.get("Authorization") || "").match(/^Bearer\s+(.+)$/i);
+  return m ? m[1].trim() : "";
+}
+
+// أقصى حجم لجسم الطلب (بالبايت) - الطلبات الصحيحة هنا صغيرة جدًا.
+export const MAX_BODY_BYTES = 10_000;
+
+// قراءة JSON بحد أقصى للحجم؛ بترمي خطأ لو الجسم كبير أو مش JSON صالح.
+export async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
+  const text = await req.text();
+  if (text.length > MAX_BODY_BYTES) throw new Error("body too large");
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid body");
+  return parsed as Record<string, unknown>;
 }

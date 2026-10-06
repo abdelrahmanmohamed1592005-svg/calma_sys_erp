@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient";
+import { validatePasswordStrength, validateUsername } from "../domain/security";
 
 /*
   بنستخدم Supabase Auth الحقيقي (bcrypt على السيرفر + جلسات JWT حقيقية) بدل أي نظام
@@ -18,6 +19,10 @@ export async function checkSetupNeeded() {
 }
 
 export async function signUpUser({ username, password, name, role }) {
+  const uCheck = validateUsername(username);
+  if (!uCheck.ok) return { error: uCheck.message };
+  const pCheck = validatePasswordStrength(password);
+  if (!pCheck.ok) return { error: pCheck.message };
   const email = usernameToEmail(username);
   const { data, error } = await supabase.auth.signUp({ email, password });
   if (error) return { error: mapAuthError(error) };
@@ -37,6 +42,7 @@ export async function signUpUser({ username, password, name, role }) {
 }
 
 export async function signIn({ username, password }) {
+  if (!String(username || "").trim() || !password) return { error: "بيانات الدخول غير صحيحة" };
   const email = usernameToEmail(username);
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: mapAuthError(error) };
@@ -53,8 +59,14 @@ export async function getSession() {
   return data.session || null;
 }
 
+// الـ callback بيتنفّذ بعد ما نخرج من قفل مكتبة Supabase (setTimeout) - استدعاء
+// أي دالة Supabase تانية جوه الـ callback مباشرة ممكن يعمل deadlock. وتجديد
+// التوكن الدوري (TOKEN_REFRESHED) مابيغيّرش المستخدم فمش بنعيد تحميل الجلسة بسببه.
 export function onAuthStateChange(callback) {
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => callback(session));
+  const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    if (event === "TOKEN_REFRESHED") return;
+    setTimeout(() => callback(session), 0);
+  });
   return () => data.subscription.unsubscribe();
 }
 
@@ -84,6 +96,8 @@ export async function setProfileActive(profileId, active) {
 }
 
 export async function changeOwnPassword(newPassword) {
+  const check = validatePasswordStrength(newPassword);
+  if (!check.ok) return { error: check.message };
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   return { error: mapAuthError(error) };
 }

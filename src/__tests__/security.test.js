@@ -11,6 +11,9 @@ describe("validatePasswordStrength", () => {
   it("rejects passwords with no letter", () => {
     expect(validatePasswordStrength("12345678").ok).toBe(false);
   });
+  it("rejects absurdly long passwords", () => {
+    expect(validatePasswordStrength("a1" + "x".repeat(200)).ok).toBe(false);
+  });
   it("accepts a valid password", () => {
     expect(validatePasswordStrength("abcd1234").ok).toBe(true);
   });

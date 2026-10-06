@@ -577,7 +577,7 @@ begin
     exclude using gist (room with =, stay_range with &&)
     where (status <> 'ملغي');
 exception
-  when duplicate_object then null;
+  when duplicate_object or duplicate_table then null;
   when others then
     raise notice 'تعذر إضافة قيد منع تعارض الحجوزات - على الأرجح لوجود حجوزات متداخلة في البيانات الحالية. راجعي الحجوزات المتعارضة يدويًا ثم نفذي هذا الجزء تاني بمفرده.';
 end $$;
@@ -1406,7 +1406,7 @@ $$;
 
 do $$ begin
   alter table shift_claims add constraint shift_claims_one_per_user_day unique (date, username);
-exception when duplicate_object then null;
+exception when duplicate_object or duplicate_table then null;
           when others then raise notice 'تعذر تثبيت قيد "شيفت واحد لكل موظف في اليوم" - فيه اختيارات قديمة مكررة. راجعيها يدويًا.';
 end $$;
 
@@ -1438,6 +1438,158 @@ create policy "shifts update" on shift_records for update using (
                    or is_next_shift_claimant(date, shift_key)))
   or can_manage_financials() or is_gm_or_reservations()
 );
+
+-- --------------------------------------------------------------------------
+-- 27) تحصينات أمان وتكامل بيانات إضافية (مراجعة شاملة) - كلها idempotent:
+--   (أ) سحب صلاحيات مالهاش لازمة من anon (الدخول بدون تسجيل).
+--   (ب) سحب EXECUTE من دوال الصلاحيات للزوار (anon) - بتبقى للمسجّلين بس.
+--   (ج) قيود طول/حجم/قيم على النصوص والـ JSON (NOT VALID = بتتطبّق على أي
+--       كتابة جديدة من غير ما تفشل بسبب بيانات قديمة موجودة).
+--   (د) وقت تحديث حالة الغرفة من السيرفر مش من ساعة جهاز الموظف.
+--   (هـ) اختيار الشيفت/إنشاء يوميته مرتبطين بالشيفت المحجوز فعلاً لنفس
+--       الموظف وبتاريخ قريب من النهارده، مش أي تاريخ/شيفت.
+--   (و) بيانات "مين أنشأ الحجز ومتى" ثابتة بعد الإنشاء، وهوية صاحب يومية
+--       الشيفت ما تتغيّرش بتعديل.
+-- --------------------------------------------------------------------------
+
+-- (أ) anon مايحتاجش يكتب/يقرأ أي جدول (كل القراءة والكتابة بتتم بجلسة مسجّلة،
+--     وأول مدير عام بيتعمل بعد signUp يعني بجلسة authenticated).
+revoke insert, update, delete on profiles from anon;
+revoke select on profiles from anon;
+revoke select on rooms from anon;
+
+-- ثغرة حرجة اتصلّحت: شرط "أول مدير عام" القديم كان بيعدّ الصفوف بـ
+-- (select count(*) from profiles) جوه الـ policy نفسها - والعدّ ده بيتنفّذ
+-- تحت RLS بصلاحيات المستخدم، فأي حساب مسجّل لسه ملوش profile (مثلاً حد فتح
+-- حساب جديد بنفسه لو التسجيل المفتوح شغال) كان بيشوف الجدول فاضي (عدد = ٠)
+-- فيقدر يضيف نفسه "gm" حتى بعد وجود مديرين فعليين. دلوقتي الفحص بيتم بدالة
+-- profiles_exist() (security definer - بتشوف الجدول الحقيقي كله).
+drop policy if exists "profiles insert" on profiles;
+create policy "profiles insert" on profiles for insert
+  with check (
+    id = auth.uid()
+    and (
+      (role = 'gm' and active = true and not profiles_exist())
+      or is_gm()
+    )
+  );
+
+-- (ب) دوال الصلاحيات: للمسجّلين بس (profiles_exist بس مفتوحة لشاشة الإعداد).
+do $$
+declare f text;
+begin
+  foreach f in array array[
+    'is_gm()', 'is_active_user()', 'can_manage_financials()', 'is_reservations_manager()',
+    'is_staff()', 'is_staff_or_reservations()', 'can_view_activity_log()', 'is_gm_or_reservations()',
+    'is_next_shift_claimant(date, text)'
+  ] loop
+    execute format('revoke all on function %s from public, anon', f);
+    execute format('grant execute on function %s to authenticated', f);
+  end loop;
+end $$;
+
+-- (ج) قيود الطول والحجم والقيم
+do $$
+declare c record;
+begin
+  for c in select * from (values
+    ('bookings',       'bookings_text_len_chk',      $c$char_length(guest_name) <= 200 and char_length(coalesce(phone, '')) <= 60 and char_length(coalesce(code, '')) <= 100 and char_length(coalesce(notes, '')) <= 2000$c$),
+    ('bookings',       'bookings_json_size_chk',     $c$octet_length(payment_details::text) <= 4000 and octet_length(extras::text) <= 2000 and octet_length(early_checkin::text) <= 2000$c$),
+    ('bookings',       'bookings_amount_max_chk',    $c$price_night <= 1000000000 and total_room <= 1000000000 and amount_paid <= 1000000000 and amount_tendered <= 1000000000$c$),
+    ('bookings',       'bookings_pax_max_chk',       $c$pax <= 100$c$),
+    ('profiles',       'profiles_text_len_chk',      $c$char_length(name) <= 80 and char_length(username) <= 30$c$),
+    ('activity_log',   'activity_text_len_chk',      $c$char_length(action) <= 2000$c$),
+    ('shift_records',  'shifts_notes_len_chk',       $c$char_length(coalesce(shift_notes, '')) <= 5000$c$),
+    ('shift_records',  'shifts_json_size_chk',       $c$octet_length(rows::text) <= 1000000 and octet_length(cafeteria::text) <= 50000 and octet_length(handover::text) <= 20000 and octet_length(method_handover::text) <= 20000 and octet_length(booking_collections::text) <= 500000$c$),
+    ('room_overrides', 'room_overrides_status_chk',  $c$status in ('auto', 'early_checkout', 'maintenance', 'cleaning')$c$)
+  ) as t(tbl, cname, expr)
+  loop
+    begin
+      execute format('alter table %I add constraint %I check (%s) not valid', c.tbl, c.cname, c.expr);
+    exception when duplicate_object then null;
+    end;
+  end loop;
+end $$;
+
+-- (د) وقت آخر تحديث لحالة الغرفة من ساعة السيرفر (صلاحية الحالة اليدوية بتتحسب
+--     بتاريخه، فساعة جهاز غلط/متلاعب فيها كانت بتطيّل أو تقصّر الحالة).
+create or replace function set_actor_fields()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_username text;
+  v_name text;
+  v_role text;
+begin
+  select username, name, role into v_username, v_name, v_role
+  from profiles where id = auth.uid();
+
+  if TG_TABLE_NAME = 'activity_log' then
+    new.username := coalesce(v_username, new.username);
+    new.user_name := coalesce(v_name, new.user_name);
+    new.role := coalesce(v_role, new.role);
+    new.ts := now(); -- الوقت من السيرفر مش من العميل
+  elsif TG_TABLE_NAME = 'shift_records' then
+    new.staff_username := coalesce(v_username, new.staff_username);
+    new.staff_name := coalesce(v_name, new.staff_name);
+  elsif TG_TABLE_NAME = 'bookings' then
+    new.created_by := coalesce(v_username, new.created_by);
+    new.created_by_role := coalesce(v_role, new.created_by_role);
+  elsif TG_TABLE_NAME = 'shift_claims' then
+    new.username := coalesce(v_username, new.username);
+    new.name := coalesce(v_name, new.name);
+  elsif TG_TABLE_NAME = 'room_overrides' then
+    new.updated_by := coalesce(v_username, new.updated_by);
+    new.updated_at := now();
+  end if;
+
+  return new;
+end;
+$$;
+
+-- (هـ) اختيار الشيفت: بتاريخ قريب من النهارده بس (النهارده/امبارح بسبب يوم
+--     الشيفتات اللي بيبدأ ٨ص) - مش أي تاريخ بعيد يحجز شيفتات مقدّمًا.
+drop policy if exists "claims insert" on shift_claims;
+create policy "claims insert" on shift_claims for insert
+  with check (is_staff() and date between hotel_today() - 1 and hotel_today() + 1);
+
+-- إنشاء يومية شيفت: لنفس الموظف اللي حاجز الشيفت ده فعلاً وبتاريخ قريب.
+drop policy if exists "shifts insert" on shift_records;
+create policy "shifts insert" on shift_records for insert
+  with check (
+    is_staff()
+    and date between hotel_today() - 1 and hotel_today() + 1
+    and exists (
+      select 1 from shift_claims c
+      where c.date = shift_records.date and c.shift_key = shift_records.shift_key
+        and c.username = (select username from profiles where id = auth.uid())
+    )
+  );
+
+-- (و) ثبات بيانات الأصل: الحجز (من أنشأه ومتى) ويومية الشيفت (تاريخها/نوعها/
+--     صاحبها) مايتعدّلوش بعد الإنشاء - التعديل الوحيد المسموح هو على المحتوى.
+create or replace function protect_record_provenance()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if TG_TABLE_NAME = 'bookings' then
+    new.created_by := old.created_by;
+    new.created_by_role := old.created_by_role;
+    new.created_at := old.created_at;
+  elsif TG_TABLE_NAME = 'shift_records' then
+    if new.date is distinct from old.date or new.shift_key is distinct from old.shift_key
+       or new.staff_username is distinct from old.staff_username then
+      raise exception 'تاريخ الشيفت ونوعه وصاحبه مينفعش يتغيّروا';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_provenance_guard on bookings;
+create trigger bookings_provenance_guard before update on bookings
+  for each row execute function protect_record_provenance();
+drop trigger if exists shift_records_provenance_guard on shift_records;
+create trigger shift_records_provenance_guard before update on shift_records
+  for each row execute function protect_record_provenance();
 
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):

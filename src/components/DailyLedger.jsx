@@ -279,6 +279,14 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataVersion]);
 
+  // لو فيه تعديل لسه ماتبعتش للسيرفر (الـ debounce) والموظف قفل التاب أو عمل
+  // ريفرش، المتصفح بيحذّره بدل ما التعديل يضيع من غير ما يحس.
+  useEffect(() => {
+    const warn = (e) => { if (pendingRef.current) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
+
   useEffect(() => {
     if (mode !== "history") return;
     let cancelled = false;
