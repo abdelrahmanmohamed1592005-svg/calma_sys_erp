@@ -1,6 +1,6 @@
 import { supabase } from "./supabaseClient";
 
-const WATCHED_TABLES = ["rooms", "room_overrides", "bookings", "booking_guests", "shift_records", "shift_claims", "activity_log", "profiles"];
+const WATCHED_TABLES = ["rooms", "room_overrides", "bookings", "shift_records", "shift_claims", "activity_log", "profiles"];
 
 /*
   بث لحظي حقيقي: أي جهاز يعدّل أي جدول من الجداول دي، كل الأجهزة التانية المفتوحة

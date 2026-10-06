@@ -934,7 +934,11 @@ begin
        -- بنفس الفرق (التقصير لوحده - "مشي بدري" - مسموح من غير تغيير إجمالي).
        or (not restoring and new.checkout > old.checkout
            and abs(new.total_room - reprice_total(old, new.checkout)) > 0.011)
-       or (new.early_checkin is distinct from old.early_checkin)
+       -- الدخول المبكر: الموظف (اللي قدام النزيل) يقدر يسجّله مرة واحدة على حجز لسه ماتسجّلش
+       -- عليه (applied من false لـ true)، لكن مايعدّلش ولا يشيل رسم اتسجّل قبل كده.
+       or (new.early_checkin is distinct from old.early_checkin
+           and not (not coalesce((old.early_checkin ->> 'applied')::boolean, false)
+                    and coalesce((new.early_checkin ->> 'applied')::boolean, false)))
        or (new.payment_details is distinct from old.payment_details)
        or (new.amount_tendered is distinct from old.amount_tendered)
        or (new.source is distinct from old.source)
@@ -1652,9 +1656,11 @@ create policy "shifts delete" on shift_records for delete using (is_gm() and clo
 
 -- --------------------------------------------------------------------------
 -- 28) أكواد الأفراد + صفوف مصاريف/إيرادات الفندق + رد الفلوس بحسب الحجز:
---   (أ) booking_guests: كود لكل فرد في الحجز (بعدد الأفراد pax)، مربوط بالحجز وبالغرفة
---       اللي سكن فيها. بيتولّد تلقائي من trigger (مفيش كتابة مباشرة من الواجهة)،
---       وبيتزامن لو عدد الأفراد أو الغرفة اتغيّروا. البحث بالكود يرجّع الحجز والغرفة.
+--   (أ) كود لكل فرد في الحجز (بعدد الأفراد pax) بيكتبه المستخدم بنفسه (bookings.guest_codes):
+--       مصفوفة نصوص، الخانة الفاضية = فرد من غير كود. جدول booking_guests بيتبني منها تلقائيًا
+--       بـ trigger (مفيش كتابة مباشرة من الواجهة) ومربوط بالغرفة اللي سكن فيها. نفس الكود ممكن
+--       يتكرر في أكتر من حجز (نزيل راجع) فالبحث بالكود بيطلّع كل الغرف اللي سكنها، لكن مايتكررش
+--       جوه نفس الحجز.
 --   (ب) shift_records.hotel_rows: بنود "مصاريف وإيرادات الفندق" في اليومية (مش مرتبطة بغرفة).
 --   (ج) تحصيل كل حجز في اليومية بصف مستقل (bookingId في الصف) - فبيتفصل تحصيل التسكين
 --       المكرر عن تحصيل الحجز اللي قبله، ورد الفلوس بيتخصم من صف نفس الحجز.
@@ -1664,11 +1670,27 @@ create table if not exists booking_guests (
   booking_id uuid not null references bookings(id) on delete cascade,
   room integer not null references rooms(number),
   seq integer not null check (seq > 0),
-  code text not null unique,
+  code text not null,
   created_at timestamptz not null default now(),
   unique (booking_id, seq)
 );
+-- نسخة أقدم من القسم ده كانت بتولّد الأكواد تلقائيًا وبتمنع تكرارها: مرة واحدة بس بنمسحها
+-- (قبل ما العمود الجديد يتضاف) وبنشيل قيد التفرّد.
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bookings' and column_name = 'guest_codes') then
+    delete from booking_guests;
+  end if;
+end $$;
+alter table booking_guests drop constraint if exists booking_guests_code_key;
+drop function if exists gen_guest_code();
+drop function if exists ensure_booking_guests(uuid);
 create index if not exists booking_guests_booking_idx on booking_guests (booking_id);
+create index if not exists booking_guests_code_idx on booking_guests (upper(code));
+
+alter table bookings add column if not exists guest_codes jsonb not null default '[]'::jsonb;
+do $$ begin
+  alter table bookings add constraint bookings_guest_codes_shape check (jsonb_typeof(guest_codes) = 'array' and jsonb_array_length(guest_codes) <= 100 and octet_length(guest_codes::text) <= 8000) not valid;
+exception when duplicate_object then null; end $$;
 
 alter table booking_guests enable row level security;
 drop policy if exists "guests select" on booking_guests;
@@ -1677,55 +1699,30 @@ revoke all on booking_guests from anon, authenticated;
 grant select on booking_guests to authenticated;
 grant all on booking_guests to service_role;
 
--- كود فريد وسهل القراءة (من غير 0/1 اللي بيتلخبطوا مع O/I)
-create or replace function gen_guest_code()
-returns text language plpgsql volatile set search_path = public as $$
-declare c text;
-begin
-  loop
-    c := 'C' || upper(substr(translate(md5(gen_random_uuid()::text), '01', 'GH'), 1, 6));
-    exit when not exists (select 1 from booking_guests where code = c);
-  end loop;
-  return c;
-end;
-$$;
-
--- بيضبط أكواد حجز على عدد أفراده الحالي وغرفته الحالية (الأكواد الموجودة بتفضل زي ما هي)
-create or replace function ensure_booking_guests(p_booking uuid)
-returns void language plpgsql security definer set search_path = public as $$
-declare b bookings%rowtype; n int; s int;
-begin
-  select * into b from bookings where id = p_booking;
-  if not found then return; end if;
-  n := greatest(coalesce(b.pax, 1), 1);
-  delete from booking_guests where booking_id = b.id and seq > n;
-  update booking_guests set room = b.room where booking_id = b.id and room is distinct from b.room;
-  for s in 1 .. n loop
-    if not exists (select 1 from booking_guests where booking_id = b.id and seq = s) then
-      insert into booking_guests(booking_id, room, seq, code) values (b.id, b.room, s, gen_guest_code());
-    end if;
-  end loop;
-end;
-$$;
-
+-- بيبني أكواد الأفراد من bookings.guest_codes (بنفس ترتيب الأفراد) ومربوطة بالغرفة الحالية
 create or replace function bookings_sync_guests()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare codes jsonb; n int; i int; c text; seen text[] := '{}';
 begin
-  perform ensure_booking_guests(new.id);
+  codes := coalesce(new.guest_codes, '[]'::jsonb);
+  n := least(greatest(coalesce(new.pax, 1), 1), jsonb_array_length(codes));
+  delete from booking_guests where booking_id = new.id;
+  for i in 0 .. n - 1 loop
+    if jsonb_typeof(codes -> i) is distinct from 'string' then continue; end if;
+    c := btrim(codes ->> i);
+    if c = '' then continue; end if;
+    if char_length(c) > 40 then raise exception 'كود الفرد % أطول من ٤٠ حرف', i + 1; end if;
+    if upper(c) = any(seen) then raise exception 'الكود % مكرر جوه نفس الحجز', c; end if;
+    seen := seen || upper(c);
+    insert into booking_guests(booking_id, room, seq, code) values (new.id, new.room, i + 1, c);
+  end loop;
   return null;
 end;
 $$;
 drop trigger if exists bookings_guests_sync on bookings;
-create trigger bookings_guests_sync after insert or update of pax, room on bookings
+create trigger bookings_guests_sync after insert or update of pax, room, guest_codes on bookings
   for each row execute function bookings_sync_guests();
-
-revoke all on function gen_guest_code() from public, anon, authenticated;
-revoke all on function ensure_booking_guests(uuid) from public, anon, authenticated;
-
--- أكواد للحجوزات الموجودة قبل الإضافة دي (آمن يتكرر)
-do $$ declare r record; begin
-  for r in select id from bookings loop perform ensure_booking_guests(r.id); end loop;
-end $$;
+revoke all on function bookings_sync_guests() from public, anon, authenticated;
 
 do $$ begin
   begin execute 'alter publication supabase_realtime add table booking_guests';

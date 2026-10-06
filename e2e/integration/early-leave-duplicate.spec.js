@@ -175,8 +175,12 @@ test.describe("خروج مبكر من لوحة الغرف", () => {
     await boardTile(page, 601).click();
     await expect(page.getByText(/تغيير حالتها بشكل عام يتم من مدير الحجوزات فقط/)).toBeVisible();
     await expect(page.getByRole("button", { name: "صيانة" })).toHaveCount(0);
-    await page.getByRole("button", { name: "غادر مبكرًا" }).click();
-    await expect(toast(page)).toContainText("تم تحديث حالة الغرفة");
+    // "غادر مبكرًا" على غرفة عليها نزيل بقى بيقصّر الإقامة ويحسب الليالي (مش مجرد حالة)
+    await expect(page.getByRole("button", { name: "غادر مبكرًا", exact: true })).toHaveCount(0);
+    await page.getByTestId("early-leave").getByRole("button", { name: /غادر مبكرًا/ }).click();
+    await page.getByRole("button", { name: "تأكيد المغادرة المبكرة؟" }).click();
+    await expect(toast(page)).toContainText("اتحاسب على 1 ليلة من 2");
+    expect(await env.q("select checkout, left_early, total_room from bookings where guest_name = 'Occupant'")).toEqual([{ checkout: cairoDate(0), left_early: true, total_room: 100 }]);
     const [ov] = await env.q("select * from room_overrides where room_number = 601");
     expect(ov).toMatchObject({ status: "early_checkout", updated_by: "ahmed" });
     await expect(page.getByText(/غادر مبكرًا 1/)).toBeVisible();

@@ -92,7 +92,8 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   const grossRevenue = emptyMoney();
   const items = [];
   onlineBookings.forEach((b) => {
-    const gross = bookingGrandTotal(b);
+    // سعر الغرفة بس: الخدمات/الدخول المبكر على الحجز الأونلاين بيتحصّلوا في الفندق ويدخلوا من اليومية (متحسبوش مرتين)
+    const gross = Number(b.totalRoom) || 0;
     grossRevenue[b.currency] = (grossRevenue[b.currency] || 0) + gross;
     items.push({ id: b.id, room: b.room, guestName: b.guestName, checkin: b.checkin, checkout: b.checkout, currency: b.currency, gross, paymentDetails: b.paymentDetails });
   });

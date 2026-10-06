@@ -1,20 +1,20 @@
 import React, { useState, useEffect } from "react";
-import { Pencil, Trash2, AlertTriangle, Check, Plus, Printer, Lock } from "lucide-react";
-import { TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips } from "./shared";
-import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, methodOptionsFor, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, refundDueAmount, refundStatusOf } from "../domain/money";
+import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock } from "lucide-react";
+import { TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits } from "./shared";
+import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, methodOptionsFor, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, bookingAmountDue, refundDueAmount, refundStatusOf } from "../domain/money";
 import { todayStr, shiftDayNow, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
-import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch } from "../domain/bookingLogic";
+import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { appendBookingCollection } from "../data/shifts";
 import { withBusy } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
 
 function emptyBooking() {
-  return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", amountTendered: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", settled: false, notes: "", imported: false, needsRoomReview: false, duplicateConfirmed: false };
+  return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, guestCodes: [""], checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", amountTendered: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", settled: false, notes: "", imported: false, needsRoomReview: false, duplicateConfirmed: false };
 }
 
-export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}, onSaveOverride, perms, role, profile, onInsertBooking, onUpdateBooking, onDeleteBooking, onDecideRefund, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
+export function BookingsPanel({ rooms, bookings, overrides = {}, onSaveOverride, perms, role, profile, onInsertBooking, onUpdateBooking, onDecideRefund, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
   const [form, setForm] = useState(null);
   const [filter, setFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -28,13 +28,13 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
   useEffect(() => {
     if (pendingEditId) {
       const b = bookings.find((x) => x.id === pendingEditId);
-      if (b) setForm({ ...b, extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails(), duplicateConfirmed: false });
+      if (b) setForm({ ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails(), duplicateConfirmed: false });
       onConsumeEditRequest();
     }
   }, [pendingEditId]);
 
   function startNew() { setForm(emptyBooking()); }
-  function startEdit(b) { setForm({ ...b, extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails(), duplicateConfirmed: false }); }
+  function startEdit(b) { setForm({ ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails(), duplicateConfirmed: false }); }
 
   const isExistingBooking = form ? bookings.some((b) => b.id === form.id) : false;
   const originalBooking = form && isExistingBooking ? bookings.find((b) => b.id === form.id) : null;
@@ -51,6 +51,8 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
   // schema.sql) - عشان "خلاص اتحصّل" يفضل معناها خلاص فعليًا.
   const settledLocked = isExistingBooking && !!originalBooking?.settled && !!form?.settled;
   const chargeLocked = moneyLocked || settledLocked;
+  // الدخول المبكر ممكن يتسجّل على حجز موجود لسه ماتسجّلش عليه (حتى لو التسعير مقفول)؛ لو اتسجّل قبل كده بيتقفل زي باقي الرسوم.
+  const earlyLocked = chargeLocked && !(isExistingBooking && !originalBooking?.earlyCheckin?.applied);
 
   // الغرفة بقت بس رقم - مفيش سعر ثابت أو نوع متسجل عليها نرجع نعبّي بيه
   // السعر/العملة تلقائيًا؛ الموظف بيكتب سعر الليلة والعملة بنفسه كل مرة حسب
@@ -135,13 +137,16 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
       extras: clampedExtras, earlyCheckin: { ...clampedEarlyCheckin, note: sanitizeText(clampedEarlyCheckin.note, 300) }, paymentDetails: cleanPaymentDetails, needsRoomReview: false, approvalStatus: "approved",
     };
     if (!cleaned.guestName) { showToast("لازم تحدد الغرفة واسم النزيل"); return; }
+    cleaned.guestCodes = normalizeGuestCodes(Array.from({ length: cleaned.pax }, (_, i) => sanitizeText(form.guestCodes?.[i] ?? "", 40)), cleaned.pax);
+    const dupCode = duplicateGuestCode(cleaned.guestCodes);
+    if (dupCode) { showToast(`الكود ${dupCode} مكتوب لأكتر من فرد في نفس الحجز - كل فرد ليه كود مختلف`); return; }
     // قفل قيمة الحجز (سعر/إجمالي/رسوم/دخول مبكر/طريقة دفع): لو مدير حجوزات
     // بيعدّل حجز قديم، أو لو الحجز متحصّل بالكامل فعلاً ولسه كذلك - نفرض
     // القيم الأصلية حتى لو الواجهة اتلعب فيها بأي طريقة (دفاع إضافي، القفل
     // الحقيقي في قاعدة البيانات نفسها - قسم ١٤/١٧ في schema.sql). الاستثناء
     // الوحيد إجمالي الغرفة: بيتحرك مع عدد الليالي (تمديد/تقصير) بنفس سعر الليلة.
     if (chargeLocked && originalBooking) {
-      cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: lockedRepricedTotal, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails };
+      cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: lockedRepricedTotal, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin?.applied ? originalBooking.earlyCheckin : cleaned.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails };
     }
     // قفل التحصيل (المدفوع/المتحصّل نقدًا/تم التحصيل بالكامل): مدير الحجوزات
     // بس ملوش دعوة بالتحصيل خالص - حجز جديد أو حجز مش مقفول بالكامل بيترجع
@@ -243,7 +248,18 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
     if (cleaned.status === "ملغي" && originalBooking?.status !== "ملغي" && paidAfter > 0) note += ` — الحجز اتلغى وفيه ${fmt(paidAfter)} ${cleaned.currency} متحصّل: اتبعت طلب رد فلوس لمدير الحجوزات (هو اللي يقرر يرد أو يرفض، ولو رد بيتشال من التحصيل واليومية)`;
     setForm(null); showToast("تم الحفظ" + note);
   }
-  async function removeBooking(id) { const b = bookings.find((x) => x.id === id); const res = await onDeleteBooking(id); if (res?.error) { showToast(res.error); return; } onLog(`حذف حجز ${roomLabel(rooms, b?.room)} — ${b?.guestName}`); showToast("تم الحذف"); }
+  // إلغاء حجز (مش مسح): الحجز بيفضل ظاهر في "الحجوزات الملغية"، ولو عليه فلوس متحصّلة قاعدة البيانات
+  // بتفتح طلب رد فلوس لمدير الحجوزات تلقائيًا. مفيش مسح نهائي للحجز من الشاشة عشان أثره المالي ما يختفيش.
+  async function cancelBooking(b) {
+    const res = await onUpdateBooking(b.id, { ...b, status: "ملغي" });
+    if (res?.error) { showToast(res.error); return; }
+    if (res?.conflict) { showToast("الحجز اتعدّل من مكان تاني - راجع الحجوزات وجرّب تاني"); return; }
+    const saved = res?.data || { ...b, status: "ملغي" };
+    onLog(`إلغاء حجز ${roomLabel(rooms, b.room)} — ${b.guestName}`);
+    const rs = refundStatusOf(saved);
+    if (statusFilter === "active") setStatusFilter("all");        // ماينفعش الحجز اللي لسه اتلغى يختفي من القايمة اللي قدامه
+    showToast(`تم إلغاء الحجز - هتلاقيه في "الحجوزات الملغية" (وفي "الكل"). ${rs ? rs.text : ""}`);
+  }
 
   // قرار طلب رد الفلوس (مدير الحجوزات بس): "refund" = رد فعلي (بيتشال من
   // المدفوع وبيتسجّل بالسالب في صف الغرفة في يومية الشيفت المفتوح، كله في
@@ -266,12 +282,12 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
 
   const q = filter.trim().toLowerCase();
   // لو اللي مكتوب في البحث هو كود فرد بالظبط => نعرض الحجز والغرفة اللي كان ساكن فيها
-  const codeHit = q ? bookings.flatMap((b) => (guestCodes[b.id] || []).map((g) => ({ ...g, booking: b }))).find((g) => g.code.toLowerCase() === q) : null;
+  const codeHits = findGuestCodeHits(bookings, q);
   const counts = { all: bookings.length, active: bookings.filter((b) => b.status !== "ملغي").length, cancelled: bookings.filter((b) => b.status === "ملغي").length };
   const list = bookings.filter((b) => {
     if (statusFilter === "active" && b.status === "ملغي") return false;
     if (statusFilter === "cancelled" && b.status !== "ملغي") return false;
-    if (q && !String(b.room).includes(q) && !(b.guestName || "").toLowerCase().includes(q) && !(b.code && b.code.toLowerCase().includes(q)) && !(guestCodes[b.id] || []).some((g) => g.code.toLowerCase().includes(q))) return false;
+    if (q && !String(b.room).includes(q) && !(b.guestName || "").toLowerCase().includes(q) && !(b.code && b.code.toLowerCase().includes(q)) && !guestCodeEntries(b).some((g) => g.code.toLowerCase().includes(q))) return false;
     if (dateFrom && (b.checkout < dateFrom || (b.checkout === dateFrom && b.checkin !== b.checkout))) return false;
     if (dateTo && b.checkin > dateTo) return false;
     return true;
@@ -322,6 +338,14 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>اسم النزيل</label><input className="cx-input" value={form.guestName} onChange={(e) => setForm({ ...form, guestName: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الهاتف</label><input className="cx-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>عدد الأفراد</label><input className="cx-input" type="number" min="1" value={form.pax} onChange={(e) => setForm({ ...form, pax: e.target.value })} /></div>
+            <div style={{ gridColumn: "1 / -1" }} data-testid="guest-code-inputs">
+              <label style={{ fontSize: 11, color: "var(--muted)" }}>أكواد الأفراد (كود لكل فرد - اكتبه بنفسك، واختياري؛ بيربط النزيل بالغرفة وتقدر تبحث بيه)</label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: 6, marginTop: 2 }}>
+                {Array.from({ length: Math.min(100, Math.max(1, Math.floor(Number(form.pax) || 1))) }, (_, i) => (
+                  <input key={i} className="cx-input" data-testid={`guest-code-input-${i + 1}`} dir="ltr" maxLength={40} placeholder={`كود الفرد ${i + 1}`} value={form.guestCodes?.[i] ?? ""} onChange={(e) => { const next = normalizeGuestCodes(form.guestCodes, form.pax); next[i] = e.target.value; setForm({ ...form, guestCodes: next }); }} />
+                ))}
+              </div>
+            </div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>تاريخ الدخول</label><input className="cx-input" type="date" value={form.checkin} onChange={(e) => { const newCheckin = e.target.value; setForm((f) => ({ ...f, checkin: newCheckin, checkout: f.checkout && f.checkout > newCheckin ? f.checkout : addDays(newCheckin, 1) })); }} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>تاريخ الخروج</label><input className="cx-input" type="date" min={form.checkin ? addDays(form.checkin, 1) : undefined} value={form.checkout} onChange={(e) => setForm({ ...form, checkout: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>السعر لليلة {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={chargeLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value })} /><select className="cx-select" disabled={chargeLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 90 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div></div>
@@ -384,12 +408,12 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
 
           <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, marginBottom: form.earlyCheckin?.applied ? 8 : 0 }}>
-              <input type="checkbox" disabled={chargeLocked} checked={!!form.earlyCheckin?.applied} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, applied: e.target.checked } })} /> دخول مبكر قبل معاد الحجز الأصلي {chargeLocked && <Lock size={10} />}
+              <input type="checkbox" disabled={earlyLocked} checked={!!form.earlyCheckin?.applied} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, applied: e.target.checked } })} /> دخول مبكر قبل معاد الحجز الأصلي {earlyLocked && <Lock size={10} />}
             </label>
             {form.earlyCheckin?.applied && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رسم الدخول المبكر</label><input className="cx-input" type="number" min="0" disabled={chargeLocked} value={form.earlyCheckin.fee} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, fee: e.target.value } })} /></div>
-                <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر</label><input className="cx-input" disabled={chargeLocked} value={form.earlyCheckin.note} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, note: e.target.value } })} /></div>
+                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رسم الدخول المبكر</label><input className="cx-input" type="number" min="0" disabled={earlyLocked} value={form.earlyCheckin.fee} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, fee: e.target.value } })} /></div>
+                <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر</label><input className="cx-input" disabled={earlyLocked} value={form.earlyCheckin.note} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, note: e.target.value } })} /></div>
               </div>
             )}
           </div>
@@ -425,7 +449,7 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
             <div className="cx-card" style={{ marginTop: 10, padding: 10 }}>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي الكلي (غرفة + رسوم)</div>
               <div style={{ fontWeight: 800, fontSize: 15, padding: "4px 0" }}>{fmt(grandTotal)} {form.currency}</div>
-              <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>الحجز مدفوع أونلاين - المبلغ ده مش محصّل هنا، خانة المتحصّل والمتبقي مش محتاجة للحجوزات الأونلاين.</div>
+              <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>الحجز مدفوع أونلاين - سعر الغرفة اتدفع للمنصة. أي خدمات إضافية أو رسم دخول مبكر بتتحصّل في الفندق من بلوك الغرفة وبتدخل اليومية والتقرير.</div>
             </div>
           ) : (
             <div className="cx-card" style={{ marginTop: 10, padding: 10 }}>
@@ -457,12 +481,7 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
         </div>
       )}
 
-      {codeHit && (
-        <div className="cx-card cx-no-print" data-testid="guest-code-result" style={{ padding: 12, marginBottom: 10, background: "#EEF5F0", borderColor: "var(--sage)" }}>
-          <div style={{ fontWeight: 800 }}>كود <span dir="ltr" style={{ fontFamily: "monospace" }}>{codeHit.code}</span> ← فرد {codeHit.seq} في {roomLabel(rooms, codeHit.room)}</div>
-          <div style={{ fontSize: 12.5, marginTop: 2 }}>الحجز: {codeHit.booking.guestName} · {codeHit.booking.checkin} → {codeHit.booking.checkout} · {codeHit.booking.status}</div>
-        </div>
-      )}
+      <GuestCodeHits hits={codeHits} rooms={rooms} />
       <div className="cx-no-print" style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
         {[["all", "الكل"], ["active", "الحجوزات الشغّالة"], ["cancelled", "الحجوزات الملغية"]].map(([k, label]) => (
           <button key={k} data-testid={"status-filter-" + k} className={"cx-btn " + (statusFilter === k ? "cx-btn-gold" : "cx-btn-outline")} style={{ fontSize: 12, padding: "5px 12px" }} onClick={() => setStatusFilter(k)}>{label} ({counts[k]})</button>
@@ -470,22 +489,20 @@ export function BookingsPanel({ rooms, bookings, guestCodes = {}, overrides = {}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {list.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13, padding: 20, textAlign: "center" }}>لا يوجد حجوزات مطابقة</div>}
-        {list.map((b) => { const gt = bookingGrandTotal(b); const due = gt - (Number(b.amountPaid) || 0); const cancelled = b.status === "ملغي"; const rs = refundStatusOf(b); return (
+        {list.map((b) => { const gt = bookingGrandTotal(b); const due = bookingAmountDue(b); const cancelled = b.status === "ملغي"; const rs = refundStatusOf(b); return (
           <div key={b.id} data-testid={cancelled ? "booking-cancelled" : "booking-card"} className="cx-card" style={{ padding: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, ...(cancelled ? { background: "#FBF3F1", borderRight: "4px solid var(--rust)" } : {}) }}>
             <div>
               <div style={{ fontWeight: 800 }}><span style={cancelled ? { textDecoration: "line-through", opacity: 0.7 } : undefined}>{roomLabel(rooms, b.room)} · {b.guestName}</span> {cancelled && <span className="cx-pill" style={{ background: "var(--rust)", color: "#fff", marginRight: 6 }}>حجز ملغي</span>} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>مدفوع أونلاين</span>} {b.leftEarly && <span className="cx-pill" style={{ background: "#FBE9DA", color: "var(--rust)", marginRight: 6 }}>غادر مبكرًا</span>} {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginRight: 6 }}>تسكين مكرر</span>} {b.settled && <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)", marginRight: 6 }}>متحصّل بالكامل</span>} {b.refundDecision === "refunded" && b.refundedAmount > 0 && <span className="cx-pill" style={{ background: "#EFEEEC", color: "#6B6357", marginRight: 6 }}>اترد {fmt(b.refundedAmount)} {b.currency}</span>}</div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.checkin} → {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {b.pax} أفراد {b.code && `· كود الحجز ${b.code}`}</div>
-              <GuestCodeChips codes={guestCodes[b.id]} />
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.source}{b.paymentDetails?.onlinePaid ? "" : ` · ${b.paymentMethod}`}{b.paymentDetails?.senderName ? ` (${b.paymentDetails.senderName} · ${b.paymentDetails.senderNumber})` : ""} · الإجمالي {fmt(gt)} {b.currency} {due > 0 && !b.paymentDetails?.onlinePaid && b.status !== "ملغي" && <span style={{ color: "var(--rust)" }}>· متبقي {fmt(due)}</span>}</div>
+              <GuestCodeChips codes={guestCodeEntries(b)} />
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.source}{b.paymentDetails?.onlinePaid ? "" : ` · ${b.paymentMethod}`}{b.paymentDetails?.senderName ? ` (${b.paymentDetails.senderName} · ${b.paymentDetails.senderNumber})` : ""} · الإجمالي {fmt(gt)} {b.currency} {due > 0 && b.status !== "ملغي" && <span style={{ color: "var(--rust)" }}>· متبقي {fmt(due)}{b.paymentDetails?.onlinePaid ? " (خدمات/دخول مبكر)" : ""}</span>}</div>
             </div>
             <div className="cx-no-print" style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span className="cx-pill" style={{ background: "#00000010", color: b.status === "ملغي" ? "var(--rust)" : "var(--teal)" }}>{b.status}</span>
               {perms.editBookings && (<>
                 <button className="cx-btn cx-btn-outline" onClick={() => startEdit(b)}><Pencil size={13} /></button>
-                {(Number(b.amountPaid) || 0) <= 0 ? (
-                  <TwoStepButton label="" confirmLabel="حذف؟" icon={<Trash2 size={13} />} onConfirm={() => removeBooking(b.id)} />
-                ) : (
-                  <span title="فيه مبلغ متحصّل - استخدم الحالة (ملغي) بدل الحذف" style={{ opacity: 0.4 }}><Trash2 size={13} /></span>
+                {b.status !== "ملغي" && (
+                  <span data-testid="cancel-booking"><TwoStepButton label="إلغاء الحجز" confirmLabel={`تأكيد الإلغاء؟ ${(Number(b.amountPaid) || 0) > 0 ? `(عليه ${fmt(b.amountPaid)} ${b.currency} متحصّل - هيتفتح طلب رد فلوس لمدير الحجوزات)` : "(مفيش فلوس متحصّلة - مفيش رد)"}`} icon={<Ban size={13} />} onConfirm={() => cancelBooking(b)} /></span>
                 )}
               </>)}
             </div>

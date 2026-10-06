@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { ONLINE_METHODS } from "../domain/money";
+import { roomLabel } from "../domain/constants";
 
 export function GlobalStyle() {
   return (
@@ -126,6 +127,22 @@ export function GuestCodeChips({ codes }) {
           <span dir="ltr" style={{ fontFamily: "monospace", fontWeight: 700 }}>{g.code}</span>
           <span style={{ color: "var(--muted)", marginInlineStart: 6 }}>فرد {g.seq}</span>
         </span>
+      ))}
+    </div>
+  );
+}
+
+/* نتيجة البحث بكود فرد: كل حجز اتسجّل فيه الكود ده والغرفة اللي سكن فيها (نزيل راجع = أكتر من غرفة) */
+export function GuestCodeHits({ hits, rooms, onOpenRoom }) {
+  if (!hits || !hits.length) return null;
+  return (
+    <div className="cx-card cx-no-print" data-testid="guest-code-result" style={{ padding: 12, marginBottom: 10, background: "#EEF5F0", borderColor: "var(--sage)" }}>
+      {hits.map((h) => (
+        <div key={h.booking.id + "-" + h.seq} data-testid="guest-code-hit" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "3px 0" }}>
+          <span style={{ fontWeight: 800 }}>كود <span dir="ltr" style={{ fontFamily: "monospace" }}>{h.code}</span> ← فرد {h.seq} في {roomLabel(rooms, h.room)}</span>
+          <span style={{ fontSize: 12.5 }}>{h.booking.guestName} · {h.booking.checkin} → {h.booking.checkout} · {h.booking.status}</span>
+          {onOpenRoom && <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => onOpenRoom(h.room)}>افتح الغرفة</button>}
+        </div>
       ))}
     </div>
   );

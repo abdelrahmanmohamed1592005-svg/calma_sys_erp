@@ -154,21 +154,21 @@ test.describe("مدير الحجوزات", () => {
     expect(b).toMatchObject({ amount_paid: 0, settled: false, total_room: 160, created_by: "rawan", created_by_role: "reservations" });
   });
 
-  test("حذف: حجز من غير فلوس بيتمسح، وحجز عليه فلوس الحذف متقفل (إلغاء بدله)", async ({ page, env }) => {
+  test("مفيش مسح: الحجز بيتلغي ويفضل في الحجوزات الملغية (من غير فلوس أو بفلوس)", async ({ page, env }) => {
     await users(env);
-    await env.seedBooking({ room: 607, guest: "Delete Me", nights: 1 });
+    await env.seedBooking({ room: 607, guest: "Cancel Me", nights: 1 });
     await env.seedBooking({ room: 608, guest: "Keep Me", nights: 1, price: 100, paid: 100, settled: true });
     await page.goto("/");
     await login(page, "rawan");
     await goTab(page, "الحجوزات");
-    const del = page.locator(".cx-card", { hasText: "Delete Me" }).last();
-    await del.locator("button").nth(1).click();
-    await del.getByRole("button", { name: "حذف؟" }).click();
-    await expect(toast(page)).toContainText("تم الحذف");
-    expect(await env.q("select 1 from bookings where guest_name = 'Delete Me'")).toHaveLength(0);
-    const paid = page.locator(".cx-card", { hasText: "Keep Me" }).last();
-    await expect(paid.locator('span[title*="استخدم الحالة"]')).toBeVisible();
-    expect(await env.q("select 1 from bookings where guest_name = 'Keep Me'")).toHaveLength(1);
+    for (const name of ["Cancel Me", "Keep Me"]) {
+      const c = page.locator(".cx-card", { hasText: name }).last();
+      await c.getByRole("button", { name: "إلغاء الحجز" }).click();
+      await c.getByRole("button", { name: "تأكيد الإلغاء؟" }).click();
+      await expect(toast(page)).toContainText("تم إلغاء الحجز");
+    }
+    expect(await env.q("select guest_name, status, refund_pending from bookings where guest_name in ('Cancel Me','Keep Me') order by guest_name")).toEqual([
+      { guest_name: "Cancel Me", status: "ملغي", refund_pending: false }, { guest_name: "Keep Me", status: "ملغي", refund_pending: true }]);
   });
 });
 

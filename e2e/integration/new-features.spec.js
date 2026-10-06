@@ -11,100 +11,6 @@ async function users(env) {
 const priceInput = (page) => page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']");
 const guestCard = (page, name) => page.locator(".cx-card", { hasText: name }).last();
 const get = async (env, name) => (await env.q("select * from bookings where guest_name = $1", [name]))[0];
-const codesOf = async (env, id) => (await env.q("select seq, code, room from booking_guests where booking_id = $1 order by seq", [id]));
-
-test.describe("أكواد الأفراد", () => {
-  test("كود لكل فرد بعدد الأفراد، مربوط بالغرفة، والبحث بالكود (من غير حساسية لحالة الحروف) بيوصّل للغرفة", async ({ page, env }) => {
-    await users(env);
-    await env.seedShift("ahmed");
-    await page.goto("/");
-    await login(page, "ahmed");
-    await goTab(page, "الحجوزات");
-    await page.getByRole("button", { name: /حجز جديد/ }).click();
-    await page.locator(".cx-card[data-calma-editing] select.cx-select").first().selectOption("608");
-    await field(page, "اسم النزيل").fill("Family Of Three");
-    await field(page, "عدد الأفراد").fill("3");
-    await field(page, "تاريخ الخروج").fill(cairoDate(2));
-    await priceInput(page).fill("100");
-    await page.getByRole("button", { name: /حفظ الحجز/ }).click();
-    await expect(toast(page)).toContainText("تم الحفظ");
-
-    const b = await get(env, "Family Of Three");
-    const codes = await codesOf(env, b.id);
-    expect(codes).toHaveLength(3);
-    expect(new Set(codes.map((c) => c.code)).size).toBe(3);
-    expect(codes.every((c) => c.room === 608 && /^C[A-Z2-9]{6}$/.test(c.code))).toBe(true);
-
-    // الأكواد ظاهرة على الحجز في القائمة (٣ شرايح)
-    await expect(guestCard(page, "Family Of Three").getByTestId("guest-codes").locator(".cx-pill")).toHaveCount(3);
-    for (const c of codes) await expect(guestCard(page, "Family Of Three")).toContainText(c.code);
-
-    // البحث بكود فرد (بحروف صغيرة) بيعرض الغرفة والحجز
-    await page.getByPlaceholder("بحث برقم الغرفة أو الاسم أو الكود").fill(codes[1].code.toLowerCase());
-    const hit = page.getByTestId("guest-code-result");
-    await expect(hit).toContainText(codes[1].code);
-    await expect(hit).toContainText("فرد 2");
-    await expect(hit).toContainText("608");
-    await expect(hit).toContainText("Family Of Three");
-
-    // بحث الكود من لوحة الغرف: بيقول الغرفة وبيفتحها
-    await goTab(page, "لوحة الغرف");
-    await page.getByTestId("board-code-search").fill(codes[2].code);
-    await expect(page.getByTestId("board-code-result")).toContainText("608");
-    await page.getByTestId("board-code-result").getByRole("button", { name: "افتح الغرفة" }).click();
-    await expect(roomCard(page)).toContainText("Family Of Three");
-    await expect(roomCard(page).getByTestId("guest-codes").locator(".cx-pill")).toHaveCount(3);
-    await page.getByTestId("board-code-search").fill("CXXXXXX");
-    await expect(page.getByTestId("board-code-missing")).toBeVisible();
-  });
-
-  test("تغيير عدد الأفراد أو الغرفة بيحدّث الأكواد (القديمة بتفضل)، والإلغاء مابيشيلش الأكواد", async ({ page, env }) => {
-    await users(env);
-    const id = await env.seedBooking({ room: 601, guest: "Changing Party", start: 0, nights: 2, price: 100 });
-    await env.q("update bookings set pax = 3 where id = $1", [id]);
-    const before = await codesOf(env, id);
-    expect(before).toHaveLength(3);
-    await page.goto("/");
-    await login(page, "rawan");
-    await goTab(page, "الحجوزات");
-    // خفض لـ ٢ ونقل لغرفة تانية
-    await guestCard(page, "Changing Party").locator("button").first().click();
-    await field(page, "عدد الأفراد").fill("2");
-    await page.locator(".cx-card[data-calma-editing] select.cx-select").first().selectOption("612");
-    await page.getByRole("button", { name: /حفظ الحجز/ }).click();
-    await expect(toast(page)).toContainText("تم الحفظ");
-    const after = await codesOf(env, id);
-    expect(after.map((c) => c.code)).toEqual(before.slice(0, 2).map((c) => c.code));
-    expect(after.every((c) => c.room === 612)).toBe(true);
-    await expect(guestCard(page, "Changing Party").getByTestId("guest-codes").locator(".cx-pill")).toHaveCount(2);
-    // بحث بالكود القديم بيوصّل للغرفة الجديدة
-    await page.getByPlaceholder("بحث برقم الغرفة أو الاسم أو الكود").fill(before[0].code);
-    await expect(page.getByTestId("guest-code-result")).toContainText("612");
-    // إلغاء الحجز: الأكواد لسه بتدل على الغرفة
-    await page.getByPlaceholder("بحث برقم الغرفة أو الاسم أو الكود").fill("");
-    await guestCard(page, "Changing Party").locator("button").first().click();
-    await page.locator("xpath=//label[contains(.,'الحالة')]/following-sibling::select").selectOption("ملغي");
-    await page.getByRole("button", { name: /حفظ الحجز/ }).click();
-    await expect(page.locator(".cx-card[data-calma-editing]")).toHaveCount(0);
-    expect(await codesOf(env, id)).toHaveLength(2);
-    await page.getByPlaceholder("بحث برقم الغرفة أو الاسم أو الكود").fill(before[1].code);
-    await expect(page.getByTestId("guest-code-result")).toContainText("ملغي");
-  });
-
-  test("كل فرد في كل حجز ليه كود فريد (حجزين على نفس الغرفة)", async ({ page, env }) => {
-    await users(env);
-    await env.seedShift("ahmed");
-    await page.goto("/");
-    await login(page, "ahmed");
-    await addBooking(page, { room: 609, guest: "First Stay", nights: 1, price: 50 });
-    await addBooking(page, { room: 609, guest: "Second Stay", startOffset: 1, nights: 1, price: 50 });
-    const all = await env.q("select code, room, booking_id from booking_guests");
-    expect(all).toHaveLength(2);
-    expect(new Set(all.map((c) => c.code)).size).toBe(2);
-    expect(all.every((c) => c.room === 609)).toBe(true);
-    expect(new Set(all.map((c) => c.booking_id)).size).toBe(2);
-  });
-});
 
 test.describe("الحجز المدفوع أونلاين", () => {
   test("طريقة الدفع بتتشال لما تحدد أونلاين، ومفيش خانات عمولة، وبترجع لو شلت العلامة", async ({ page, env }) => {
@@ -149,11 +55,10 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await env.seedShift("ahmed", { collections: [{ room: 611, amount: 400, bookingId: oldId }] });
     await page.goto("/");
     await login(page, "ahmed");
-    // الموظف بيعلّم الغرفة "غادر مبكرًا" الأول (زي ما بيحصل فعلاً)
+    // حالة "غادر مبكرًا" يدوية قديمة على الغرفة (من قبل ما الزرار يبقى بيقصّر الإقامة) والنزيل القديم لسه مسجّل
+    await env.q("insert into room_overrides(room_number, status, updated_by) values (611, 'early_checkout', 'ahmed') on conflict (room_number) do update set status = excluded.status, updated_at = now()");
+    await page.reload();
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 611).click();
-    await page.getByRole("button", { name: "غادر مبكرًا" }).click();
-    await expect(toast(page)).toContainText("تم تحديث حالة الغرفة");
     await expect(page.getByText(/غادر مبكرًا 1/)).toBeVisible();
     // وبعدين يسكّن النزيل الجديد (تسكين مكرر)
     await goTab(page, "الحجوزات");
@@ -180,7 +85,6 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await tile.click();
     await expect(roomCard(page)).toContainText("New Guest");
     await expect(roomCard(page)).toContainText("تسكين مكرر");
-    await expect(roomCard(page).getByTestId("guest-codes").locator(".cx-pill")).toHaveCount(2);
     await expect(page.getByText(/Old Guest - غادر النهارده/)).toBeVisible();
   });
 
