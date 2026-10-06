@@ -36,7 +36,5 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
-    // src/src نسخة قديمة مكررة من المشروع - مش جزء من الاختبارات الفعلية
-    exclude: ["node_modules/**", "dist/**", "src/src/**"],
   },
 });
