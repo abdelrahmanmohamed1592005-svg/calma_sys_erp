@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, onlineNetAmount, emptyPaymentDetails, directBookingPaymentsByMethod, DEFAULT_ONLINE_COMMISSION_PCT, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS } from "../domain/money";
+import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, onlineNetAmount, emptyPaymentDetails, directBookingPaymentsByMethod, DEFAULT_ONLINE_COMMISSION_PCT, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, applyCollectionToRows, refundDueAmount, rebaseShiftRecord } from "../domain/money";
 
 // انستاباي والتحويل البنكي وسيلة واحدة فعليًا - اتدمجوا في خيار واحد بدل
 // خيارين مختلفين، وفضلت العملات المعتمدة خمسة بس.
@@ -246,5 +246,101 @@ describe("emptyPaymentDetails online fields", () => {
     const pd = emptyPaymentDetails();
     expect(pd.onlinePaid).toBe(false);
     expect(pd.commissionPct).toBe(DEFAULT_ONLINE_COMMISSION_PCT);
+  });
+});
+
+describe("applyCollectionToRows (booking money posted into the normal ledger rows)", () => {
+  const baseRows = () => [emptyLedgerRow(601), emptyLedgerRow(602)];
+  const entry = (over = {}) => ({ room: 601, amount: 1200, currency: "EGP", method: "كاش", guestName: "Ahmed", note: "تحصيل", ...over });
+
+  it("uses the room's empty row and fills amount/method/currency", () => {
+    const { rows, added } = applyCollectionToRows(baseRows(), entry());
+    expect(added).toBe(false);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].collectionAmt).toBe(1200);
+    expect(rows[0].collectionMethod).toBe("كاش");
+    expect(rows[0].collectionDesc).toContain("Ahmed");
+  });
+
+  it("merges into the same row when method and currency match (collection then refund nets to zero)", () => {
+    let { rows } = applyCollectionToRows(baseRows(), entry());
+    ({ rows } = applyCollectionToRows(rows, entry({ amount: -1200, note: "رد فلوس" })));
+    expect(rows).toHaveLength(2);
+    expect(rows[0].collectionAmt).toBe(0);
+    expect(rows[0].collectionDesc).toContain("رد فلوس");
+  });
+
+  it("adds a SECOND row for the same room instead of mixing a different currency into the cell", () => {
+    let { rows } = applyCollectionToRows(baseRows(), entry());
+    const res = applyCollectionToRows(rows, entry({ amount: 50, currency: "USD", method: "فيزا", guestName: "Mody" }));
+    expect(res.added).toBe(true);
+    expect(res.rows).toHaveLength(3);
+    expect(res.rows[0].collectionAmt).toBe(1200);
+    expect(res.rows[0].collectionCurrency).toBe("EGP");
+    expect(res.rows[2]).toMatchObject({ room: 601, collectionAmt: 50, collectionCurrency: "USD", collectionMethod: "فيزا" });
+  });
+
+  it("totals stay correct across the mixed rows (cash EGP drawer vs visa USD)", () => {
+    let { rows } = applyCollectionToRows(baseRows(), entry());
+    ({ rows } = applyCollectionToRows(rows, entry({ amount: -1200, note: "رد فلوس" })));
+    ({ rows } = applyCollectionToRows(rows, entry({ amount: 1400, guestName: "Mody" })));
+    ({ rows } = applyCollectionToRows(rows, entry({ amount: 50, currency: "USD", method: "فيزا" })));
+    const rec = { ...freshShiftRecord("2026-10-06", "morning", "x", "x", [{ number: 601 }, { number: 602 }]), rows };
+    const t = computeShiftTotals(rec);
+    expect(t.cashCollections.EGP).toBe(1400);
+    expect(t.totalCollections.USD).toBe(50);
+    expect(t.byMethodCurrency["فيزا"].USD).toBe(50);
+    expect(t.closingCash.EGP).toBe(1400);
+  });
+
+  it("ignores a zero amount and never mutates the original rows", () => {
+    const original = baseRows();
+    const snap = JSON.stringify(original);
+    const res = applyCollectionToRows(original, entry({ amount: 0 }));
+    expect(res.rows).toBe(original);
+    applyCollectionToRows(original, entry());
+    expect(JSON.stringify(original)).toBe(snap);
+  });
+});
+
+describe("refundDueAmount", () => {
+  it("is 0 when no refund request is pending", () => {
+    expect(refundDueAmount({ refundPending: false, status: "ملغي", amountPaid: 500, totalRoom: 500 })).toBe(0);
+  });
+  it("cancelled booking: everything paid is due back", () => {
+    expect(refundDueAmount({ refundPending: true, status: "ملغي", amountPaid: 500, totalRoom: 500, extras: {} })).toBe(500);
+  });
+  it("shortened stay: only the excess over the new grand total is due back", () => {
+    expect(refundDueAmount({ refundPending: true, status: "تم تسجيل الخروج", amountPaid: 400, totalRoom: 200, extras: {} })).toBe(200);
+    expect(refundDueAmount({ refundPending: true, status: "تم تسجيل الخروج", amountPaid: 1200, totalRoom: 0, extras: {} })).toBe(1200);
+  });
+});
+
+describe("rebaseShiftRecord (typing in the ledger while a refund/collection lands)", () => {
+  const mk = (rows, extra = {}) => ({ rows, cafeteria: emptyLedgerRow("كافيتيريا"), handover: { EGP: 0 }, shiftNotes: "", ...extra });
+  it("keeps the server's new refund AND the staff member's own edit on another row", () => {
+    const base = mk([emptyLedgerRow(601), emptyLedgerRow(602)]);
+    const mine = { ...base, rows: [base.rows[0], { ...base.rows[1], expenseAmt: 50, expenseDesc: "ماء" }] };
+    const fresh = { ...base, rows: [{ ...base.rows[0], collectionAmt: -1200, collectionDesc: "رد فلوس" }, base.rows[1]], updatedAt: "t2" };
+    const out = rebaseShiftRecord(base, mine, fresh);
+    expect(out.rows[0].collectionAmt).toBe(-1200);
+    expect(out.rows[1].expenseAmt).toBe(50);
+    expect(out.updatedAt).toBe("t2");
+  });
+  it("only the fields I changed override the server on the same row", () => {
+    const base = mk([emptyLedgerRow(601)]);
+    const mine = { ...base, rows: [{ ...base.rows[0], expenseAmt: 10 }] };
+    const fresh = { ...base, rows: [{ ...base.rows[0], collectionAmt: -300 }], updatedAt: "t3" };
+    const out = rebaseShiftRecord(base, mine, fresh);
+    expect(out.rows[0].collectionAmt).toBe(-300);
+    expect(out.rows[0].expenseAmt).toBe(10);
+  });
+  it("carries my notes edit and keeps server rows appended after my base", () => {
+    const base = mk([emptyLedgerRow(601)]);
+    const mine = { ...base, shiftNotes: "ملاحظة" };
+    const fresh = { ...base, rows: [base.rows[0], { ...emptyLedgerRow(601), collectionAmt: -5 }], updatedAt: "t4" };
+    const out = rebaseShiftRecord(base, mine, fresh);
+    expect(out.shiftNotes).toBe("ملاحظة");
+    expect(out.rows.length).toBe(2);
   });
 });

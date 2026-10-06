@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer } from "lucide-react";
 import { Logo } from "./shared";
-import { emptyMoney, computeShiftTotals, bookingGrandTotal, onlineNetAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
+import { emptyMoney, computeShiftTotals, bookingGrandTotal, refundDueAmount, onlineNetAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
-import { todayStr, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
-import { getShiftRecord } from "../data/shifts";
+import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
+import { getJournaledBookingIds, getShiftRecord } from "../data/shifts";
 
 async function loadShiftsInRange(fromDate, toDate) {
   const out = [];
@@ -85,7 +85,7 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   // "المبالغ المتبقية على نزلاء" لازم تفضل مبنية على أي حجز شغال أو قريب من
   // الفترة المختارة (overlap) - ده رصيد مستحق لحظي، صح يتكرر ظهوره في كل
   // يوم لحد ما يُسدد.
-  const inRange = bookings.filter((b) => b.status !== "ملغي" && b.checkin < toDate2 && b.checkout > fromDate);
+  const inRange = bookings.filter((b) => b.status !== "ملغي" && b.checkin < toDate2 && (b.checkout > fromDate || (b.checkout === b.checkin && b.checkin >= fromDate)));
   // لكن "الإيراد" (الحجوزات الأونلاين + التحصيل المباشر حسب طريقة الدفع)
   // لازم يُحسب مرة واحدة بس لكل حجز، مش في كل يوم من أيام إقامته - وإلا
   // حجز ٣ ليالي هيتحسب ٣ مرات (يوم الدخول + يومين إقامة) لو جمعتي تقارير
@@ -109,7 +109,10 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   // المبالغ اللي بتتسجل وقت "تسجيل تحصيل" على الحجز نفسه (فيزا/انستاباي/
   // فودافون كاش/تحويل بنكي...) ومش بتمر على يومية الشيفت، فلازم تتجمع هنا
   // عشان تظهر في التقرير.
-  const byMethodCurrency = directBookingPaymentsByMethod(directBookings, journaledIds);
+  // حجز ملغي مدير الحجوزات رفض رد فلوسه (refundDecision = "kept") الفلوس بتفضل
+  // متحصّلة فعلاً - بتتحسب هنا برضه (مش إيراد غرفة، لكن تحصيل حقيقي).
+  const keptCancelled = bookings.filter((b) => b.status === "ملغي" && b.refundDecision === "kept" && (Number(b.amountPaid) || 0) > 0 && b.checkin >= fromDate && b.checkin < toDate2);
+  const byMethodCurrency = directBookingPaymentsByMethod([...directBookings, ...keptCancelled], journaledIds);
   // المبالغ المتبقية على النزلاء: للحجز المدفوع أونلاين، سعر الغرفة نفسه
   // متسوّى بالفعل عن طريق منصة الحجز (ده اللي قسم "الحجوزات الأونلاين" فوق
   // بيتابعه بالعمولة) - فمينفعش يفضل ظاهر كـ"متبقي" تاني هنا. اللي ممكن
@@ -127,15 +130,21 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
       if (due > 0) outstanding.push({ ...b, due, onlineExtrasOnly: false });
     }
   });
-  return { count: onlineBookings.length, totalCount: revenueBookings.length, grossRevenue, netRevenue, items, outstanding, byMethodCurrency };
+  // حجوزات اتلغت وفلوسها لسه ما اترّدتش للنزيل (refundPending) - مش إيراد ولا
+  // متبقي على نزيل، دي التزام على الفندق لحد ما موظف الشيفت يسجّل الرد
+  // (بعدها بيتسجل في يومية الشيفت بالسالب وبيتشال من التحصيل). بتظهر بغض
+  // النظر عن الفترة المختارة لأنها رصيد مستحق لحظي زي المتبقي بالظبط.
+  const refundsPending = bookings.filter((b) => b.refundPending && refundDueAmount(b) > 0);
+  return { count: onlineBookings.length, totalCount: revenueBookings.length, grossRevenue, netRevenue, items, outstanding, byMethodCurrency, refundsPending };
 }
 
 export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   const [rangeMode, setRangeMode] = useState("day");
-  const [date, setDate] = useState(todayStr());
-  const [fromDate, setFromDate] = useState(addDays(todayStr(), -6));
-  const [toDate, setToDate] = useState(todayStr());
+  const [date, setDate] = useState(shiftDayNow());
+  const [fromDate, setFromDate] = useState(addDays(shiftDayNow(), -6));
+  const [toDate, setToDate] = useState(shiftDayNow());
   const [records, setRecords] = useState([]);
+  const [globalJournaled, setGlobalJournaled] = useState(null);
   const [dayRecords, setDayRecords] = useState({});
   const [loading, setLoading] = useState(true);
   const [copyText, setCopyText] = useState("");
@@ -149,7 +158,8 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
       setLoading(true);
       if (rangeMode === "day") { const out = {}; for (const s of SHIFTS) out[s.key] = await getShiftRecord(date, s.key); if (!cancelled) setDayRecords(out); }
       const recs = await loadShiftsInRange(effFrom, effTo);
-      if (!cancelled) { setRecords(recs); setLoading(false); }
+      const gj = await getJournaledBookingIds();
+      if (!cancelled) { setRecords(recs); if (gj) setGlobalJournaled(gj); setLoading(false); }
     })();
     return () => { cancelled = true; };
   }, [rangeMode, date, fromDate, toDate, dataVersion]);
@@ -162,8 +172,10 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   const journaledBookingIds = useMemo(() => {
     const set = new Set();
     records.forEach((r) => (r.bookingCollections || []).forEach((e) => { if (e.bookingId) set.add(e.bookingId); }));
+    // + أي حجز اتسجّل تحصيله في أي يومية (حتى لو تاريخها برّه الفترة دي)
+    if (globalJournaled) globalJournaled.forEach((id) => set.add(id));
     return set;
-  }, [records]);
+  }, [records, globalJournaled]);
   const bAgg = useMemo(() => aggregateBookings(bookings, effFrom, effTo, journaledBookingIds), [bookings, effFrom, effTo, journaledBookingIds]);
   // دمج تحصيل اليومية (كاش غالبًا) مع تحصيل الحجوزات المباشر بطرق الدفع
   // التانية (فيزا/انستاباي/فودافون كاش/تحويل بنكي...) عشان "التحصيل حسب
@@ -209,7 +221,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   function buildSummaryText() {
     let txt = `تقرير فندق Calma\n${rangeMode === "day" ? `${arabicWeekday(date)} ${arabicDateLong(date)}` : `من ${fromDate} إلى ${toDate}`}\n\n`;
     if (rangeMode === "day") { SHIFTS.forEach((s) => { const r = dayRecords[s.key]; if (!r) { txt += `${s.label}: لا يوجد سجل\n`; return; } const t = r.closed ? r : computeShiftTotals(r); txt += `${s.label} (${r.staffName}) — ${r.closed ? "مقفول" : "مفتوح"}\nتحصيل: ${moneyLine(t.totalCollections)} | مصاريف: ${moneyLine(t.totalExpenses)} | رصيد الخزينة: ${moneyLine(t.closingCash)}\n`; if (r.flagged) txt += `تنبيه متابعة: ${r.shiftNotes || "—"}\n`; txt += `\n`; }); }
-    txt += `إجمالي التحصيل: ${moneyLine(combinedTotalCollections)}\nإجمالي المصاريف: ${moneyLine(agg.totalExpenses)}\nصافي النقدية (الدرج): ${moneyLine(agg.netCash)}\n`;
+    txt += `إجمالي التحصيل: ${moneyLine(combinedTotalCollections)}\nإجمالي المصاريف: ${moneyLine(agg.totalExpenses)}\nصافي التحصيل بعد المصاريف: ${moneyLine(agg.netCash)}\n`;
     allMethods.forEach((m) => { const obj = combinedByMethodCurrency[m]; if (obj && currencyKeysOf(obj).length) txt += `  - ${m}: ${moneyLine(obj)}\n`; });
     txt += `إيراد الحجوزات الأونلاين (بالعمولة): ${moneyLine(bAgg.netRevenue)}\nنسبة الإشغال: ${avgOccupancy}%`;
     return txt;
@@ -268,13 +280,13 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
           <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 14 }}>
             <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي التحصيل</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(combinedTotalCollections)}</div></div>
             <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي المصاريف</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(agg.totalExpenses)}</div></div>
-            <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>صافي النقدية (الدرج)</div><div style={{ fontWeight: 800, fontSize: 16, color: "var(--teal)" }}>{moneyLine(agg.netCash)}</div></div>
+            <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>صافي التحصيل بعد المصاريف</div><div style={{ fontWeight: 800, fontSize: 16, color: "var(--teal)" }}>{moneyLine(agg.netCash)}</div></div>
             <div className="cx-card" style={{ padding: 10 }}><div style={{ fontSize: 11, color: "var(--muted)" }}>متوسط نسبة الإشغال</div><div style={{ fontWeight: 800, fontSize: 20 }}>{avgOccupancy}%</div></div>
           </div>
 
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>التحصيل حسب طريقة الدفع والعملة</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>الكاش من اليومية (درج الشيفت)، وباقي الطرق (فيزا/انستاباي/فودافون كاش/تحويل بنكي...) من المبالغ المسجَّلة على الحجوزات نفسها.</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>كل تحصيل أو رد فلوس بيتسجّل في يومية الشيفت تلقائيًا (كاش وباقي الطرق). المبالغ القديمة المسجّلة على حجز من غير يومية بس هي اللي بتتضاف من الحجز نفسه.</div>
             <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 12 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{allMethods.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
           </div>
 
@@ -356,6 +368,21 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
                   <div key={b.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}>
                     <span>{roomLabel(rooms, b.room)} · {b.guestName} {b.onlineExtrasOnly && <span style={{ color: "var(--muted)", fontSize: 10.5 }}>(خدمات إضافية - الحجز مدفوع أونلاين)</span>}</span>
                     <span style={{ color: "var(--rust)", fontWeight: 700 }}>{fmt(b.due)} {b.currency}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {bAgg.refundsPending.length > 0 && (
+            <div className="cx-card" style={{ padding: 12, marginBottom: 14, borderColor: "var(--rust)" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2, color: "var(--rust)" }}>طلبات رد فلوس منتظرة قرار مدير الحجوزات ({bAgg.refundsPending.length})</div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>مدير الحجوزات بيقرر من شاشة الحجوزات: لو رد، المبلغ بيتشال من التحصيل ورصيد الخزينة في اليومية والتقرير (والحجز الملغي بيفضل ظاهر)، ولو رفض الفلوس بتفضل متحصّلة.</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {bAgg.refundsPending.map((b) => (
+                  <div key={b.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}>
+                    <span>{roomLabel(rooms, b.room)} · {b.guestName} <span style={{ color: "var(--muted)", fontSize: 10.5 }}>({b.checkin} → {b.checkout} · {b.paymentMethod})</span></span>
+                    <span style={{ color: "var(--rust)", fontWeight: 700 }}>{fmt(refundDueAmount(b))} {b.currency}</span>
                   </div>
                 ))}
               </div>

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen } from "lucide-react";
 import { Logo } from "./shared";
-import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals } from "../domain/money";
+import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
-import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
+import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { getShiftRecord, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord } from "../data/shifts";
+import { resolveMyShift, getShiftRecord, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -24,8 +24,10 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, onUpdateCafeteria }) 
         <thead><tr><th className="cx-th" style={{ width: 60 }}>الغرفة</th><th className="cx-th">المصاريف</th><th className="cx-th">التحصيل</th><th className="cx-th">تفاصيل الدفع الأونلاين</th><th className="cx-th">ملاحظات</th></tr></thead>
         <tbody>
           {record.rows.map((row, idx) => (
-            <tr key={row.room}>
-              <td style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}>{roomLabel(rooms, row.room)}</td>
+            <tr key={row.room + "-" + idx}>
+              {/* ممكن يكون لنفس الغرفة أكتر من صف (لو اتحصّل عليها بوسيلتين دفع أو
+                  عملتين مختلفتين، أو اتردّ ليها فلوس) - الصف الإضافي بيتعلّم. */}
+              <td style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}>{roomLabel(rooms, row.room)}{record.rows.findIndex((r) => r.room === row.room) !== idx && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)" }}>صف إضافي</div>}</td>
               <td>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={row.expenseCategory} onChange={(e) => onUpdateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
@@ -195,8 +197,9 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   const [prevMethodClosing, setPrevMethodClosing] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
-  const today = todayStr();
-  const [histDate, setHistDate] = useState(today);
+  const [liveDay, setLiveDay] = useState(shiftDayNow());
+  const today = liveDay;
+  const [histDate, setHistDate] = useState(shiftDayNow());
   const [histShift, setHistShift] = useState(defaultShiftForNow());
   const [histRecord, setHistRecord] = useState(null);
 
@@ -208,6 +211,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   // كل ما التغيير ده يوصلها هي نفسها عن طريق الـ realtime.
   const pendingRef = useRef(null);
   const baseUpdatedAtRef = useRef(null);
+  const baseRecordRef = useRef(null);
   const debounceTimer = useRef(null);
 
   useEffect(() => {
@@ -215,16 +219,23 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const c = await getClaimsForDate(today);
+      let day = shiftDayNow();
+      let c = await getClaimsForDate(day);
+      let mine = Object.entries(c).find(([, v]) => v && v.username === profile.username);
+      if (!mine) {
+        // شيفت ليلي بدأ قبل ٨ص وأوفر تايمه لسه شغال بعد ٨ص: بيفضل على تاريخه الأصلي
+        const r = await resolveMyShift(profile.username);
+        if (r.key === "night" && r.date !== day) { day = r.date; c = r.claims; mine = ["night", r.claims.night]; }
+      }
       if (cancelled) return;
+      setLiveDay(day);
       setClaims(c);
-      const mine = Object.entries(c).find(([, v]) => v && v.username === profile.username);
       if (mine) {
         const [sk] = mine;
-        let rec = await getShiftRecord(today, sk);
-        const prev = await getPrevShiftClosing(today, sk);
+        let rec = await getShiftRecord(day, sk);
+        const prev = await getPrevShiftClosing(day, sk);
         if (!rec) {
-          const fresh = freshShiftRecord(today, sk, profile.name, profile.username, rooms, prev?.cash || undefined, prev?.method || undefined);
+          const fresh = freshShiftRecord(day, sk, profile.name, profile.username, rooms, prev?.cash || undefined, prev?.method || undefined);
           const created = await createShiftRecord(fresh);
           rec = created.data || fresh;
         }
@@ -235,8 +246,8 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
         if (rec && !rec.closed && !isShiftActiveNow(sk)) {
           const t = computeShiftTotals(rec);
           const autoClosed = { ...rec, closed: true, closedBy: `${rec.staffName} (إقفال تلقائي - انتهى هامش الأوفر تايم)`, closedAt: Date.now(), ...t };
-          const res = await updateShiftRecordIfUnchanged(today, sk, rec.updatedAt, autoClosed);
-          if (res.data) { rec = res.data; onLog(`إقفال تلقائي لشيفت ${SHIFTS.find((s) => s.key === sk)?.label} ليوم ${today} بعد انتهاء هامش الأوفر تايم (${SHIFT_OVERTIME_GRACE_HOURS} ساعة)`); }
+          const res = await updateShiftRecordIfUnchanged(day, sk, rec.updatedAt, autoClosed);
+          if (res.data) { rec = res.data; onLog(`إقفال تلقائي لشيفت ${SHIFTS.find((s) => s.key === sk)?.label} ليوم ${day} بعد انتهاء هامش الأوفر تايم (${SHIFT_OVERTIME_GRACE_HOURS} ساعة)`); }
         }
         if (cancelled) return;
         setMyShiftKey(sk); setRecord(rec); setPrevClosing(prev?.cash || null); setPrevMethodClosing(prev?.method || null);
@@ -249,6 +260,24 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     // كامل من جديد فوق نفسها (ده كان سبب مشكلة "العداد بيهيس").
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, refreshKey]);
+
+  // تحديث لحظي لشيفتي المفتوح: لو حد (مدير الحجوزات/المدير العام) فتح الشيفت
+  // أو قفله، أو اتسجّل عليه تحصيل/رد من جهاز تاني - الشاشة تتحدث لوحدها من
+  // غير ريفرش. بنتجاهل النتيجة لو فيه كتابة معلّقة من الموظف نفسه، أو لو
+  // النسخة اللي رجعت مش أحدث من اللي معروضة (صدى حفظته هو نفسه) - ده نفس
+  // سبب إن اليومية كانت مستثناة من الـ realtime زمان ("العداد بيهيس")، دلوقتي
+  // محلولة بالمقارنة دي بدل الاستثناء الكامل.
+  useEffect(() => {
+    if (mode !== "live" || !myShiftKey) return undefined;
+    let cancelled = false;
+    (async () => {
+      const fresh = await getShiftRecord(today, myShiftKey);
+      if (cancelled || !fresh || pendingRef.current) return;
+      setRecord((cur) => (cur && fresh.updatedAt && cur.updatedAt && new Date(fresh.updatedAt) > new Date(cur.updatedAt) ? fresh : cur));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion]);
 
   useEffect(() => {
     if (mode !== "history") return;
@@ -279,15 +308,27 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     const toSave = pendingRef.current;
     const expected = baseUpdatedAtRef.current;
     pendingRef.current = null; baseUpdatedAtRef.current = null;
-    if (!toSave) return;
-    const res = await updateShiftRecordIfUnchanged(today, myShiftKey, expected, toSave);
+    if (!toSave) { window.__calmaPendingWrites = false; return; }
+    const baseRec = baseRecordRef.current; baseRecordRef.current = null;
+    let res = await updateShiftRecordIfUnchanged(today, myShiftKey, expected, toSave);
+    // تعارض (رد فلوس من مدير الحجوزات / تحصيل من شاشة تانية نزل على نفس السجل):
+    // بنطبّق بس اللي كتبه الموظف فعلاً فوق آخر نسخة من السيرفر ونعيد المحاولة.
+    for (let i = 0; res.conflict && i < 3; i++) {
+      const fresh = await getShiftRecord(today, myShiftKey);
+      if (!fresh || fresh.closed) break;
+      res = await updateShiftRecordIfUnchanged(today, myShiftKey, fresh.updatedAt, rebaseShiftRecord(baseRec || toSave, toSave, fresh));
+    }
+    // لو الموظف كتب حاجة جديدة وقت ما الحفظة دي كانت بتتبعت، التعديل الجديد
+    // لسه معلّق فعلاً - ماينفعش نعتبر مفيش كتابات معلّقة (انظر main.jsx).
+    window.__calmaPendingWrites = !!pendingRef.current;
     if (res.conflict) { showToast("⚠ فيه تعديل حصل من مكان تاني على نفس الشيفت - جاري تحديث البيانات"); setRefreshKey((k) => k + 1); return; }
     if (res.error) { showToast(res.error); return; }
     setRecord(res.data);
   }
   function persist(next, { silent, immediate } = {}) {
-    if (!pendingRef.current) baseUpdatedAtRef.current = record.updatedAt;
+    if (!pendingRef.current) { baseUpdatedAtRef.current = record.updatedAt; baseRecordRef.current = record; }
     pendingRef.current = next;
+    window.__calmaPendingWrites = true; // main.jsx بيستنى قبل ما يطبّق تحديث نسخة جديدة وفيه كتابة لسه ما اتبعتتش
     setRecord(next);
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     if (immediate) { flushPending(); if (!silent) showToast("تم الحفظ"); return; }
@@ -311,12 +352,23 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
 
   async function closeShift() {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    const base = pendingRef.current || record;
+    const mineRec = pendingRef.current || record;
+    let base = mineRec;
+    const baseRec = pendingRef.current ? baseRecordRef.current : record;
     const expected = pendingRef.current ? baseUpdatedAtRef.current : record.updatedAt;
-    pendingRef.current = null; baseUpdatedAtRef.current = null;
-    const t = computeShiftTotals(base);
-    const closedRecord = { ...base, closed: true, closedBy: profile.name, closedAt: Date.now(), ...t };
-    const res = await updateShiftRecordIfUnchanged(today, myShiftKey, expected, closedRecord);
+    pendingRef.current = null; baseUpdatedAtRef.current = null; baseRecordRef.current = null;
+    window.__calmaPendingWrites = false;
+    let t = computeShiftTotals(base);
+    let closedRecord = { ...base, closed: true, closedBy: profile.name, closedAt: Date.now(), ...t };
+    let res = await updateShiftRecordIfUnchanged(today, myShiftKey, expected, closedRecord);
+    for (let i = 0; res.conflict && i < 3; i++) {
+      const fresh = await getShiftRecord(today, myShiftKey);
+      if (!fresh || fresh.closed) break;
+      base = rebaseShiftRecord(baseRec || mineRec, mineRec, fresh);
+      t = computeShiftTotals(base);
+      closedRecord = { ...base, closed: true, closedBy: profile.name, closedAt: Date.now(), ...t };
+      res = await updateShiftRecordIfUnchanged(today, myShiftKey, fresh.updatedAt, closedRecord);
+    }
     if (res.conflict) { showToast("⚠ فيه تعديل حصل من مكان تاني - جاري تحديث البيانات، جرّب تقفل تاني"); setRefreshKey((k) => k + 1); return; }
     if (res.error) { showToast(res.error); return; }
     const summary = currencyKeysOf(t.closingCash).map((c) => `${money(t.closingCash, c)} ${c}`).join(" / ") || "0";

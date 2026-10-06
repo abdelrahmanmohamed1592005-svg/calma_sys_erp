@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Info, UserPlus, Key, Check, AlertTriangle } from "lucide-react";
 import { TwoStepButton } from "./shared";
 import { ROLES, SHIFTS } from "../domain/constants";
-import { todayStr } from "../domain/dates";
+import { shiftDayNow } from "../domain/dates";
 import { getClaimsForDate, clearClaimRow, deleteShiftRecord } from "../data/shifts";
 import { adminCreateUser, setProfileActive, adminResetPassword } from "../lib/auth";
 import { validatePasswordStrength, validateUsername, sanitizeText } from "../domain/security";
@@ -12,7 +12,7 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPw, setResetPw] = useState("");
   const [claims, setClaims] = useState(null);
-  const today = todayStr();
+  const today = shiftDayNow();
 
   useEffect(() => { if (!readOnly) (async () => setClaims(await getClaimsForDate(today)))(); }, [readOnly, dataVersion]);
 
@@ -23,16 +23,22 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
   // لو فيها خطأ حقيقي، المدير العام/مدير الحجوزات يراجعوها ويصلّحوها يدويًا
   // من شاشة الحجوزات/بلوك الغرف (الصلاحية دي متاحة لهم بالفعل).
   async function clearClaim(shiftKey) {
+    // نمسح ورقة اليومية الأول: لو فشل المسح مانلغيش الاختيار (كان هيسيب ورقة
+    // يتيمة والرسالة تقول إنها اتمسحت).
+    const del = await deleteShiftRecord(today, shiftKey);
+    if (del.error) { showToast("تعذر مسح ورقة اليومية: " + del.error); return; }
     const res = await clearClaimRow(today, shiftKey);
     if (res.error) { showToast(res.error); return; }
-    await deleteShiftRecord(today, shiftKey);
     setClaims((prev) => { const next = { ...prev }; delete next[shiftKey]; return next; });
     onLog(`المدير العام ألغى اختيار شيفت ${SHIFTS.find((s) => s.key === shiftKey)?.label} النهارده عشان تصحيح خطأ (ورقة اليومية بتاعة الشيفت ده اتمسحت معاه)`);
     showToast("اتلغى الاختيار وورقة اليومية بتاعته - أي حجوزات أو تغييرات غرف حصلت في نفس الوقت تحتاج تتراجع يدويًا لو فيها خطأ");
   }
 
   function startNew() { setForm({ name: "", username: "", role: "staff", pw: "" }); }
-  async function saveNew() {
+  const [busy, setBusy] = useState(false);
+  async function guarded(fn) { if (busy) return; setBusy(true); try { await fn(); } finally { setBusy(false); } }
+  async function saveNew() { return guarded(saveNewInner); }
+  async function saveNewInner() {
     const name = sanitizeText(form.name, 80);
     if (!name) { showToast("اكتب الاسم"); return; }
     const uCheck = validateUsername(form.username);
@@ -46,13 +52,16 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
     onRefresh(); onLog(`إضافة مستخدم جديد: ${uname} (${ROLES.find((r) => r.key === form.role)?.label})`);
     setForm(null); showToast("تم إنشاء الحساب");
   }
-  async function toggleActive(u) {
+  async function toggleActive(u) { return guarded(() => toggleActiveInner(u)); }
+  async function toggleActiveInner(u) {
+    if (u.active && u.username === currentUsername) { showToast("مينفعش تعطّل حسابك إنت"); return; }
     if (u.role === "gm" && u.active) { const activeGms = users.filter((x) => x.role === "gm" && x.active); if (activeGms.length <= 1) { showToast("لازم يفضل مدير عام واحد فعّال على الأقل"); return; } }
     const res = await setProfileActive(u.id, !u.active);
     if (res.error) { showToast(res.error); return; }
     onRefresh(); onLog(`${u.active ? "تعطيل" : "تفعيل"} حساب ${u.username}`); showToast("تم التحديث");
   }
-  async function submitReset() {
+  async function submitReset() { return guarded(submitResetInner); }
+  async function submitResetInner() {
     const check = validatePasswordStrength(resetPw);
     if (!check.ok) { showToast(check.message); return; }
     const res = await adminResetPassword(resetTarget, resetPw);
@@ -102,7 +111,7 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
                 {resetTarget === u.username ? (
                   <span style={{ display: "flex", gap: 4 }}><input className="cx-input" type="password" placeholder="كلمة مرور جديدة" style={{ width: 140 }} value={resetPw} onChange={(e) => setResetPw(e.target.value)} /><button className="cx-btn cx-btn-gold" onClick={submitReset}>حفظ</button><button className="cx-btn cx-btn-outline" onClick={() => { setResetTarget(null); setResetPw(""); }}>إلغاء</button></span>
                 ) : (<button className="cx-btn cx-btn-outline" onClick={() => { setResetTarget(u.username); setResetPw(""); }}><Key size={13} /> إعادة تعيين كلمة المرور</button>)}
-                <button className="cx-btn cx-btn-outline" onClick={() => toggleActive(u)}>{u.active ? "تعطيل" : "تفعيل"}</button>
+                {u.active ? <TwoStepButton className="cx-btn-outline" label="تعطيل" confirmLabel="تأكيد التعطيل؟" onConfirm={() => toggleActive(u)} /> : <button className="cx-btn cx-btn-outline" disabled={busy} onClick={() => toggleActive(u)}>تفعيل</button>}
               </div>
             )}
           </div>

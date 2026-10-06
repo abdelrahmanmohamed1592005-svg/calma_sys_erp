@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addDays, nightsBetween, parseDateFlexible, nextShiftOf, prevShiftOf, isSameDay, isShiftActiveNow } from "../domain/dates";
+import { addDays, nightsBetween, parseDateFlexible, nextShiftOf, prevShiftOf, isSameDay, isShiftActiveNow, shiftDayNow } from "../domain/dates";
 
 describe("addDays", () => {
   it("adds positive days across month boundary", () => {
@@ -76,5 +76,19 @@ describe("isSameDay", () => {
   it("rejects a different date", () => {
     const ts = new Date(2026, 8, 5, 14, 30).getTime();
     expect(isSameDay(ts, "2026-09-06")).toBe(false);
+  });
+});
+
+describe("shiftDayNow (operational shift day starts at 08:00)", () => {
+  it("after 08:00 it is the calendar day", () => {
+    expect(shiftDayNow(new Date(2026, 9, 6, 8, 0))).toBe("2026-10-06");
+    expect(shiftDayNow(new Date(2026, 9, 6, 23, 59))).toBe("2026-10-06");
+  });
+  it("00:00-07:59 still belongs to the previous shift day (evening overtime / night shift)", () => {
+    expect(shiftDayNow(new Date(2026, 9, 7, 0, 30))).toBe("2026-10-06");
+    expect(shiftDayNow(new Date(2026, 9, 7, 7, 59))).toBe("2026-10-06");
+  });
+  it("rolls back across a month boundary", () => {
+    expect(shiftDayNow(new Date(2026, 10, 1, 1, 0))).toBe("2026-10-31");
   });
 });

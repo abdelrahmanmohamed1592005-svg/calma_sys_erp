@@ -21,14 +21,16 @@ export const TAB_LABELS = { board: "لوحة الغرف", ledger: "اليومي�
 /* staff: يشتغل باليومية والحجوزات (عرض + إضافة حجز مباشر) وحالة الغرف (بقيود).
    كل حاجة باينة للمدير العام باينة كمان لمديرة الحسابات ومدير الحجوزات - عرض بس، غير الصلاحيات المحددة لكل دور. */
 export const PERMISSIONS = {
-  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true, reopenShift: false },
+  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true, reopenShift: false, decideRefund: false },
   // markPaymentReceived بقت false لمدير الحجوزات عمدًا - شغله يضيف الحجوزات
   // ويحدد سعرها بس، أما "استلمنا الفلوس فعليًا ولا لأ" فده قرار موظف الشيفت
   // اللي قدام النزيل فعليًا، مش مدير الحجوزات. هو يقدر يشوف المتبقي/المتحصّل
   // (متابعة بس) لكن ميقدرش يغيّره.
+  // decideRefund: رد الفلوس للنزيل (أو رفض الرد وإبقاء الفلوس) قراره لمدير
+  // الحجوزات بس - بيجيله إشعار لما حجز يتلغي/يتقصّر وعليه فلوس متحصّلة.
   // reopenShift: لو موظف قفل شيفته بالغلط، مدير الحجوزات والمدير العام بس
   // يقدروا يفتحوه تاني (انظر قسم ١٦ في schema.sql).
-  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false, reopenShift: true },
+  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false, reopenShift: true, decideRefund: true },
   accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false, reopenShift: false },
   gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false, reopenShift: true },
 };

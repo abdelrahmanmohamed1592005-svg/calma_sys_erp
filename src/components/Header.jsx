@@ -18,7 +18,7 @@ export function Header({ user, onLogout, onChangePassword }) {
           <button onClick={onLogout} title="تسجيل خروج" className="cx-btn" style={{ background: "transparent", color: "#EFE9DA", border: "1px solid #3A4550", padding: "6px 8px" }}><LogOut size={15} /></button>
         </div>
       </div>
-      {showPw && <ChangePasswordBar onSubmit={(pw) => { onChangePassword(pw); setShowPw(false); }} onCancel={() => setShowPw(false)} />}
+      {showPw && <ChangePasswordBar onSubmit={async (pw) => { const ok = await onChangePassword(pw); if (ok) setShowPw(false); }} onCancel={() => setShowPw(false)} />}
     </div>
   );
 }
@@ -43,10 +43,10 @@ function ChangePasswordBar({ onSubmit, onCancel }) {
   );
 }
 
-export function TabBar({ tabs, active, onChange }) {
+export function TabBar({ tabs, active, onChange, badges = {} }) {
   return (
     <div className="cx-no-print" style={{ display: "flex", gap: 4, overflowX: "auto", borderBottom: "1px solid var(--hair)", background: "var(--paper)", padding: "0 10px" }}>
-      {tabs.map((t) => <button key={t} onClick={() => onChange(t)} className={"cx-tab " + (active === t ? "active" : "")} style={{ background: "transparent", border: "none", padding: "12px 14px", fontSize: 13.5, whiteSpace: "nowrap", cursor: "pointer" }}>{TAB_LABELS[t]}</button>)}
+      {tabs.map((t) => <button key={t} onClick={() => onChange(t)} className={"cx-tab " + (active === t ? "active" : "")} style={{ background: "transparent", border: "none", padding: "12px 14px", fontSize: 13.5, whiteSpace: "nowrap", cursor: "pointer" }}>{TAB_LABELS[t]}{badges[t] > 0 && <span style={{ marginInlineStart: 6, background: "var(--rust)", color: "#fff", borderRadius: 10, padding: "1px 7px", fontSize: 11, fontWeight: 700 }}>{badges[t]}</span>}</button>)}
     </div>
   );
 }

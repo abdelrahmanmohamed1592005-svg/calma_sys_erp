@@ -6,7 +6,7 @@ function activityFromRow(r) {
 
 export async function getActivity(limit = 300) {
   const { data, error } = await supabase.from("activity_log").select("*").order("ts", { ascending: false }).limit(limit);
-  if (error || !data) return [];
+  if (error || !data) return null;
   return data.map(activityFromRow);
 }
 

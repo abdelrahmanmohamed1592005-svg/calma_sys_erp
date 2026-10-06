@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
+import { registerSW } from "virtual:pwa-register";
 
 /*
   من غير الـ Error Boundary ده، أي خطأ برمجي غير متوقع في أي جزء من الواجهة
@@ -45,3 +46,33 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     </ErrorBoundary>
   </React.StrictMode>
 );
+
+/*
+  تحديث النسخة تلقائيًا من غير ريفرش يدوي: بنفحص وجود إصدار جديد كل دقيقة (وأول
+  ما التاب يرجع يظهر أو النت يرجع)، ولما يتحمّل بنطبّقه فورًا - إلا لو فيه
+  فورم مفتوح أو الموظف بيكتب في خانة أو فيه عملية حفظ شغالة أو تعديل لسه
+  ما اتبعتش للسيرفر (data-calma-editing / window.__calmaPendingWrites / withBusy)، وقتها بنستنى ونحاول تاني كل ٥ ثواني عشان
+  مانضيّعش اللي الموظف بيكتبه.
+*/
+let updateReady = false;
+let retryTimer = null;
+function tryApplyUpdate() {
+  if (!updateReady) return;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  const el = document.activeElement;
+  const typing = el && ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
+  if (typing || document.querySelector("[data-calma-editing]") || window.__calmaPendingWrites || window.__calmaBusyCount > 0) { retryTimer = setTimeout(tryApplyUpdate, 5000); return; }
+  updateReady = false;
+  updateSW(true);
+}
+const updateSW = registerSW({
+  immediate: true,
+  onNeedRefresh() { updateReady = true; tryApplyUpdate(); },
+  onRegisteredSW(_url, registration) {
+    if (!registration) return;
+    const check = () => { registration.update().catch(() => {}); };
+    setInterval(check, 60 * 1000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
+    window.addEventListener("online", check);
+  },
+});

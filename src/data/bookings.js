@@ -26,6 +26,7 @@ function bookingFromRow(r) {
     // رد الفلوس فعليًا (processRefund في BookingsPanel.jsx).
     refundPending: !!r.refund_pending, refundedAmount: r.refunded_amount != null ? Number(r.refunded_amount) : null,
     refundedBy: r.refunded_by || null, refundedAt: r.refunded_at ? new Date(r.refunded_at).getTime() : null,
+    refundDecision: r.refund_decision || null, // "refunded" | "kept" | null
   };
 }
 
@@ -39,30 +40,41 @@ function bookingToRow(b) {
     source: b.source, status: b.status, approval_status: b.approvalStatus || "approved", settled: !!b.settled,
     notes: b.notes || "", imported: !!b.imported, needs_room_review: !!b.needsRoomReview,
     left_early: !!b.leftEarly, duplicate_placement: !!b.duplicatePlacement,
-    // refund_pending نفسها بتتحدد تلقائيًا في قاعدة البيانات (trigger) لحظة
-    // الإلغاء - هنا بس بنبعت القيم اللي processRefund فعليًا بيغيّرها (تصفير
-    // refund_pending وتسجيل مين رد الفلوس وإمتى)، عشان نسيب القرار الأساسي
-    // (امتى تتحدد refund_pending = true) للـ trigger بس.
-    refund_pending: !!b.refundPending, refunded_amount: b.refundedAmount ?? null,
-    refunded_by: b.refundedBy || null, refunded_at: b.refundedAt ? new Date(b.refundedAt).toISOString() : null,
+    // حقول رد الفلوس (refund_*) مش بتتبعت من الواجهة خالص: طلب الرد بيتفتح
+    // تلقائيًا في قاعدة البيانات، وقراره (رد/إبقاء) بيتم بس عن طريق
+    // decideBookingRefund تحت (مدير الحجوزات بس).
   };
 }
 
+/* رسالة خطأ مفهومة بدل نص قاعدة البيانات التقني. أهمها قيد منع الحجز
+   المزدوج (exclusion_violation، كود 23P01): معناه إن فيه حجز تاني فعلاً على
+   نفس الغرفة في تواريخ متداخلة (غالبًا اتضاف من جهاز تاني في نفس اللحظة). */
+export function friendlyBookingError(error) {
+  if (!error) return null;
+  if (error.code === "23P01" || /bookings_no_overlap/.test(error.message || "")) {
+    return "الغرفة دي اتحجزت لحد تاني في تواريخ متداخلة (غالبًا من جهاز تاني دلوقتي) - البيانات اتحدّثت، راجع الحجوزات الأول";
+  }
+  return error.message;
+}
+
+// بترجع null (مش قايمة فاضية) لو القراءة فشلت، عشان الشاشة تفضل على آخر
+// بيانات سليمة بدل ما "تفضى" فجأة ويتعتبر مفيش حجوزات خالص (وده كان هيخلّي
+// فحص التعارض يعدّي غلط) - انظر App.jsx.
 export async function getBookings() {
   const { data, error } = await supabase.from("bookings").select("*").order("checkin", { ascending: false });
-  if (error || !data) return [];
+  if (error || !data) return null;
   return data.map(bookingFromRow);
 }
 
 export async function insertBooking(booking) {
   const { data, error } = await supabase.from("bookings").insert(bookingToRow(booking)).select().maybeSingle();
-  if (error) return { error: error.message };
+  if (error) return { error: friendlyBookingError(error), code: error.code };
   return { data: bookingFromRow(data) };
 }
 
 export async function updateBooking(id, booking) {
   const { data, error } = await supabase.from("bookings").update(bookingToRow(booking)).eq("id", id).select().maybeSingle();
-  if (error) return { error: error.message };
+  if (error) return { error: friendlyBookingError(error), code: error.code };
   return { data: bookingFromRow(data) };
 }
 
@@ -79,9 +91,18 @@ export async function updateBookingIfUnchanged(id, expectedUpdatedAt, booking) {
     .update(bookingToRow(booking))
     .eq("id", id).eq("updated_at", expectedUpdatedAt)
     .select().maybeSingle();
-  if (error) return { error: error.message };
+  if (error) return { error: friendlyBookingError(error), code: error.code };
   if (!data) return { conflict: true };
   return { data: bookingFromRow(data) };
+}
+
+/* قرار مدير الحجوزات في طلب رد فلوس: decision = "refund" (رد فعلي - بيتشال
+   من المدفوع وبيتسجل بالسالب في يومية الشيفت المفتوح) أو "keep" (رفض الرد
+   والفلوس تفضل متحصّلة). كله معاملة واحدة في قاعدة البيانات (decide_booking_refund). */
+export async function decideBookingRefund(id, decision, expectedUpdatedAt, method) {
+  const { data, error } = await supabase.rpc("decide_booking_refund", { p_booking: id, p_decision: decision, p_expected: expectedUpdatedAt || null, p_method: method || null });
+  if (error) return { error: error.message };
+  return { data };
 }
 
 export async function deleteBooking(id) {

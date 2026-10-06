@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { GlobalStyle, LoadingScreen, ConfigWarningBanner } from "./components/shared";
 import { Header, TabBar } from "./components/Header";
 import { SetupScreen, LoginScreen, LogoutReportScreen } from "./components/AuthScreens";
@@ -13,11 +13,12 @@ import { supabaseConfigured } from "./lib/supabaseClient";
 import { subscribeToAllChanges } from "./lib/realtime";
 import { signUpUser, signIn, signOut, getSession, onAuthStateChange, getMyProfile, listProfiles, checkSetupNeeded, changeOwnPassword as authChangeOwnPassword } from "./lib/auth";
 import { getRooms, getRoomOverrides, setRoomOverride } from "./data/rooms";
-import { getBookings, insertBooking, updateBookingIfUnchanged, deleteBooking } from "./data/bookings";
+import { getBookings, insertBooking, updateBookingIfUnchanged, deleteBooking, decideBookingRefund } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
 
 import { PERMISSIONS, ROOMS_DEFAULT } from "./domain/constants";
 import { todayStr, isSameDay, uid } from "./domain/dates";
+import { refundDueAmount } from "./domain/money";
 
 export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -37,17 +38,69 @@ export default function App() {
   const [dataVersion, setDataVersion] = useState(0);
 
   function requestEditBooking(id) { setPendingEditBookingId(id); setTab("bookings"); }
-  function showToast(msg) { setToast(msg); setTimeout(() => setToast(null), 2200); }
+  // الرسالة بتفضل على الشاشة وقت يتناسب مع طولها (الرسائل الطويلة - زي تفاصيل
+  // خطأ أو تحذير مالي - كانت بتختفي في ثانيتين قبل ما تتقرا)، وأي رسالة
+  // جديدة بتلغي مؤقّت اللي قبلها بدل ما تتقفل بدري بسببه.
+  const toastTimer = useRef(null);
+  function showToast(msg) {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), Math.min(10000, Math.max(2500, String(msg).length * 70)));
+  }
+  // بيتزوّد مع كل كتابة (إضافة/تعديل/حذف) من الجهاز ده - عشان لو تحميل بيانات
+  // كان شغال وقت الكتابة (بدأ قبلها) ورجع بعدها، مانكتبش نتيجته القديمة فوق
+  // التعديل الجديد (بنعيد التحميل بدلها).
+  const mutationSeq = useRef(0);
 
-  // البث اللحظي: أي تغيير في أي جدول بيبلّغ كل الشاشات المفتوحة تعيد تحميل بياناتها
+  // إشعار مدير الحجوزات بطلبات رد الفلوس المعلّقة: أي حجز اتلغى (أو اتقصّر)
+  // وعليه فلوس متحصّلة بيظهر هنا فورًا (البث اللحظي) كشريط تنبيه + عداد على
+  // تبويب الحجوزات + رسالة لحظة وصول طلب جديد.
+  const pendingRefunds = bookings.filter((b) => b.refundPending && refundDueAmount(b) > 0);
+  const prevRefundIds = useRef(null);
   useEffect(() => {
-    const unsubscribe = subscribeToAllChanges(() => setDataVersion((v) => v + 1));
-    return unsubscribe;
-  }, []);
+    // أول تحميل للبيانات بس بيسجّل الطلبات الموجودة أصلاً (من غير رسالة "جديد")
+    if (currentProfile?.role !== "reservations" || loadingData) { prevRefundIds.current = null; return; }
+    const ids = new Set(pendingRefunds.map((b) => b.id));
+    if (prevRefundIds.current) {
+      const fresh = pendingRefunds.filter((b) => !prevRefundIds.current.has(b.id));
+      if (fresh.length > 0) showToast(`طلب رد فلوس جديد: ${fresh.map((b) => b.guestName).join("، ")} - راجعه من تبويب الحجوزات`);
+    }
+    prevRefundIds.current = ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookings, currentProfile?.role, loadingData]);
+
+  // البث اللحظي: أي تغيير في أي جدول بيبلّغ كل الشاشات المفتوحة تعيد تحميل
+  // بياناتها. الاشتراك بيتعمل بعد تسجيل الدخول (مش وقت فتح الصفحة قبله) عشان
+  // قناة الريل تايم تتفتح بجلسة المستخدم الفعلية - الجداول محمية بـ RLS، وقناة
+  // اتفتحت قبل الدخول ممكن ما توصلهاش تغييرات لحد ما تتحدث الصفحة يدويًا
+  // (ده كان أحد أسباب "لازم أرفرش"). كمان بنعيد التحميل لما القناة ترجع
+  // تتوصل بعد انقطاع، ولما التاب يرجع يظهر أو النت يرجع، وبفحص احتياطي كل
+  // دقيقة لو القناة وقفت من غير ما نحس.
+  useEffect(() => {
+    if (!currentProfile) return undefined;
+    let timer = null;
+    const bump = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setDataVersion((v) => v + 1), 200);
+    };
+    const unsubscribe = subscribeToAllChanges(bump, (status) => { if (status === "SUBSCRIBED") bump(); });
+    const onVisible = () => { if (document.visibilityState === "visible") bump(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", bump);
+    const poll = setInterval(() => { if (document.visibilityState === "visible") bump(); }, 60000);
+    return () => {
+      if (timer) clearTimeout(timer);
+      clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", bump);
+      unsubscribe();
+    };
+  }, [currentProfile?.id]);
 
   // تحميل حالة تسجيل الدخول والاستماع لأي تغيير فيها
   useEffect(() => {
     let cancelled = false;
+    let retryTimer = null;
     async function loadAuthState(sess) {
       if (!sess) {
         const needSetup = await checkSetupNeeded();
@@ -55,11 +108,20 @@ export default function App() {
         setCurrentProfile(null); setSetupNeeded(needSetup); setAuthChecked(true);
         return;
       }
-      let profile = null;
+      let profile = null, transient = false;
       for (let attempt = 0; attempt < 4 && !profile; attempt++) {
         if (attempt > 0) await new Promise((r) => setTimeout(r, 400));
-        profile = await getMyProfile();
+        const r = await getMyProfile();
         if (cancelled) return;
+        transient = !!r?.transientError;
+        profile = transient ? null : r;
+      }
+      // مشكلة شبكة مؤقتة (مش "مفيش بروفايل") ماتخرّجش مستخدم جلسته سليمة وتضيّع
+      // اللي فاتح - نسيب الحالة زي ما هي ونحاول تاني بعد شوية.
+      if (!profile && transient) {
+        setAuthChecked(true);
+        retryTimer = setTimeout(() => { if (!cancelled) loadAuthState(sess); }, 4000);
+        return;
       }
       if (!profile || !profile.active) {
         await signOut();
@@ -71,40 +133,63 @@ export default function App() {
     }
     (async () => { const sess = await getSession(); await loadAuthState(sess); })();
     const unsubscribe = onAuthStateChange((sess) => { loadAuthState(sess); });
-    return () => { cancelled = true; unsubscribe(); };
+    return () => { cancelled = true; if (retryTimer) clearTimeout(retryTimer); unsubscribe(); };
   }, []);
 
-  async function refreshProfiles() { setAllProfiles(await listProfiles()); }
+  async function refreshProfiles() { const p = await listProfiles(); if (p) setAllProfiles(p); }
   useEffect(() => { if (currentProfile) refreshProfiles(); }, [currentProfile?.id, dataVersion]);
 
+  // أي قراءة فشلت (راجعة null) بنسيب آخر بيانات سليمة زي ما هي بدل ما نفضّي
+  // الشاشة - خصوصًا الحجوزات، لأن فحص التعارض بيعتمد عليها. وأي تحميل أقدم
+  // من تحميل أحدث (أو من كتابة حصلت في النص) مابيكتبش فوقهم.
   useEffect(() => {
-    if (!currentProfile) return;
+    if (!currentProfile) return undefined;
+    let cancelled = false;
+    const seqAtStart = mutationSeq.current;
     (async () => {
       const [r, o, b, a] = await Promise.all([getRooms(), getRoomOverrides(), getBookings(), getActivity()]);
-      setRooms(r.length ? r : ROOMS_DEFAULT); setOverrides(o); setBookings(b); setActivity(a); setLoadingData(false);
+      if (cancelled) return;
+      if (mutationSeq.current !== seqAtStart) { setDataVersion((v) => v + 1); return; }
+      if (r) setRooms(r.length ? r : ROOMS_DEFAULT);
+      if (o) setOverrides(o);
+      if (b) setBookings(b);
+      if (a) setActivity(a);
+      setLoadingData(false);
     })();
+    return () => { cancelled = true; };
   }, [currentProfile?.id, dataVersion]);
 
   function logActivity(action) {
     const entry = { userName: currentProfile?.name || "—", username: currentProfile?.username || "—", role: currentProfile?.role || "—", action };
     setActivity((prev) => [{ id: uid(), ts: Date.now(), user: entry.userName, username: entry.username, role: entry.role, action }, ...prev].slice(0, 300));
-    addActivity(entry);
+    addActivity(entry).then((r) => { if (r?.error) showToast("⚠ تعذر تسجيل الحركة في سجل الحركة - اتأكد من النت وسجّل الإجراء تاني لو لزم"); });
   }
 
-  async function handleSaveOverride(roomNumber, status) { const res = await setRoomOverride(roomNumber, status, currentProfile?.username); if (!res.error) setOverrides((prev) => ({ ...prev, [roomNumber]: { status, updatedAt: Date.now() } })); return res; }
+  async function handleSaveOverride(roomNumber, status) { mutationSeq.current++; const res = await setRoomOverride(roomNumber, status, currentProfile?.username); mutationSeq.current++; if (!res.error) setOverrides((prev) => ({ ...prev, [roomNumber]: { status, updatedAt: Date.now() } })); return res; }
   // تعديل آمن من تعارض تعديلين في نفس اللحظة (زي اليومية بالظبط): لو حد
   // عدّل نفس الحجز في نفس اللحظة، بنرجّع "تعارض" بدل ما نكتب فوق تعديله
   // من غير ما حد يدري، وبنحدّث بيانات الشاشة من قاعدة البيانات تاني.
   async function safeUpdateBooking(id, booking) {
+    mutationSeq.current++;
     const res = await updateBookingIfUnchanged(id, booking.updatedAt, booking);
+    mutationSeq.current++; // بعد الكتابة كمان: تحميل بدأ وقت الكتابة ماينفعش يكتب نتيجته فوقها
     if (res.conflict) { setDataVersion((v) => v + 1); return { error: "في حد عدّل نفس الحجز ده في نفس اللحظة - البيانات اتحدّثت، راجعي وجرّبي تاني" }; }
     if (res.data) setBookings((prev) => prev.map((b) => (b.id === id ? res.data : b)));
     return res;
   }
   async function handleToggleSettled(booking, value) { return safeUpdateBooking(booking.id, { ...booking, settled: value }); }
-  async function handleInsertBooking(booking) { const res = await insertBooking(booking); if (res.data) setBookings((prev) => [res.data, ...prev]); return res; }
+  async function handleInsertBooking(booking) { mutationSeq.current++; const res = await insertBooking(booking); mutationSeq.current++; if (res.data) setBookings((prev) => [res.data, ...prev]); return res; }
   async function handleUpdateBooking(id, booking) { return safeUpdateBooking(id, booking); }
-  async function handleDeleteBooking(id) { const res = await deleteBooking(id); if (!res.error) setBookings((prev) => prev.filter((b) => b.id !== id)); return res; }
+  // قرار مدير الحجوزات في طلب رد فلوس (رد فعلي / إبقاء الفلوس) - معاملة واحدة
+  // في قاعدة البيانات (decide_booking_refund)، وبعدها نحدّث الحجوزات واليومية.
+  async function handleDecideRefund(booking, decision, method) {
+    mutationSeq.current++;
+    const res = await decideBookingRefund(booking.id, decision, booking.updatedAt, method);
+    mutationSeq.current++;
+    setDataVersion((v) => v + 1);
+    return res;
+  }
+  async function handleDeleteBooking(id) { mutationSeq.current++; const res = await deleteBooking(id); mutationSeq.current++; if (!res.error) setBookings((prev) => prev.filter((b) => b.id !== id)); return res; }
 
   async function handleSetup({ name, username, pw }) {
     const res = await signUpUser({ username, password: pw, name, role: "gm" });
@@ -123,7 +208,7 @@ export default function App() {
     if (mine.length > 0 && !sessionExported) { setLogoutGate(true); } else { doLogout(); }
   }
   function finishLogoutExport() { setSessionExported(true); setLogoutGate(false); doLogout(); }
-  async function changeOwnPasswordHandler(pw) { const res = await authChangeOwnPassword(pw); if (res.error) { showToast(res.error); return; } showToast("تم تغيير كلمة المرور"); }
+  async function changeOwnPasswordHandler(pw) { const res = await authChangeOwnPassword(pw); if (res.error) { showToast(res.error); return false; } showToast("تم تغيير كلمة المرور"); return true; }
 
   if (!authChecked) return <div className="calma-app" dir="rtl"><GlobalStyle />{!supabaseConfigured && <ConfigWarningBanner />}<LoadingScreen /></div>;
   if (!currentProfile && setupNeeded) return <><SetupScreen onCreate={handleSetup} />{!supabaseConfigured && <ConfigWarningBanner />}</>;
@@ -134,19 +219,25 @@ export default function App() {
 
   if (logoutGate) {
     const mine = activity.filter((a) => a.username === currentProfile.username && isSameDay(a.ts, todayStr()));
-    return <LogoutReportScreen user={currentProfile} actions={mine} onExportAndLogout={finishLogoutExport} />;
+    return <LogoutReportScreen user={currentProfile} actions={mine} onExportAndLogout={finishLogoutExport} onCancel={() => setLogoutGate(false)} />;
   }
 
   return (
     <div className="calma-app" dir="rtl">
       <GlobalStyle />
       <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} />
-      <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} />
+      <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={perms.decideRefund ? { bookings: pendingRefunds.length } : {}} />
+      {perms.decideRefund && pendingRefunds.length > 0 && (
+        <div className="cx-no-print" data-testid="refund-banner" style={{ background: "#F4E7E2", color: "var(--rust)", padding: "8px 14px", fontSize: 12.5, fontWeight: 700, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span>🔔 فيه {pendingRefunds.length} طلب رد فلوس منتظر قرارك (رد أو رفض)</span>
+          {activeTab !== "bookings" && <button className="cx-btn cx-btn-outline" style={{ padding: "3px 10px" }} onClick={() => setTab("bookings")}>افتح الحجوزات</button>}
+        </div>
+      )}
       {loadingData ? <LoadingScreen /> : (
         <>
           {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "ledger" && <DailyLedger rooms={rooms} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDeleteBooking={handleDeleteBooking} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
+          {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDeleteBooking={handleDeleteBooking} onDecideRefund={handleDecideRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
           {activeTab === "activity" && <ActivityPanel activity={activity} />}
           {activeTab === "users" && <UsersPanel users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}

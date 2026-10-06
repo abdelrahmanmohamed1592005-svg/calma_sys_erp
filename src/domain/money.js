@@ -77,6 +77,36 @@ export function freshShiftRecord(date, shiftKey, staffName, staffUsername, rooms
   };
 }
 
+/* بتضيف تحصيل (أو رد فلوس - amount سالب) حجز على صفوف اليومية العادية من
+   غير ما تخلط وسائل دفع أو عملات مختلفة في نفس الخانة (صف الغرفة الواحد ليه
+   وسيلة دفع وعملة واحدة بس):
+   1) صف لنفس الغرفة بنفس وسيلة الدفع ونفس العملة => المبلغ بيتجمع عليه.
+   2) لو مفيش، صف لنفس الغرفة فاضي تمامًا (من غير مبلغ ولا بيان) => بيتستخدم.
+   3) لو مفيش، بنضيف صف جديد لنفس الغرفة في نفس الجدول (مش جدول تاني).
+   بتتجاهل المبالغ الصفرية. بترجّع الصفوف الجديدة بس (من غير تعديل الأصل). */
+export function applyCollectionToRows(rows, entry) {
+  const amount = Number(entry.amount) || 0;
+  if (amount === 0) return { rows, added: false };
+  const label = `${entry.note || "تحصيل"}${entry.guestName ? " - " + entry.guestName : ""} (${amount > 0 ? "+" : ""}${amount} ${entry.currency})`;
+  const isEmptyRow = (r) => (Number(r.collectionAmt) || 0) === 0 && !r.collectionDesc;
+  let idx = rows.findIndex((r) => r.room === entry.room && !isEmptyRow(r) && r.collectionMethod === entry.method && r.collectionCurrency === entry.currency);
+  if (idx === -1) idx = rows.findIndex((r) => r.room === entry.room && isEmptyRow(r));
+  const out = rows.slice();
+  if (idx === -1) {
+    out.push({ ...emptyLedgerRow(entry.room), collectionAmt: amount, collectionMethod: entry.method, collectionCurrency: entry.currency, collectionDesc: label });
+    return { rows: out, added: true };
+  }
+  const r = rows[idx];
+  out[idx] = {
+    ...r,
+    collectionAmt: (Number(r.collectionAmt) || 0) + amount,
+    collectionMethod: entry.method,
+    collectionCurrency: entry.currency,
+    collectionDesc: r.collectionDesc ? `${r.collectionDesc} / ${label}` : label,
+  };
+  return { rows: out, added: false };
+}
+
 export function computeShiftTotals(record) {
   const allRows = [...record.rows, { ...record.cafeteria, room: "كافيتيريا" }];
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
@@ -154,4 +184,36 @@ export function bookingGrandTotal(b) {
   const extras = b.extras || {};
   const earlyFee = b.earlyCheckin?.applied ? Number(b.earlyCheckin.fee) || 0 : 0;
   return (Number(b.totalRoom) || 0) + (Number(extras.laundry) || 0) + (Number(extras.cafeteria) || 0) + (Number(extras.tours) || 0) + (Number(extras.pickup) || 0) + earlyFee;
+}
+
+/* المبلغ المطلوب رده للنزيل لو فيه طلب رد فلوس معلّق (refundPending):
+   حجز ملغي => كل المدفوع، حجز لسه شغال/خرج بدري => الزيادة عن الإجمالي بس.
+   نفس حساب decide_booking_refund في قاعدة البيانات بالظبط. */
+export function refundDueAmount(b) {
+  if (!b || !b.refundPending) return 0;
+  const paid = Number(b.amountPaid) || 0;
+  if (b.status === "ملغي") return Math.max(0, paid);
+  return Math.max(0, paid - bookingGrandTotal(b));
+}
+
+/* لما موظف الشيفت بيكتب في اليومية وفي نفس اللحظة تعديل تاني اتكتب على نفس
+   السجل (رد فلوس من مدير الحجوزات، أو تحصيل حجز من شاشة تانية) - بدل ما تعديلاته
+   تضيع، بنطبّق بس الخانات اللي هو غيّرها فعلاً (مقارنة بنسخته الأصلية base)
+   فوق آخر نسخة من السيرفر (fresh). خانة هو ما لمسهاش بتتاخد من السيرفر زي ما هي. */
+export function rebaseShiftRecord(base, mine, fresh) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const skip = new Set(["rows", "bookingCollections", "updatedAt", "closed", "closedBy", "closedAt"]);
+  const out = { ...fresh };
+  Object.keys(mine).forEach((k) => { if (!skip.has(k) && !same(mine[k], base?.[k])) out[k] = mine[k]; });
+  const rows = (fresh.rows || []).slice();
+  (mine.rows || []).forEach((row, i) => {
+    const b = base?.rows?.[i];
+    if (!b) { rows.push(row); return; }
+    if (!rows[i] || same(row, b)) return;
+    const merged = { ...rows[i] };
+    Object.keys(row).forEach((k) => { if (!same(row[k], b[k])) merged[k] = row[k]; });
+    rows[i] = merged;
+  });
+  out.rows = rows;
+  return out;
 }

@@ -9,13 +9,13 @@ function roomFromRow(r) {
 
 export async function getRooms() {
   const { data, error } = await supabase.from("rooms").select("*").order("number");
-  if (error || !data) return [];
+  if (error || !data) return null;
   return data.map(roomFromRow);
 }
 
 export async function getRoomOverrides() {
   const { data, error } = await supabase.from("room_overrides").select("*");
-  if (error || !data) return {};
+  if (error || !data) return null;
   const map = {};
   data.forEach((r) => { map[r.room_number] = { status: r.status, updatedAt: new Date(r.updated_at).getTime(), updatedBy: r.updated_by }; });
   return map;

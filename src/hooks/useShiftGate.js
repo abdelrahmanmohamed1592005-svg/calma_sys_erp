@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { todayStr, isShiftActiveNow } from "../domain/dates";
-import { SHIFTS } from "../domain/constants";
-import { getClaimsForDate, getShiftRecord } from "../data/shifts";
+import { isShiftActiveNow } from "../domain/dates";
+import { getShiftRecord, resolveMyShift } from "../data/shifts";
 
 /* مصدر واحد موحّد لمعرفة "هل موظف الشيفت دلوقتي في وقت شيفته المحجوز ليه
    ولسه مفتوح" - بيتستخدم في RoomBoard.jsx و BookingsPanel.jsx عشان الاتنين
@@ -16,32 +15,27 @@ import { getClaimsForDate, getShiftRecord } from "../data/shifts";
    - offShift: true لو الدور مربوط بوقت شيفت (roomStatusRestricted) ومش
      فاضي يعمل حاجة دلوقتي - يا إما مش وقت شيفته، يا إما شيفته مقفول. */
 export function useShiftGate(profile, perms, dataVersion) {
-  const [claims, setClaims] = useState(null);
-  const [shiftRecord, setShiftRecord] = useState(null);
-  const today = todayStr();
+  const [state, setState] = useState({ claims: null, key: null, date: null, record: null });
 
   useEffect(() => {
-    if (!perms.roomStatusRestricted || !profile) { setClaims(null); setShiftRecord(null); return; }
+    if (!perms.roomStatusRestricted || !profile) { setState({ claims: null, key: null, date: null, record: null }); return; }
     let cancelled = false;
     (async () => {
-      const c = await getClaimsForDate(today);
+      const r = await resolveMyShift(profile.username);
       if (cancelled) return;
-      setClaims(c);
-      const mine = SHIFTS.map((s) => s.key).find((k) => c[k]?.username === profile.username && isShiftActiveNow(k));
-      if (!mine) { setShiftRecord(null); return; }
-      const rec = await getShiftRecord(today, mine);
-      if (!cancelled) setShiftRecord(rec);
+      const rec = r.key ? await getShiftRecord(r.date, r.key) : null;
+      if (!cancelled) setState({ claims: r.claims, key: r.key, date: r.date, record: rec });
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.username, perms.roomStatusRestricted, today, dataVersion]);
+  }, [profile?.username, perms.roomStatusRestricted, dataVersion]);
 
-  const myActiveShiftKey = (perms.roomStatusRestricted && claims && profile)
-    ? SHIFTS.map((s) => s.key).find((k) => claims[k]?.username === profile.username && isShiftActiveNow(k)) || null
-    : null;
+  // الشيفت لازم يفضل "نشط" لحظيًا (مش بس وقت آخر تحميل): نعيد التحقق من الوقت هنا.
+  const myActiveShiftKey = (perms.roomStatusRestricted && state.claims && profile && state.key && isShiftActiveNow(state.key)) ? state.key : null;
+  const myActiveShiftDate = myActiveShiftKey ? state.date : null;
   const isMyShiftNow = !!myActiveShiftKey;
-  const shiftClosed = !!shiftRecord?.closed;
+  const shiftClosed = !!state.record?.closed;
   const offShift = perms.roomStatusRestricted && (!isMyShiftNow || shiftClosed);
 
-  return { claims, myActiveShiftKey, isMyShiftNow, shiftClosed, offShift };
+  return { claims: state.claims, myActiveShiftKey, myActiveShiftDate, isMyShiftNow, shiftClosed, offShift };
 }

@@ -40,7 +40,10 @@ Deno.serve(async (req) => {
       return json({ error: "الصلاحية دي للمدير العام بس" }, 403, corsHeaders);
     }
 
-    const { username, newPassword } = await req.json();
+    let payload: { username?: string; newPassword?: string };
+    try { payload = await req.json(); } catch (_) { return json({ error: "طلب غير صالح" }, 400, corsHeaders); }
+    const username = String(payload.username || "").trim().toLowerCase();
+    const newPassword = payload.newPassword;
     if (!username) return json({ error: "بيانات ناقصة" }, 400, corsHeaders);
 
     const pwCheck = validatePasswordStrength(newPassword);

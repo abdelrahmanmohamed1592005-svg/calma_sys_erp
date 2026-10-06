@@ -1,6 +1,7 @@
 import { supabase } from "../lib/supabaseClient";
-import { freshShiftRecord } from "../domain/money";
-import { prevShiftOf } from "../domain/dates";
+import { freshShiftRecord, applyCollectionToRows } from "../domain/money";
+import { prevShiftOf, shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
+import { SHIFTS } from "../domain/constants";
 
 function shiftFromRow(r) {
   return {
@@ -111,7 +112,11 @@ export async function ensureShiftRecord(date, shiftKey, profile, rooms) {
   const prevMethodClosing = prevRec && prevRec.closed ? prevRec.methodClosing : undefined;
   const fresh = freshShiftRecord(date, shiftKey, profile.name, profile.username, rooms, prevClosing, prevMethodClosing);
   const created = await createShiftRecord(fresh);
-  return created.data || fresh;
+  if (created.data) return created.data;
+  // فشل الإنشاء غالبًا لأن شاشة اليومية (أو جهاز تاني) أنشأت نفس السجل في نفس
+  // اللحظة - نقرأ السجل الموجود فعليًا بدل ما نكمل على نسخة محلية مالهاش
+  // updated_at (كانت هتخلي أي تعديل بعدها يفشل من غير سبب واضح).
+  return await getShiftRecord(date, shiftKey);
 }
 
 /* تسجيل تحصيل (أو رد فلوس - amount سالب) حصل على حجز من بلوك الغرف أو شاشة
@@ -129,17 +134,11 @@ export async function appendBookingCollection(date, shiftKey, profile, rooms, en
   for (let attempt = 0; attempt < 4; attempt++) {
     const rec = await ensureShiftRecord(date, shiftKey, profile, rooms);
     if (!rec) return { error: "تعذر الوصول ليومية الشيفت" };
-    const idx = (rec.rows || []).findIndex((r) => r.room === entry.room);
-    if (idx === -1) return { error: "الغرفة دي غير موجودة في جدول اليومية" };
-    const row = rec.rows[idx];
-    const label = `${entry.note || "تحصيل"}${entry.guestName ? " - " + entry.guestName : ""} (${entry.amount > 0 ? "+" : ""}${entry.amount} ${entry.currency})`;
-    const rows = rec.rows.map((r, i) => (i !== idx ? r : {
-      ...r,
-      collectionAmt: (Number(r.collectionAmt) || 0) + entry.amount,
-      collectionMethod: entry.method,
-      collectionCurrency: entry.currency,
-      collectionDesc: row.collectionDesc ? `${row.collectionDesc} / ${label}` : label,
-    }));
+    if (!(rec.rows || []).some((r) => r.room === entry.room)) return { error: "الغرفة دي غير موجودة في جدول اليومية" };
+    // applyCollectionToRows بتجمع على نفس صف الغرفة لو نفس وسيلة الدفع والعملة،
+    // وإلا بتضيف صف جديد لنفس الغرفة في نفس الجدول - عشان ماتتخلطش وسيلتين
+    // أو عملتين في خانة واحدة.
+    const { rows } = applyCollectionToRows(rec.rows, entry);
     // تتبّع داخلي بس (مش ظاهر في أي شاشة) لمنع حساب نفس المبلغ مرتين في
     // التقارير - انظر الملاحظة على bookingCollections في domain/money.js.
     const bookingCollections = [...(rec.bookingCollections || []), { id: entry.id, bookingId: entry.bookingId }];
@@ -149,4 +148,32 @@ export async function appendBookingCollection(date, shiftKey, profile, rooms, en
     // conflict - حد تاني عدّل نفس السجل في نفس اللحظة، نجرّب تاني بأحدث نسخة
   }
   return { error: "تعارض متكرر على سجل اليومية - التحصيل سُجّل على الحجز لكن محتاج يُضاف يدويًا في اليومية" };
+}
+
+/* كل أرقام الحجوزات اللي تحصيلها اتسجّل في أي يومية شيفت (أي تاريخ) - التقارير
+   بتستخدمها عشان تحصيل نفس الحجز مايتحسبش مرتين: مرة من اليومية (في تاريخها)
+   ومرة تاني من قيمة amountPaid على الحجز في تاريخ تاني. بترجع null لو القراءة فشلت. */
+export async function getJournaledBookingIds() {
+  const { data, error } = await supabase.from("shift_records").select("booking_collections");
+  if (error || !data) return null;
+  const set = new Set();
+  data.forEach((r) => (r.booking_collections || []).forEach((e) => { if (e.bookingId) set.add(e.bookingId); }));
+  return set;
+}
+
+/* شيفت الموظف الشغال دلوقتي + التاريخ اللي مسجّل عليه: يوم الشيفتات بيبدأ ٨ص،
+   فالشيفت الليلي (١٢ص-٨ص) بيتسجّل على يوم المسائي اللي قبله، وأوفر تايمه
+   (لحد ١٠ص) بيفضل على نفس التاريخ ده حتى بعد ما يوم الشيفتات يتغيّر الساعة ٨. */
+export async function resolveMyShift(username, now = new Date()) {
+  const base = shiftDayNow(now);
+  const claims = await getClaimsForDate(base);
+  const key = SHIFTS.map((s) => s.key).find((k) => claims[k]?.username === username && isShiftActiveNow(k, undefined, now));
+  if (key) return { date: base, key, claims };
+  const h = now.getHours();
+  if (h >= 8 && h < 10) {
+    const y = addDays(base, -1);
+    const cy = await getClaimsForDate(y);
+    if (cy.night?.username === username && isShiftActiveNow("night", undefined, now)) return { date: y, key: "night", claims: cy };
+  }
+  return { date: base, key: null, claims };
 }

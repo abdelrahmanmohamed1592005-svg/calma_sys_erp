@@ -4,6 +4,7 @@ import { ROLES } from "../domain/constants";
 export function ActivityPanel({ activity }) {
   return (
     <div style={{ padding: 14 }}>
+      <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>بيعرض آخر ٣٠٠ حركة.</div>
       {activity.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13 }}>لا يوجد حركات مسجلة بعد</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {activity.map((a) => (

@@ -39,6 +39,16 @@ export function parseDateFlexible(s) {
   return null;
 }
 
+/* يوم الشيفتات التشغيلي: بيبدأ مع الشيفت الصباحي (٨ص) ويكمل لحد ٨ص اليوم
+   اللي بعده - يعني شيفت ليلي (١٢ص-٨ص) وأوفر تايم المسائي بعد نص الليل
+   بيتسجّلوا على يوم الشيفت المسائي اللي قبلهم، مش على التاريخ الجديد بتاع
+   التقويم. ده بيخلّي ترتيب الشيفتات (صباحي ← مسائي ← ليلي) ونقل العهدة بينهم
+   متسق. (حجوزات الفندق نفسها بتفضل بتاريخ التقويم العادي.) */
+export function shiftDayNow(now = new Date()) {
+  const cal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return now.getHours() < 8 ? addDays(cal, -1) : cal;
+}
+
 export const SHIFT_ORDER = ["morning", "evening", "night"];
 
 export function defaultShiftForNow() {

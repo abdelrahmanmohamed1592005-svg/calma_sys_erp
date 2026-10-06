@@ -42,19 +42,23 @@ export function SetupScreen({ onCreate }) {
 }
 
 export function LoginScreen({ onLogin }) {
+  const stuckTimer = React.useRef(null);
+  React.useEffect(() => () => clearTimeout(stuckTimer.current), []);
   const [username, setUsername] = useState(""); const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   async function submit() {
     setErr(""); setBusy(true);
     // حماية: لو الدخول نجح لكن التحقق من الـ profile بعده فشل بصمت (حساب من
     // غير profile، أو معطّل)، الزرار متفضلش عالقة "بتحمّل" للأبد من غير أي
     // توضيح - بعد 6 ثواني هيرجع قابل للدوس وهيوري رسالة واضحة.
-    const stuckTimer = setTimeout(() => {
+    // (المؤقّت بيفضل شغال بعد الدخول الناجح كمان: لو الحساب معطّل أو من غير
+    // profile، التطبيق بيطلّعه تاني وشاشة الدخول بتفضل - يرجع الزرار ويوضّح السبب.
+    // ولو الدخول نجح فعلاً، الشاشة دي بتتشال والمؤقّت بيتلغي مع قفلها.)
+    stuckTimer.current = setTimeout(() => {
       setBusy(false);
-      setErr("تعذر الدخول - تأكد إن الحساب مفعّل وعنده بيانات كاملة، أو كلّم المدير العام");
+      setErr("تعذر الدخول - الحساب ممكن يكون معطّل أو بياناته ناقصة، كلّم المدير العام");
     }, 6000);
     const res = await onLogin({ username: username.trim(), password: pw });
-    clearTimeout(stuckTimer);
-    if (res?.error) { setErr(res.error); setBusy(false); }
+    if (res?.error) { clearTimeout(stuckTimer.current); setErr(res.error); setBusy(false); }
   }
   return (
     <div className="calma-app" dir="rtl" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -73,7 +77,7 @@ export function LoginScreen({ onLogin }) {
   );
 }
 
-export function LogoutReportScreen({ user, actions, onExportAndLogout }) {
+export function LogoutReportScreen({ user, actions, onExportAndLogout, onCancel }) {
   const date = todayStr();
   function handlePrintAndLogout() {
     // window.print() بتوقف تنفيذ الكود لحد ما نافذة الطباعة تقفل (طباعة أو
@@ -111,6 +115,7 @@ export function LogoutReportScreen({ user, actions, onExportAndLogout }) {
           ))}
         </div>
         <button className="cx-btn cx-btn-gold cx-no-print" style={{ width: "100%", justifyContent: "center" }} onClick={handlePrintAndLogout}><Printer size={14} /> طباعة التقرير وتسجيل الخروج</button>
+        {onCancel && <button className="cx-btn cx-btn-outline cx-no-print" style={{ width: "100%", justifyContent: "center", marginTop: 8 }} onClick={onCancel}>رجوع للنظام (من غير تسجيل خروج)</button>}
 
         <div className="cx-print-only cx-print-footer">
           <div className="cx-print-sign">

@@ -51,7 +51,9 @@ Deno.serve(async (req) => {
       return json({ error: "الصلاحية دي للمدير العام بس" }, 403, corsHeaders);
     }
 
-    const { username, password, name, role } = await req.json();
+    let payload: Record<string, unknown>;
+    try { payload = await req.json(); } catch (_) { return json({ error: "طلب غير صالح" }, 400, corsHeaders); }
+    const { username, password, name, role } = payload as { username?: string; password?: string; name?: string; role?: string };
     const cleanUsername = String(username || "").trim().toLowerCase();
     const cleanName = String(name || "").trim().slice(0, 80);
 
@@ -74,7 +76,8 @@ Deno.serve(async (req) => {
     });
     if (createErr) {
       const msg = (createErr.message || "").toLowerCase();
-      if (msg.includes("already registered") || msg.includes("already exists")) {
+      if (msg.includes("already registered") || msg.includes("already exists") || msg.includes("already been registered")
+          || (createErr as { code?: string }).code === "email_exists" || (createErr as { status?: number }).status === 422) {
         return json({ error: "اسم المستخدم ده موجود بالفعل" }, 409, corsHeaders);
       }
       return json({ error: safeServerError("create-user:createUser", createErr) }, 500, corsHeaders);

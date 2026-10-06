@@ -11,7 +11,9 @@ const usernameToEmail = (u) => `${u.trim().toLowerCase()}@${EMAIL_DOMAIN}`;
 
 export async function checkSetupNeeded() {
   const { data, error } = await supabase.rpc("profiles_exist");
-  if (error) return true;
+  // لو القراءة فشلت (نت/سيرفر) مانفترضش إن النظام لسه محتاج إعداد - نعرض شاشة
+  // الدخول العادية، وشاشة الإعداد بتظهر بس لو القاعدة فعلاً مفيهاش أي مستخدم.
+  if (error) return false;
   return data === false;
 }
 
@@ -42,7 +44,8 @@ export async function signIn({ username, password }) {
 }
 
 export async function signOut() {
-  await supabase.auth.signOut();
+  // خروج من الجهاز ده بس - مايقفلش جلسات نفس المستخدم على أجهزة تانية
+  await supabase.auth.signOut({ scope: "local" });
 }
 
 export async function getSession() {
@@ -55,18 +58,23 @@ export function onAuthStateChange(callback) {
   return () => data.subscription.unsubscribe();
 }
 
+// بترجع: البروفايل، أو null لو مفيش جلسة/مفيش بروفايل فعلاً، أو
+// { transientError: true } لو القراءة فشلت لسبب شبكة مؤقت (عشان App.jsx
+// ماتخرّجش مستخدم جلسته سليمة بسبب انقطاع نت لحظي). بنقرأ هوية المستخدم من
+// الجلسة المحلية (getSession) مش getUser() اللي بتكلم السيرفر وبترجع فاضي
+// عند أي انقطاع.
 export async function getMyProfile() {
-  const { data: userData } = await supabase.auth.getUser();
-  const uid = userData?.user?.id;
+  const { data: sessData } = await supabase.auth.getSession();
+  const uid = sessData?.session?.user?.id;
   if (!uid) return null;
   const { data, error } = await supabase.from("profiles").select("*").eq("id", uid).maybeSingle();
-  if (error || !data) return null;
-  return data;
+  if (error) return { transientError: true };
+  return data || null;
 }
 
 export async function listProfiles() {
   const { data, error } = await supabase.from("profiles").select("*").order("created_at", { ascending: true });
-  if (error) return [];
+  if (error) return null;
   return data || [];
 }
 
@@ -136,6 +144,7 @@ async function extractFunctionError(error) {
 function mapAuthError(error) {
   if (!error) return null;
   const msg = (error.message || "").toLowerCase();
+  if (error.code === "same_password" || msg.includes("different from the old")) return "كلمة المرور الجديدة لازم تكون مختلفة عن القديمة";
   if (msg.includes("invalid login credentials")) return "بيانات الدخول غير صحيحة";
   if (msg.includes("already registered") || msg.includes("already exists")) return "اسم المستخدم ده موجود بالفعل";
   if (msg.includes("password")) return "كلمة المرور ٨ حروف على الأقل، وفيها حرف ورقم";

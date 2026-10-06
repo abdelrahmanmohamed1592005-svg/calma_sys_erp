@@ -787,6 +787,47 @@ create policy "activity select" on activity_log for select using (
 );
 
 -- --------------------------------------------------------------------------
+-- 13b) دوال مساعدة مشتركة لقيود الأقسام التالية:
+--      booking_grand_total: الإجمالي الكلي للحجز (غرفة + رسوم إضافية + رسم
+--        الدخول المبكر لو منطبق) - نفس معادلة bookingGrandTotal في الواجهة.
+--      hotel_today: تاريخ "النهارده" بتوقيت الفندق (مش UTC) - بيتستخدم في
+--        قيد التسكين المكرر عشان "الحجز بدأ فعلاً" تتقارن بنفس تاريخ الموظف.
+--        لو الفندق في منطقة زمنية تانية غير القاهرة، غيّري الاسم هنا.
+-- --------------------------------------------------------------------------
+create or replace function booking_grand_total(b bookings)
+returns numeric language sql immutable as $$
+  select coalesce(b.total_room, 0)
+    + coalesce((b.extras->>'laundry')::numeric, 0)
+    + coalesce((b.extras->>'cafeteria')::numeric, 0)
+    + coalesce((b.extras->>'tours')::numeric, 0)
+    + coalesce((b.extras->>'pickup')::numeric, 0)
+    + case when coalesce((b.early_checkin->>'applied')::boolean, false) then coalesce((b.early_checkin->>'fee')::numeric, 0) else 0 end;
+$$;
+
+create or replace function hotel_today()
+returns date language sql stable as $$
+  select (now() at time zone 'Africa/Cairo')::date;
+$$;
+
+-- إجمالي الغرفة المسموح بعد تغيير تاريخ الخروج (نفس حساب repricedTotalRoom
+-- في src/domain/bookingLogic.js بالظبط):
+--   * تمديد: الإجمالي الحالي + سعر الليلة × الليالي الزيادة.
+--   * تقصير: الإجمالي الحالي × (الليالي الجديدة ÷ القديمة) - يعني متوسط سعر
+--     الليلة الفعلي (يراعي أي خصم متفق عليه)، وصفر ليالي = صفر.
+create or replace function reprice_total(b bookings, new_checkout date)
+returns numeric language plpgsql immutable as $$
+declare
+  old_n int := b.checkout - b.checkin;
+  new_n int := new_checkout - b.checkin;
+begin
+  if new_n <= 0 then return 0; end if;
+  if new_n >= old_n then return coalesce(b.total_room, 0) + coalesce(b.price_night, 0) * (new_n - old_n); end if;
+  if old_n <= 0 then return coalesce(b.total_room, 0); end if;
+  return round(coalesce(b.total_room, 0) * new_n * 100 / old_n) / 100;
+end;
+$$;
+
+-- --------------------------------------------------------------------------
 -- 14) قرار عمل جديد: مدير الحجوزات يضيف حجوزات ويحدد سعرها عادي، لكن
 --     "استلمنا الفلوس فعليًا ولا لأ" (amount_paid / amount_tendered /
 --     settled) مش شغله خالص - ده قرار موظف الشيفت اللي قدام النزيل فعليًا
@@ -801,6 +842,12 @@ returns trigger language plpgsql security definer set search_path = public as $$
 declare
   old_paid numeric; old_tendered numeric; old_settled boolean;
 begin
+  -- دالة قرار رد الفلوس (decide_booking_refund - قسم ٢٥) هي المسار الوحيد
+  -- المسموح له يغيّر المدفوع بالسالب بإسم مدير الحجوزات - بتفعّل علامة
+  -- جلسة محلية للمعاملة دي بس (مش بتتبعت من الواجهة).
+  if coalesce(current_setting('calma.refund_rpc', true), '') = '1' then
+    return new;
+  end if;
   if is_reservations_manager() then
     if TG_OP = 'INSERT' then
       old_paid := 0; old_tendered := 0; old_settled := false;
@@ -808,9 +855,19 @@ begin
       old_paid := old.amount_paid; old_tendered := old.amount_tendered; old_settled := old.settled;
     end if;
     if (new.amount_paid is distinct from old_paid)
-       or (new.amount_tendered is distinct from old_tendered)
-       or (new.settled is distinct from old_settled) then
+       or (new.amount_tendered is distinct from old_tendered) then
       raise exception 'تسجيل التحصيل (المدفوع/المتحصّل) من صلاحية موظف الشيفت بس، مش مدير الحجوزات';
+    end if;
+    if new.settled is distinct from old_settled then
+      -- الاستثناء الوحيد: مدير الحجوزات زوّد قيمة حجز كان "متحصّل بالكامل"
+      -- (تمديد/ليالي إضافية) فالمدفوع بقى أقل من الإجمالي الجديد - علامة
+      -- التحصيل بتتشال تلقائيًا (true -> false) عشان الغرفة تظهر "متبقي
+      -- عليها فلوس" ومايحتاجش موظف الشيفت يلغي التحصيل بإيده الأول. غير كده
+      -- ممنوع (مدير الحجوزات ما يعلّمش حجز "متحصّل").
+      if not (TG_OP = 'UPDATE' and old_settled = true and new.settled = false
+              and booking_grand_total(new) > coalesce(new.amount_paid, 0)) then
+        raise exception 'تسجيل التحصيل (المدفوع/المتحصّل) من صلاحية موظف الشيفت بس، مش مدير الحجوزات';
+      end if;
     end if;
   end if;
   return new;
@@ -838,8 +895,24 @@ create trigger bookings_reservations_collection_guard before insert or update on
 -- --------------------------------------------------------------------------
 create or replace function prevent_staff_core_booking_edit()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  restoring boolean;
 begin
   if is_staff() and TG_OP = 'UPDATE' then
+    -- الخروج المبكر / التسكين المكرر مسموح بس لنزيل بدأ إقامته فعلاً (دخوله
+    -- النهارده أو قبله) - مفيش تقصير ولا تعليم لحجز مستقبلي، وده كان هيبقى
+    -- إلغاء مقنّع (الإلغاء من مدير الحجوزات بس).
+    if (new.left_early is distinct from old.left_early
+        or new.duplicate_placement is distinct from old.duplicate_placement
+        or new.checkout < old.checkout)
+       and old.checkin > hotel_today() then
+      raise exception 'الخروج المبكر مسموح بس لنزيل بدأ إقامته فعلاً - الحجز المستقبلي إلغاؤه من مدير الحجوزات';
+    end if;
+    -- التراجع عن خروج مبكر (لو حفظ الحجز الجديد فشل): بس بنفس تاريخ الخروج
+    -- والإجمالي اللي كانوا قبل الخروج المبكر بالظبط (متسجلين في pre_early_*).
+    restoring := coalesce(old.left_early, false) and not coalesce(new.left_early, false)
+                 and old.pre_early_checkout is not null
+                 and new.checkout = old.pre_early_checkout and new.total_room = old.pre_early_total;
     if (new.room is distinct from old.room)
        or (new.guest_name is distinct from old.guest_name)
        or (new.phone is distinct from old.phone)
@@ -847,7 +920,17 @@ begin
        or (new.checkin is distinct from old.checkin)
        or (new.price_night is distinct from old.price_night)
        or (new.currency is distinct from old.currency)
-       or (new.total_room is distinct from old.total_room)
+       -- total_room مسموح يتغيّر بس لو ده تمديد/تقصير حقيقي لتاريخ الخروج
+       -- وبنفس سعر الليلة المتسجل (الفرق في الليالي × price_night) - يعني
+       -- موظف الشيفت يقدر يمدد الإقامة والسعر يتحرك تلقائيًا، لكن مايقدرش
+       -- يغيّر إجمالي الغرفة بأي قيمة تانية.
+       or (not restoring and new.total_room is distinct from old.total_room
+           and not (new.checkout is distinct from old.checkout
+                    and abs(new.total_room - reprice_total(old, new.checkout)) <= 0.011))
+       -- ومفيش تمديد مجاني: لو تاريخ الخروج اتأخر، إجمالي الغرفة لازم يزيد
+       -- بنفس الفرق (التقصير لوحده - "مشي بدري" - مسموح من غير تغيير إجمالي).
+       or (not restoring and new.checkout > old.checkout
+           and abs(new.total_room - reprice_total(old, new.checkout)) > 0.011)
        or (new.early_checkin is distinct from old.early_checkin)
        or (new.payment_details is distinct from old.payment_details)
        or (new.amount_tendered is distinct from old.amount_tendered)
@@ -920,7 +1003,10 @@ create or replace function prevent_charge_edit_when_settled()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if old.settled = true and new.settled = true then
-    if (new.total_room is distinct from old.total_room)
+    -- تغيير إجمالي الغرفة مع تغيير تاريخ الخروج (تمديد/تقصير/مشي بدري) مسموح:
+    -- ده بيعيد تسعير الإقامة نفسها (قيد قسم ١٥ بيحدد الفرق بدقة للموظف، وقيد
+    -- قسم ٢٤ بيمنع علامة "متحصّل" لو المدفوع أقل من الإجمالي الجديد).
+    if ((new.total_room is distinct from old.total_room and new.checkout is not distinct from old.checkout))
        or (new.price_night is distinct from old.price_night)
        or (new.extras is distinct from old.extras)
        or (new.early_checkin is distinct from old.early_checkin)
@@ -968,6 +1054,7 @@ begin
     new.username := coalesce(v_username, new.username);
     new.user_name := coalesce(v_name, new.user_name);
     new.role := coalesce(v_role, new.role);
+    new.ts := now(); -- الوقت من السيرفر مش من العميل
   elsif TG_TABLE_NAME = 'shift_records' then
     new.staff_username := coalesce(v_username, new.staff_username);
     new.staff_name := coalesce(v_name, new.staff_name);
@@ -1027,15 +1114,51 @@ alter table bookings add column if not exists refunded_amount numeric;
 alter table bookings add column if not exists refunded_by text;
 alter table bookings add column if not exists refunded_at timestamptz;
 
+alter table bookings add column if not exists refund_decision text;
+do $$ begin
+  alter table bookings add constraint bookings_refund_decision_chk check (refund_decision is null or refund_decision in ('refunded','kept'));
+exception when duplicate_object then null; end $$;
+
+-- طلب رد الفلوس (refund_pending) بيتفتح تلقائيًا بس في حالتين:
+--   (أ) الحجز اتلغى وعليه مبلغ متحصّل.
+--   (ب) إقامة اتقصّرت (مشي بدري/تسكين مكرر) والمدفوع بقى أكبر من الإجمالي الجديد
+--       (المبلغ المطلوب رده = الزيادة بس).
+-- وقرار الطلب (رد فعلي أو رفض وإبقاء الفلوس) من مدير الحجوزات بس، عن طريق
+-- الدالة decide_booking_refund (قسم ٢٥). أي تعديل مباشر من الواجهة على
+-- حقول الرد (refund_*) بيتتجاهل هنا.
 create or replace function set_refund_pending_on_cancel()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  bypass boolean := coalesce(current_setting('calma.refund_rpc', true), '') = '1';
 begin
+  if bypass then return new; end if;
+  if TG_OP = 'INSERT' then
+    new.refund_pending := false; new.refund_decision := null;
+    new.refunded_amount := null; new.refunded_by := null; new.refunded_at := null;
+    return new;
+  end if;
+  -- مفيش حد يقدر يسحب المدفوع من حجز فيه طلب رد معلّق بره قرار مدير الحجوزات
+  if old.refund_pending and coalesce(new.amount_paid,0) < coalesce(old.amount_paid,0) then
+    raise exception 'الفلوس دي مطلوب ردها - قرار الرد أو الإبقاء من مدير الحجوزات بس';
+  end if;
+  new.refund_pending := old.refund_pending; new.refund_decision := old.refund_decision;
+  new.refunded_amount := old.refunded_amount; new.refunded_by := old.refunded_by; new.refunded_at := old.refunded_at;
+
   if new.status = 'ملغي' and old.status is distinct from 'ملغي' then
     if coalesce(new.amount_paid, 0) > 0 then
-      new.refund_pending := true;
+      new.refund_pending := true; new.refund_decision := null;
     end if;
+  elsif new.status = 'ملغي' and old.status = 'ملغي' and coalesce(new.amount_paid, 0) > coalesce(old.amount_paid, 0) then
+    -- فلوس اتضافت على حجز ملغي بالفعل: لازم تبقى طلب رد برضه
+    new.refund_pending := true; new.refund_decision := null;
   elsif new.status is distinct from 'ملغي' and old.status = 'ملغي' then
-    -- اتراجع عن الإلغاء (رجّعت الحالة) - رد الفلوس بقى مش مطلوب
+    new.refund_pending := false;
+  elsif new.status is distinct from 'ملغي'
+        and (new.checkout < old.checkout or booking_grand_total(new) < booking_grand_total(old))
+        and coalesce(new.amount_paid, 0) > booking_grand_total(new) then
+    new.refund_pending := true; new.refund_decision := null;
+  end if;
+  if new.refund_pending and new.status is distinct from 'ملغي' and coalesce(new.amount_paid, 0) <= booking_grand_total(new) then
     new.refund_pending := false;
   end if;
   return new;
@@ -1043,7 +1166,7 @@ end;
 $$;
 
 drop trigger if exists bookings_refund_pending_guard on bookings;
-create trigger bookings_refund_pending_guard before update on bookings
+create trigger bookings_refund_pending_guard before insert or update on bookings
   for each row execute function set_refund_pending_on_cancel();
 
 -- --------------------------------------------------------------------------
@@ -1067,7 +1190,13 @@ create or replace function prevent_staff_cancel_status()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if is_staff() and new.status = 'ملغي' and (TG_OP = 'INSERT' or old.status is distinct from 'ملغي') then
+    -- (تسكين مكرر مابقاش بيلغي حجز: النزيل القديم بيتسجّل "غادر مبكرًا" بدل ما يتلغي)
     raise exception 'إلغاء الحجز (ملغي) من صلاحية مدير الحجوزات بس';
+  end if;
+  -- ومش بيرجّع حجز ملغي (ده كان هيمسح علامة "مطلوب رد فلوس" اللي حطها
+  -- مدير الحجوزات).
+  if is_staff() and TG_OP = 'UPDATE' and old.status = 'ملغي' and new.status is distinct from 'ملغي' then
+    raise exception 'استرجاع حجز ملغي من صلاحية مدير الحجوزات بس';
   end if;
   return new;
 end;
@@ -1090,13 +1219,16 @@ declare
   grand numeric;
 begin
   if new.settled = true and not coalesce((new.payment_details->>'onlinePaid')::boolean, false) then
-    grand := coalesce(new.total_room, 0)
-      + coalesce((new.extras->>'laundry')::numeric, 0)
-      + coalesce((new.extras->>'cafeteria')::numeric, 0)
-      + coalesce((new.extras->>'tours')::numeric, 0)
-      + coalesce((new.extras->>'pickup')::numeric, 0)
-      + case when coalesce((new.early_checkin->>'applied')::boolean, false) then coalesce((new.early_checkin->>'fee')::numeric, 0) else 0 end;
-    if coalesce(new.amount_paid, 0) < grand then
+    grand := booking_grand_total(new);
+    -- القيد بيتفحص بس لما حاجة تخص الفلوس بتتغيّر فعلاً (حجز جديد، أو علامة
+    -- التحصيل لسه بتتحط، أو المدفوع/الإجمالي اتغيّر). حجز قديم اتسجّل
+    -- "متحصّل" بالغلط قبل القيد ده (بيانات تجريبية مثلاً) مش بيتعطّل فيه
+    -- تقصير/تراجع/ملاحظات - بيفضل قابل للتعامل معاه عادي.
+    if (TG_OP = 'INSERT'
+        or old.settled is distinct from true
+        or new.amount_paid is distinct from old.amount_paid
+        or grand is distinct from booking_grand_total(old))
+       and coalesce(new.amount_paid, 0) < grand then
       raise exception 'مينفعش تعلّمي الحجز "متحصّل بالكامل" والمدفوع (%) لسه أقل من الإجمالي الكلي (%)', new.amount_paid, grand;
     end if;
   end if;
@@ -1107,6 +1239,185 @@ $$;
 drop trigger if exists bookings_settled_validity_guard on bookings;
 create trigger bookings_settled_validity_guard before insert or update on bookings
   for each row execute function prevent_invalid_settled();
+
+-- --------------------------------------------------------------------------
+-- 25) مغادرة مبكرة في نفس يوم الدخول + قرار رد الفلوس
+--   (أ) نزيل دخل وخرج في نفس اليوم (تسكين مكرر): بيتسجّل "تم تسجيل الخروج"
+--       + left_early وتاريخ خروجه = تاريخ دخوله (صفر ليالي). النطاق الفاضي
+--       مابيتعارضش مع أي حجز تاني (قيد منع الحجز المزدوج بيتجاهله).
+--   (ب) رد الفلوس قراره لمدير الحجوزات بس: يا يردّها فعلاً (decide_booking_refund
+--       'refund': بتتشال من المدفوع وبتتسجّل بالسالب في صف الغرفة في يومية الشيفت
+--       المفتوح) يا يرفض الرد ويسيب الفلوس ('keep').
+-- --------------------------------------------------------------------------
+alter table bookings drop constraint if exists bookings_dates_valid;
+alter table bookings add constraint bookings_dates_valid check (checkout > checkin or (checkout = checkin and left_early = true));
+
+drop function if exists decide_booking_refund(uuid, text, timestamptz);
+create or replace function decide_booking_refund(p_booking uuid, p_decision text, p_expected timestamptz default null, p_method text default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  b bookings%rowtype;
+  sr shift_records%rowtype;
+  v_rows jsonb; el jsonb; i int; idx int := null; empty_idx int := null;
+  amount numeric; grand numeric; label text; uname text; cur_amt numeric; cur_desc text; meth text;
+begin
+  if not is_reservations_manager() then
+    raise exception 'قرار رد الفلوس من صلاحية مدير الحجوزات بس';
+  end if;
+  if p_decision not in ('refund','keep') then raise exception 'قرار غير معروف'; end if;
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if not b.refund_pending then raise exception 'مفيش طلب رد فلوس معلّق على الحجز ده (اتقرر قبل كده)'; end if;
+  if p_expected is not null and b.updated_at is distinct from p_expected then
+    raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وراجع الطلب';
+  end if;
+  select username into uname from profiles where id = auth.uid();
+  grand := booking_grand_total(b);
+  amount := case when b.status = 'ملغي' then coalesce(b.amount_paid, 0) else greatest(coalesce(b.amount_paid, 0) - grand, 0) end;
+  meth := coalesce(nullif(trim(coalesce(p_method, '')), ''), b.payment_method);
+  if char_length(meth) > 40 then raise exception 'وسيلة الدفع غير صالحة'; end if;
+  perform set_config('calma.refund_rpc', '1', true);
+
+  if p_decision = 'keep' or amount <= 0 then
+    update bookings set refund_pending = false,
+      refund_decision = case when amount <= 0 then refund_decision else 'kept' end,
+      refunded_by = case when amount <= 0 then refunded_by else uname end,
+      refunded_at = case when amount <= 0 then refunded_at else now() end
+      where id = p_booking;
+    perform set_config('calma.refund_rpc', '', true);
+    return jsonb_build_object('decision', case when amount <= 0 then 'none' else 'kept' end, 'amount', 0);
+  end if;
+
+  select * into sr from shift_records
+    where closed = false and date >= hotel_today() - 1
+    order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc
+    limit 1 for update;
+  if not found then
+    raise exception 'مفيش شيفت مفتوح دلوقتي في اليومية - الرد بيتسجّل في يومية شيفت مفتوح، استنى لما موظف يفتح شيفته وجرّب تاني';
+  end if;
+
+  v_rows := coalesce(sr.rows, '[]'::jsonb);
+  label := 'رد فلوس - ' || b.guest_name || ' (-' || amount || ' ' || b.currency || ')';
+  for i in 0 .. jsonb_array_length(v_rows) - 1 loop
+    el := v_rows -> i;
+    if (el ->> 'room') = b.room::text then
+      cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+      if (cur_amt <> 0 or coalesce(el ->> 'collectionDesc', '') <> '')
+         and el ->> 'collectionMethod' = meth and el ->> 'collectionCurrency' = b.currency then
+        idx := i; exit;
+      end if;
+      if empty_idx is null and cur_amt = 0 and coalesce(el ->> 'collectionDesc', '') = '' then empty_idx := i; end if;
+    end if;
+  end loop;
+  if idx is null then idx := empty_idx; end if;
+  if idx is null then
+    v_rows := v_rows || jsonb_build_array(jsonb_build_object(
+      'room', b.room, 'expenseDesc', '', 'expenseAmt', '', 'expenseCategory', 'أخرى', 'expenseCurrency', 'EGP',
+      'collectionDesc', label, 'collectionAmt', -amount, 'collectionMethod', meth, 'collectionCurrency', b.currency,
+      'paymentDetails', jsonb_build_object('senderName', '', 'senderNumber', '', 'ref', '', 'onlinePaid', false, 'commissionPct', 15),
+      'notes', ''));
+  else
+    el := v_rows -> idx;
+    cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+    cur_desc := coalesce(el ->> 'collectionDesc', '');
+    v_rows := jsonb_set(v_rows, array[idx::text], el || jsonb_build_object(
+      'collectionAmt', cur_amt - amount, 'collectionMethod', meth, 'collectionCurrency', b.currency,
+      'collectionDesc', case when cur_desc <> '' then cur_desc || ' / ' || label else label end));
+  end if;
+  update shift_records set rows = v_rows,
+    booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
+    where date = sr.date and shift_key = sr.shift_key;
+
+  update bookings set
+    amount_paid = coalesce(amount_paid, 0) - amount,
+    settled = case when status = 'ملغي' then false else settled end,
+    refund_pending = false, refund_decision = 'refunded',
+    refunded_amount = coalesce(refunded_amount, 0) + amount, refunded_by = uname, refunded_at = now()
+    where id = p_booking;
+  perform set_config('calma.refund_rpc', '', true);
+  return jsonb_build_object('decision', 'refunded', 'amount', amount, 'currency', b.currency, 'method', meth, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
+end;
+$$;
+revoke all on function decide_booking_refund(uuid, text, timestamptz, text) from public;
+revoke all on function decide_booking_refund(uuid, text, timestamptz, text) from anon;
+grant execute on function decide_booking_refund(uuid, text, timestamptz, text) to authenticated;
+
+-- --------------------------------------------------------------------------
+-- 26) تحصينات إضافية
+--   (أ) ذاكرة الخروج المبكر: لما حجز بيتقصّر ويتعلّم left_early، بنحفظ تاريخ
+--       الخروج والإجمالي قبله (pre_early_*) - ده بس اللي بيسمح للموظف
+--       يتراجع لنفس القيم لو حفظ التسكين المكرر فشل (قسم ١٥).
+--   (ب) الحقول دي والـ id والـ username ثابتين - مفيش تعديل يدوي عليهم.
+--   (ج) اختيار الشيفت: مرة واحدة لنفس الموظف في نفس اليوم، والحذف للمدير العام
+--       بس. تعديل يومية شيفت مفتوح من صاحبه بس (غير تصحيح المدير بعد الإقفال).
+-- --------------------------------------------------------------------------
+alter table bookings add column if not exists pre_early_checkout date;
+alter table bookings add column if not exists pre_early_total numeric;
+
+create or replace function remember_pre_early_leave()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  new.pre_early_checkout := old.pre_early_checkout;
+  new.pre_early_total := old.pre_early_total;
+  if coalesce(new.left_early, false) and not coalesce(old.left_early, false) and new.checkout < old.checkout then
+    new.pre_early_checkout := old.checkout;
+    new.pre_early_total := old.total_room;
+  elsif coalesce(old.left_early, false) and not coalesce(new.left_early, false) then
+    new.pre_early_checkout := null;
+    new.pre_early_total := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_early_memory on bookings;
+create trigger bookings_early_memory before update on bookings
+  for each row execute function remember_pre_early_leave();
+
+create or replace function protect_profile_identity()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.id is distinct from old.id or new.username is distinct from old.username then
+    raise exception 'اسم المستخدم والمعرّف مينفعش يتغيّروا';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists profiles_protect_identity on profiles;
+create trigger profiles_protect_identity before update on profiles
+  for each row execute function protect_profile_identity();
+
+create or replace function prevent_last_gm_deactivation()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.role = 'gm' and old.active = true and (new.active = false or new.role <> 'gm') then
+    -- قفل صفوف المديرين العموم الفعّالين عشان تعطيل اتنين في نفس اللحظة مايعديش
+    perform 1 from profiles where role = 'gm' and active = true for update;
+    if not exists (select 1 from profiles where role = 'gm' and active = true and id <> old.id) then
+      raise exception 'لازم يفضل مدير عام واحد فعّال على الأقل';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+do $$ begin
+  alter table shift_claims add constraint shift_claims_one_per_user_day unique (date, username);
+exception when duplicate_object then null;
+          when others then raise notice 'تعذر تثبيت قيد "شيفت واحد لكل موظف في اليوم" - فيه اختيارات قديمة مكررة. راجعيها يدويًا.';
+end $$;
+
+drop policy if exists "claims delete" on shift_claims;
+create policy "claims delete" on shift_claims for delete using (is_gm());
+
+drop policy if exists "shifts update" on shift_records;
+create policy "shifts update" on shift_records for update using (
+  (is_staff() and staff_username = (select username from profiles where id = auth.uid()))
+  or can_manage_financials() or (closed = true and is_gm_or_reservations())
+) with check (
+  (is_staff() and staff_username = (select username from profiles where id = auth.uid()))
+  or can_manage_financials() or is_gm_or_reservations()
+);
 
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):

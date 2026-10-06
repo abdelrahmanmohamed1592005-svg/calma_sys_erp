@@ -6,7 +6,15 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // "prompt" + تسجيل يدوي في main.jsx (virtual:pwa-register): لما ينزل
+      // إصدار جديد بنفحصه كل دقيقة وبنطبّقه تلقائيًا (بدون ما حد يرفرش) في أول
+      // لحظة مفيش فيها موظف في نص كتابة فورم/يومية - وإلا كانت الصفحة
+      // هتتعمل ريلود فجأة وتضيّع اللي بيكتبه. "autoUpdate" القديم كان بيسجّل
+      // الـ service worker بس من غير ما يعيد تحميل الصفحة المفتوحة، فالنسخة
+      // القديمة كانت بتفضل شغالة لحد ما حد يرفرش بإيده.
+      registerType: "prompt",
+      injectRegister: false,
+      workbox: { cleanupOutdatedCaches: true, clientsClaim: true },
       includeAssets: ["favicon.svg"],
       manifest: {
         name: "Calma Hotel System",
