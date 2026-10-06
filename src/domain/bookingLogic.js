@@ -12,11 +12,18 @@ export function isOverrideStillActive(ov, dateStr) {
 
 export function computeRoomStatus(roomNumber, bookings, overrides, dateStr) {
   const ov = overrides[roomNumber];
-  if (ov && ov.status && ov.status !== "auto" && isOverrideStillActive(ov, dateStr)) {
-    const opt = MANUAL_STATUS_OPTIONS.find((o) => o.key === ov.status);
-    return { key: ov.status, label: opt ? opt.label : ov.status, source: "manual" };
-  }
   const active = bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.checkin <= dateStr && dateStr < b.checkout);
+  if (ov && ov.status && ov.status !== "auto" && isOverrideStillActive(ov, dateStr)) {
+    // "غادر مبكرًا" / "تحت التنظيف" بتخص النزيل (أو الحالة) اللي كانت وقت ما اتحددت. لو بعدها
+    // اتسكّن حجز جديد على الغرفة (تسكين مكرر مثلاً) الحجز الجديد هو اللي يبان - من غير كده
+    // الحالة اليدوية كانت بتخفي النزيل الجديد وتفاصيله طول اليوم. الصيانة بتفضل لحد ما تتشال يدويًا.
+    const supersedable = ov.status === "early_checkout" || ov.status === "cleaning";
+    const newerGuest = active && Number(active.createdAt) > Number(ov.updatedAt);
+    if (!(supersedable && newerGuest)) {
+      const opt = MANUAL_STATUS_OPTIONS.find((o) => o.key === ov.status);
+      return { key: ov.status, label: opt ? opt.label : ov.status, source: "manual" };
+    }
+  }
   if (active) {
     const gt = bookingGrandTotal(active);
     // "متحصّل" = المدفوع فعلًا وصل للإجمالي الحالي (أو مدفوع أونلاين) - مش

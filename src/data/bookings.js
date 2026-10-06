@@ -6,7 +6,7 @@ function bookingFromRow(r) {
     checkin: r.checkin, checkout: r.checkout, priceNight: Number(r.price_night) || 0, currency: r.currency,
     totalRoom: Number(r.total_room) || 0, extras: r.extras || { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 },
     earlyCheckin: r.early_checkin || { applied: false, fee: 0, note: "" },
-    paymentMethod: r.payment_method, paymentDetails: r.payment_details || { senderName: "", senderNumber: "", ref: "", onlinePaid: false, commissionPct: 15 },
+    paymentMethod: r.payment_method, paymentDetails: r.payment_details || { senderName: "", senderNumber: "", ref: "", onlinePaid: false },
     amountPaid: Number(r.amount_paid) || 0, amountTendered: Number(r.amount_tendered) || 0,
     source: r.source, status: r.status, approvalStatus: r.approval_status, settled: !!r.settled, notes: r.notes || "",
     imported: !!r.imported, needsRoomReview: !!r.needs_room_review, createdAt: new Date(r.created_at).getTime(),
@@ -68,6 +68,16 @@ export async function getBookings() {
   const { data, error } = await supabase.from("bookings").select("*").order("checkin", { ascending: false });
   if (error || !data) return null;
   return data.map(bookingFromRow);
+}
+
+/* أكواد الأفراد: كل فرد في الحجز ليه كود مربوط بالحجز والغرفة (بيتولّد في قاعدة البيانات).
+   بترجع خريطة { bookingId: [{seq, code, room}] } أو null لو القراءة فشلت. */
+export async function getBookingGuests() {
+  const { data, error } = await supabase.from("booking_guests").select("*").order("seq", { ascending: true });
+  if (error || !data) return null;
+  const map = {};
+  data.forEach((g) => { (map[g.booking_id] = map[g.booking_id] || []).push({ seq: g.seq, code: g.code, room: g.room }); });
+  return map;
 }
 
 export async function insertBooking(booking) {

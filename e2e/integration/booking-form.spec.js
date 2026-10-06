@@ -101,7 +101,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     expect((await bk(env, "Early Bird")).amount_paid).toBe(230);
   });
 
-  test("حجز مدفوع أونلاين من مدير الحجوزات: بدون متبقي، الغرفة متحصّلة، وبيظهر في التقرير بالعمولة", async ({ page, env }) => {
+  test("حجز مدفوع أونلاين من مدير الحجوزات: بدون متبقي ولا وسيلة دفع ولا عمولة، الغرفة متحصّلة، وبيظهر في التقرير بإجماليه", async ({ page, env }) => {
     await users(env);
     await page.goto("/");
     await login(page, "rawan");
@@ -112,23 +112,25 @@ test.describe("الرسوم وطرق الدفع", () => {
     await priceInput(page).fill("100");
     await page.locator("xpath=//label[contains(.,'جهة الحجز')]/following-sibling::select").selectOption("Booking.com");
     await page.getByRole("checkbox", { name: /الحجز مدفوع أونلاين/ }).check();
-    await field(page, "نسبة عمولة المنصة %").fill("20");
+    await expect(page.locator("xpath=//label[contains(.,'طريقة الدفع')]")).toHaveCount(0);       // وسيلة الدفع اتشالت
+    await expect(page.getByText(/عمولة/)).toHaveCount(0);                                           // ولا فيه عمولة
     await field(page, "رقم تأكيد الحجز على المنصة / ملاحظة (اختياري)").fill("BK-777");
-    expect(digits(await form.innerText())).toContain("السعربالعمولة(الصافيللفندق)160USD");
+    expect(digits(await form.innerText())).toContain("إجماليالحجزالأونلاين200USD");
     await save(page);
     await expect(toast(page)).toContainText("تم الحفظ");
     const b = await bk(env, "Booking Guest");
     expect(b).toMatchObject({ source: "Booking.com", amount_paid: 0 });
-    expect(b.payment_details).toMatchObject({ onlinePaid: true, commissionPct: 20, ref: "BK-777" });
+    expect(b.payment_details).toMatchObject({ onlinePaid: true, ref: "BK-777" });
+    expect(b.payment_details).not.toHaveProperty("commissionPct");
     await goTab(page, "لوحة الغرف");
     await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();
     await boardTile(page, 605).click();
     await expect(roomCard(page)).toContainText("مدفوع أونلاين");
-    expect(digits(await roomCard(page).innerText())).not.toMatch(/المتبقي\d/);          // مفيش خانة متبقي للحجز الأونلاين
+    expect(digits(await roomCard(page).innerText())).not.toMatch(/المتبقي\d/);
     await goTab(page, "التقارير");
     const online = digits(await page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last().innerText());
-    expect(online).toContain("الإجماليمنغيرعمولة200$");
-    expect(online).toContain("الصافيبعدالعمولة160$");
+    expect(online).toContain("إجماليالحجوزاتالأونلاين200$");
+    expect(online).not.toContain("العمولة");
     expect(online).toContain("BK-777");
   });
 

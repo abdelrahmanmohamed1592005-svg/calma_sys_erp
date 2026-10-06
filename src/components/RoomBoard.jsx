@@ -6,17 +6,19 @@ import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_B
 import { computeRoomStatus, roomsOverlap, findOverlappingBooking, repricedTotalRoom } from "../domain/bookingLogic";
 import { getShiftRecord, appendBookingCollection } from "../data/shifts";
 import { useShiftGate } from "../hooks/useShiftGate";
+import { GuestCodeChips } from "./shared";
 import { withBusy } from "../lib/busy";
 
 const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#F5EFD6", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
-export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOverride, onToggleSettled, onUpdateBooking, onEditBooking, onLog, showToast, dataVersion }) {
+export function RoomBoard({ rooms, overrides, bookings, guestCodes = {}, perms, profile, onSaveOverride, onToggleSettled, onUpdateBooking, onEditBooking, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [extrasDraft, setExtrasDraft] = useState(null);
   const extrasBaseRef = useRef("");
   const normExtras = (e) => JSON.stringify([Number(e?.laundry) || 0, Number(e?.cafeteria) || 0, Number(e?.tours) || 0, Number(e?.pickup) || 0]);
   const [collectMethod, setCollectMethod] = useState("كاش");
+  const [codeQuery, setCodeQuery] = useState("");
   const [extendNights, setExtendNights] = useState(1);
   const date = todayStr();
   const room = rooms.find((r) => r.number === selected);
@@ -165,9 +167,23 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
 
   const counts = useMemo(() => { const c = { available: 0, occupied_paid: 0, occupied_unpaid: 0, reserved: 0, maintenance: 0, cleaning: 0, early_checkout: 0 }; rooms.forEach((r) => { const s = computeRoomStatus(r.number, bookings, overrides, date); c[s.key] = (c[s.key] || 0) + 1; }); return c; }, [rooms, bookings, overrides, date]);
   const revCurrencies = kpis ? currencyKeysOf(kpis.rev, kpis.exp) : [];
+  // بحث بكود النزيل: بيرجّع الغرفة اللي كان ساكن فيها
+  const cq = codeQuery.trim().toLowerCase();
+  const codeHit = cq ? bookings.flatMap((b) => (guestCodes[b.id] || []).map((g) => ({ ...g, booking: b }))).find((g) => g.code.toLowerCase() === cq) : null;
 
   return (
     <div style={{ padding: 14 }}>
+      <div className="cx-no-print" style={{ marginBottom: 12 }}>
+        <input className="cx-input" data-testid="board-code-search" style={{ maxWidth: 320 }} placeholder="🔎 بحث بكود النزيل (يعرّفك الغرفة)" value={codeQuery} onChange={(e) => setCodeQuery(e.target.value)} />
+        {codeHit && (
+          <div className="cx-card" data-testid="board-code-result" style={{ marginTop: 8, padding: 10, background: "#EEF5F0", borderColor: "var(--sage)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 800 }}>كود <span dir="ltr" style={{ fontFamily: "monospace" }}>{codeHit.code}</span> ← فرد {codeHit.seq} في {roomLabel(rooms, codeHit.room)}</span>
+            <span style={{ fontSize: 12.5 }}>{codeHit.booking.guestName} · {codeHit.booking.checkin} → {codeHit.booking.checkout} · {codeHit.booking.status}</span>
+            <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => { setSelected(codeHit.room); setCodeQuery(""); }}>افتح الغرفة</button>
+          </div>
+        )}
+        {cq.length >= 4 && !codeHit && <div data-testid="board-code-missing" style={{ marginTop: 6, fontSize: 12, color: "var(--rust)" }}>مفيش نزيل بالكود ده</div>}
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
         <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>تحصيل اليوم</div><div style={{ fontWeight: 800, fontSize: 15 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.rev, c)} ${c}`).join(" + ") : "0") : "…"}</div></div>
         <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>مصاريف اليوم</div><div style={{ fontWeight: 800, fontSize: 15 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.exp, c)} ${c}`).join(" + ") : "0") : "…"}</div></div>
@@ -188,6 +204,8 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
           <div key={r.number} onClick={() => setSelected(r.number)} className={"cx-tile " + (selected === r.number ? "selected" : "")} style={{ borderRightColor: STATUS_COLORS[s.key], borderRightWidth: 5, background: STATUS_TINTS[s.key] || "var(--paper)" }}>
             <div style={{ fontWeight: 800, fontSize: r.name ? 14.5 : 20, lineHeight: 1.15, wordBreak: "break-word" }}>{r.name || r.number}</div>
             {s.guest && <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4 }}>{s.guest}</div>}
+            {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{fmt(s.booking.priceNight)} {s.booking.currency} / ليلة</div>}
+            {s.booking?.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", fontSize: 10, marginTop: 3 }}>تسكين مكرر</span>}
           </div>
         ); })}
       </div>
@@ -226,7 +244,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>تشيك أوت</div><div style={{ fontWeight: 700 }}>{b.checkout}</div></div>
                 <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>عدد الليالي</div><div style={{ fontWeight: 700 }}>{nightsBetween(b.checkin, b.checkout)}</div></div>
                 <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>سعر الليلة × المدة</div><div style={{ fontWeight: 700 }}>{fmt(b.priceNight)} × {nightsBetween(b.checkin, b.checkout)} = {fmt(b.totalRoom)} {b.currency}</div></div>
-                <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>طريقة الدفع</div><div style={{ fontWeight: 700 }}>{b.paymentMethod}</div></div>
+                {!b.paymentDetails?.onlinePaid && <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>طريقة الدفع</div><div style={{ fontWeight: 700 }}>{b.paymentMethod}</div></div>}
                 {/* حجز مدفوع من خلال منصة حجز (مش تحويل مباشر من النزيل) -
                     مفيش اسم مرسل هنا أصلًا، بس ممكن يكون فيه رقم تأكيد/ملاحظة. */}
                 {b.paymentDetails?.onlinePaid && b.paymentDetails?.ref && (
@@ -242,6 +260,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 </>)}
               </div>
 
+              <GuestCodeChips codes={guestCodes[b.id]} />
               {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift && !b.settled ? (
                 <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
                   <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (تقدر تضيفها هنا على طول من غير ما تفتح الحجز كامل)</div>

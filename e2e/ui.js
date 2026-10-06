@@ -72,7 +72,11 @@ export async function addBooking(page, o) {
   if (paid != null) await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill(String(paid));
   if (dup) await form.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
   await form.getByRole("button", { name: /حفظ الحجز/ }).click();
-  if (expectSaved) await expect(toast(page)).toContainText("تم الحفظ");
+  if (expectSaved) {
+    // الفورم بيتقفل بس بعد نجاح الحفظ (رسالة "تم الحفظ" ممكن تكون لسه ظاهرة من حفظة قبلها)
+    await expect(form).toHaveCount(0);
+    await expect(toast(page)).toContainText("تم الحفظ");
+  }
 }
 
 export const boardTile = (page, room) => page.locator(".cx-tile", { hasText: String(room) });

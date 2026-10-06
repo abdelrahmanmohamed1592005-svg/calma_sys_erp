@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer } from "lucide-react";
 import { Logo } from "./shared";
-import { emptyMoney, computeShiftTotals, bookingGrandTotal, refundDueAmount, onlineNetAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
+import { emptyMoney, computeShiftTotals, bookingGrandTotal, refundDueAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getJournaledBookingIds, getShiftRecord, getShiftRecordsInRange } from "../data/shifts";
@@ -89,15 +89,12 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   const revenueBookings = bookings.filter((b) => b.status !== "ملغي" && b.checkin >= fromDate && b.checkin < toDate2);
   const onlineBookings = revenueBookings.filter((b) => b.paymentDetails?.onlinePaid);
   const directBookings = revenueBookings.filter((b) => !b.paymentDetails?.onlinePaid);
-  const grossRevenue = emptyMoney(); const netRevenue = emptyMoney();
+  const grossRevenue = emptyMoney();
   const items = [];
   onlineBookings.forEach((b) => {
     const gross = bookingGrandTotal(b);
-    const commissionPct = Number(b.paymentDetails?.commissionPct) || 0;
-    const net = onlineNetAmount(gross, commissionPct);
     grossRevenue[b.currency] = (grossRevenue[b.currency] || 0) + gross;
-    netRevenue[b.currency] = (netRevenue[b.currency] || 0) + net;
-    items.push({ id: b.id, room: b.room, guestName: b.guestName, checkin: b.checkin, checkout: b.checkout, currency: b.currency, gross, net, commissionPct, paymentDetails: b.paymentDetails });
+    items.push({ id: b.id, room: b.room, guestName: b.guestName, checkin: b.checkin, checkout: b.checkout, currency: b.currency, gross, paymentDetails: b.paymentDetails });
   });
   // تحصيل الحجوزات اللي اتدفعت مباشر (مش أونلاين) حسب طريقة الدفع - دي
   // المبالغ اللي بتتسجل وقت "تسجيل تحصيل" على الحجز نفسه (فيزا/انستاباي/
@@ -129,7 +126,7 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   // (بعدها بيتسجل في يومية الشيفت بالسالب وبيتشال من التحصيل). بتظهر بغض
   // النظر عن الفترة المختارة لأنها رصيد مستحق لحظي زي المتبقي بالظبط.
   const refundsPending = bookings.filter((b) => b.refundPending && refundDueAmount(b) > 0);
-  return { count: onlineBookings.length, totalCount: revenueBookings.length, grossRevenue, netRevenue, items, outstanding, byMethodCurrency, refundsPending };
+  return { count: onlineBookings.length, totalCount: revenueBookings.length, grossRevenue, items, outstanding, byMethodCurrency, refundsPending };
 }
 
 export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
@@ -232,7 +229,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     if (rangeMode === "day") { SHIFTS.forEach((s) => { const r = dayRecords[s.key]; if (!r) { txt += `${s.label}: لا يوجد سجل\n`; return; } const t = r.closed ? r : computeShiftTotals(r); txt += `${s.label} (${r.staffName}) — ${r.closed ? "مقفول" : "مفتوح"}\nتحصيل: ${moneyLine(t.totalCollections)} | مصاريف: ${moneyLine(t.totalExpenses)} | رصيد الخزينة: ${moneyLine(t.closingCash)}\n`; if (r.flagged) txt += `تنبيه متابعة: ${r.shiftNotes || "—"}\n`; txt += `\n`; }); }
     txt += `إجمالي التحصيل: ${moneyLine(combinedTotalCollections)}\nإجمالي المصاريف: ${moneyLine(agg.totalExpenses)}\nصافي التحصيل بعد المصاريف: ${moneyLine(agg.netCash)}\n`;
     allMethods.forEach((m) => { const obj = combinedByMethodCurrency[m]; if (obj && currencyKeysOf(obj).length) txt += `  - ${m}: ${moneyLine(obj)}\n`; });
-    txt += `إيراد الحجوزات الأونلاين (بالعمولة): ${moneyLine(bAgg.netRevenue)}\nنسبة الإشغال: ${avgOccupancy}%`;
+    txt += `إيراد الحجوزات الأونلاين: ${moneyLine(bAgg.grossRevenue)}\nنسبة الإشغال: ${avgOccupancy}%`;
     return txt;
   }
   async function copySummary() { const t = buildSummaryText(); setCopyText(t); try { await navigator.clipboard.writeText(t); } catch (e) {} }
@@ -339,21 +336,18 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
             <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>الحجوزات الأونلاين ({bAgg.count} حجز مدفوع أونلاين من إجمالي {bAgg.totalCount} حجز في الفترة)</div>
             <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>القسم ده بيشمل بس الحجوزات اللي اتحددت يدويًا كـ"مدفوعة أونلاين" وقت إنشاء أو تعديل الحجز، وبيحسب كل حجز مرة واحدة بس في تقرير يوم تسجيل الدخول بتاعه (مش في كل يوم من أيام إقامته) - عشان مجموع تقارير أيام متتالية يفضل مطابق لتقرير الفترة كلها من غير تكرار.</div>
             <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 12 }}>
-              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي من غير عمولة</div><div style={{ fontWeight: 800 }}>{moneyLine(bAgg.grossRevenue)}</div></div>
-              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>الصافي بعد العمولة</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{moneyLine(bAgg.netRevenue)}</div></div>
+              <div><div style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي الحجوزات الأونلاين</div><div style={{ fontWeight: 800 }}>{moneyLine(bAgg.grossRevenue)}</div></div>
             </div>
             {bAgg.items.length > 0 ? (
               <div style={{ overflowX: "auto" }}>
                 <table className="cx-table" style={{ fontSize: 12, minWidth: 620 }}>
-                  <thead><tr><th className="cx-th">الغرفة / النزيل</th><th className="cx-th">التواريخ</th><th className="cx-th">من غير عمولة</th><th className="cx-th">العمولة %</th><th className="cx-th">الصافي</th><th className="cx-th">ملاحظة / تأكيد الحجز</th></tr></thead>
+                  <thead><tr><th className="cx-th">الغرفة / النزيل</th><th className="cx-th">التواريخ</th><th className="cx-th">الإجمالي</th><th className="cx-th">ملاحظة / تأكيد الحجز</th></tr></thead>
                   <tbody>
                     {bAgg.items.map((it) => (
                       <tr key={it.id}>
                         <td>{roomLabel(rooms, it.room)} · {it.guestName}</td>
                         <td style={{ whiteSpace: "nowrap" }}>{it.checkin} → {it.checkout}</td>
                         <td>{fmt(it.gross)} {it.currency}</td>
-                        <td>{it.commissionPct}%</td>
-                        <td style={{ fontWeight: 700, color: "var(--teal)" }}>{fmt(it.net)} {it.currency}</td>
                         <td style={{ fontSize: 11, color: "var(--muted)" }}>{it.paymentDetails?.ref || "—"}</td>
                       </tr>
                     ))}

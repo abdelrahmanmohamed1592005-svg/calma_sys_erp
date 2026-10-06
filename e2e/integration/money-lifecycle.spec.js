@@ -178,7 +178,8 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     expect(bc).toHaveLength(2);
     expect(await sumLedger(env)).toBe(0);
     await expect(page.getByTestId("refund-banner")).toHaveCount(0);
-    await expect(page.getByText(/اترد/)).toBeVisible();
+    await expect(page.getByTestId("refund-status")).toContainText("اترد للنزيل");
+    await expect(page.getByTestId("booking-cancelled")).toContainText("حجز ملغي");      // الحجز الملغي بيفضل ظاهر بعد الرد
 
     await goTab(page, "التقارير");
     await expect(page.getByText(/طلبات رد فلوس منتظرة/)).toHaveCount(0);
@@ -203,7 +204,7 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     await expect(toast(page)).toContainText("تم رفض الرد");
     const [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ status: "ملغي", refund_pending: false, refund_decision: "kept", amount_paid: 200 });
-    await expect(page.getByText(/مدير الحجوزات رفض رد الفلوس/)).toBeVisible();
+    await expect(page.getByTestId("refund-status")).toContainText("رُفض الرد");
     expect(await sumLedger(env)).toBe(0);                // مفيش حاجة اتخصمت من اليومية
     await goTab(page, "التقارير");
     const visaRow = page.locator("table.cx-table tr", { hasText: "فيزا" }).first();
