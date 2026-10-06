@@ -25,3 +25,7 @@ yarn-error.log*
 
 # Supabase CLI المحلي
 .supabase
+
+# ناتج اختبارات المتصفح
+test-results
+playwright-report

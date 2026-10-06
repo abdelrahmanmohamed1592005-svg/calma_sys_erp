@@ -1591,6 +1591,65 @@ drop trigger if exists shift_records_provenance_guard on shift_records;
 create trigger shift_records_provenance_guard before update on shift_records
   for each row execute function protect_record_provenance();
 
+-- (ز) المدير العام والمحاسبة كانوا يقدروا يعدّلوا محتوى يومية شيفت **مفتوح** (سياسة
+--     التعديل كانت بتسمح لـ can_manage_financials() في أي حالة)، مع إن صلاحياتهم
+--     (editLedger = false) تصحيح بعد الإقفال بس. دلوقتي: الموظف صاحب الشيفت (أو
+--     التالي له) على المفتوح، والمدير/المحاسبة/مدير الحجوزات على المقفول بس
+--     (تصحيح أو إعادة فتح). WITH CHECK بيفضل واسع عشان إعادة الفتح (closed true -> false) تعدّي.
+drop policy if exists "shifts update" on shift_records;
+create policy "shifts update" on shift_records for update using (
+  (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
+                   or (closed = false and is_next_shift_claimant(date, shift_key))))
+  or (closed = true and (can_manage_financials() or is_gm_or_reservations()))
+) with check (
+  (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
+                   or is_next_shift_claimant(date, shift_key)))
+  or can_manage_financials() or is_gm_or_reservations()
+);
+
+-- (ح) مفيش حذف لحجز عليه حركة فلوس (مدفوع / طلب رد معلّق / اترد منه مبلغ): الواجهة
+--     كانت بتمنع ده بس، لكن قاعدة البيانات كانت بتسمح لمدير الحجوزات يمسح الحجز
+--     (ويضيّع الأثر المالي بتاعه). الإلغاء (status = 'ملغي') هو الطريق الصح.
+create or replace function prevent_delete_booking_with_money()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(old.amount_paid, 0) > 0 or coalesce(old.refund_pending, false) or coalesce(old.refunded_amount, 0) > 0 then
+    raise exception 'الحجز ده عليه حركة فلوس (مدفوع أو رد) - استخدم حالة "ملغي" بدل الحذف';
+  end if;
+  return old;
+end;
+$$;
+drop trigger if exists bookings_no_delete_with_money on bookings;
+create trigger bookings_no_delete_with_money before delete on bookings
+  for each row execute function prevent_delete_booking_with_money();
+
+-- (ط) توحيد صلاحيات اليومية مع الواجهة (constants.js):
+--     * إعادة فتح شيفت مقفول: المدير العام ومدير الحجوزات بس (reopenShift) - المحاسبة كانت
+--       تقدر تفتحه من قاعدة البيانات رغم إن الواجهة بتمنعها. المحاسبة لسه تقدر تصحّح المحتوى.
+--     * مسح سجل يومية: المدير العام بس (لإلغاء اختيار شيفت بالغلط) وللشيفت المفتوح بس - يومية
+--       مقفولة (متثبّتة فيها أرصدة) لازم تتفتح الأول؛ المحاسبة كانت تقدر تمسح أي يومية.
+create or replace function prevent_closed_shift_edit()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.closed = true then
+    if new.closed = false then
+      if not is_gm_or_reservations() then
+        raise exception 'إعادة فتح شيفت مقفول من صلاحية المدير العام أو مدير الحجوزات بس';
+      end if;
+    else
+      -- الشيفت فاضل مقفول وبيتم تعديل محتواه (تصحيح): المدير العام/الحسابات بس
+      if not can_manage_financials() then
+        raise exception 'لا يمكن تعديل شيفت مقفول إلا من المدير العام أو الحسابات';
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop policy if exists "shifts delete" on shift_records;
+create policy "shifts delete" on shift_records for delete using (is_gm() and closed = false);
+
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):
 --

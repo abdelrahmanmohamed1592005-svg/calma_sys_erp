@@ -1,0 +1,114 @@
+[
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-05",
+    "newCheckout": "2026-10-05",
+    "totalRoom": 400,
+    "priceNight": 100,
+    "expected": 400
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-05",
+    "newCheckout": "2026-10-07",
+    "totalRoom": 400,
+    "priceNight": 100,
+    "expected": 600
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-05",
+    "newCheckout": "2026-10-06",
+    "totalRoom": 400,
+    "priceNight": 100,
+    "expected": 500
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-05",
+    "newCheckout": "2026-10-03",
+    "totalRoom": 400,
+    "priceNight": 100,
+    "expected": 200
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-05",
+    "newCheckout": "2026-10-01",
+    "totalRoom": 400,
+    "priceNight": 100,
+    "expected": 100
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-05",
+    "newCheckout": "2026-10-02",
+    "totalRoom": 350,
+    "priceNight": 100,
+    "expected": 87.5
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-04",
+    "newCheckout": "2026-10-03",
+    "totalRoom": 250,
+    "priceNight": 90,
+    "expected": 166.67
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-04",
+    "newCheckout": "2026-10-02",
+    "totalRoom": 250,
+    "priceNight": 90,
+    "expected": 83.33
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-04",
+    "newCheckout": "2026-10-08",
+    "totalRoom": 250,
+    "priceNight": 90,
+    "expected": 610
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-02",
+    "newCheckout": "2026-10-01",
+    "totalRoom": 100,
+    "priceNight": 100,
+    "expected": 100
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-02",
+    "newCheckout": "2026-10-04",
+    "totalRoom": 100,
+    "priceNight": 100,
+    "expected": 300
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-04",
+    "newCheckout": "2026-10-02",
+    "totalRoom": 100,
+    "priceNight": 0,
+    "expected": 33.33
+  },
+  {
+    "checkin": "2026-12-30",
+    "checkout": "2027-01-03",
+    "newCheckout": "2027-01-01",
+    "totalRoom": 400,
+    "priceNight": 100,
+    "expected": 200
+  },
+  {
+    "checkin": "2026-10-01",
+    "checkout": "2026-10-08",
+    "newCheckout": "2026-10-03",
+    "totalRoom": 333.33,
+    "priceNight": 50,
+    "expected": 95.24
+  }
+]

@@ -36,5 +36,7 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    // اختبارات المتصفح (e2e/) بتتشغّل بـ Playwright (npm run test:e2e) مش vitest
+    include: ["src/**/*.test.js"],
   },
 });
