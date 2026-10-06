@@ -104,6 +104,12 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     // - لو الحجز القديم لسه لم يبدأ أصلًا (بيبدأ في نفس يوم الجديد أو
     //   بعده)، ده مش "تسكين مكرر" حقيقي - ده حجز محتاج إلغاء فعلي، وده قرار
     //   مدير الحجوزات بنفسه يدويًا (زرار الإلغاء)، مش تلقائي من هنا.
+    // بتتسجل بس لو حصل تقصير فعلي للحجز القديم تحت - عشان لو فشل حفظ الحجز
+    // الجديد بعد كده (خطأ شبكة/قاعدة بيانات نادر)، نقدر نوضح للموظف إن
+    // الحجز القديم خلاص بقى "مشي بدري" والغرفة فاضية فعليًا، ولازم يحاول
+    // يضيف الحجز الجديد تاني فورًا - عشان الغرفة ما تفضلش من غير حجز نهائيًا
+    // في النظام (حالة متضاربة لازم ننبّه عليها صريح، مش نسيبها تمر بصمت).
+    let trimmedClashId = null;
     if (conflict && form.duplicateConfirmed) {
       const clash = findOverlappingBooking(bookings, cleaned.room, cleaned.checkin, cleaned.checkout, cleaned.id);
       const resolution = resolveDuplicateCheckin(clash, cleaned.checkin);
@@ -114,11 +120,15 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
       if (resolution?.action === "trim") {
         const trimRes = await onUpdateBooking(clash.id, { ...clash, checkout: resolution.checkout, status: "تم تسجيل الخروج", leftEarly: true, notes: (clash.notes ? clash.notes + " — " : "") + `مشي بدري في ${resolution.checkout} - الغرفة اتسلمت لحجز تسكين مكرر جديد` });
         if (trimRes?.error) { showToast("تعذر تقصير الحجز القديم: " + trimRes.error); return; }
+        trimmedClashId = clash.id;
       }
       cleaned = { ...cleaned, duplicatePlacement: true };
     }
     const res = isExistingBooking ? await onUpdateBooking(cleaned.id, cleaned) : await onInsertBooking(cleaned);
-    if (res?.error) { showToast(res.error); return; }
+    if (res?.error) {
+      if (trimmedClashId) { showToast(`الحجز القديم خلاص اتسجّل "مشي بدري" لكن تعذر حفظ الحجز الجديد: ${res.error} — الغرفة فاضية دلوقتي، لازم تضيفي الحجز الجديد تاني فورًا`); return; }
+      showToast(res.error); return;
+    }
     onLog(`${isExistingBooking ? "تعديل" : "إضافة"} حجز ${roomLabel(rooms, cleaned.room)} — ${cleaned.guestName}${conflict ? " (تسكين مكرر معتمد يدويًا)" : ""}`);
     // لو اتحصّل مبلغ مقدّم وقت إضافة حجز جديد (نزيل مباشر دافع عند موظف
     // الشيفت) سجّله تلقائيًا في يومية شيفته النهارده - عشان رصيد الخزينة/
