@@ -39,6 +39,7 @@ export async function getShiftRecord(date, shiftKey) {
 export async function createShiftRecord(rec) {
   const { data, error } = await supabase.from("shift_records").insert(shiftToRow(rec)).select().maybeSingle();
   if (error) return { error: error.message };
+  if (!data) return { error: "تعذر إنشاء يومية الشيفت" };
   return { data: shiftFromRow(data) };
 }
 
@@ -54,6 +55,16 @@ export async function updateShiftRecordIfUnchanged(date, shiftKey, expectedUpdat
   if (error) return { error: error.message };
   if (!data) return { conflict: true };
   return { data: shiftFromRow(data) };
+}
+
+/* كل سجلات اليومية في فترة (استعلام واحد بدل استعلام لكل شيفت في كل يوم -
+   تقرير فترة سنة كان بيبعت أكتر من ١٠٠٠ طلب). بترجع null لو القراءة فشلت. */
+export async function getShiftRecordsInRange(fromDate, toDate) {
+  const { data, error } = await supabase.from("shift_records").select("*")
+    .gte("date", fromDate).lte("date", toDate).order("date", { ascending: true });
+  if (error || !data) return null;
+  const order = { morning: 0, evening: 1, night: 2 };
+  return data.map(shiftFromRow).sort((a, b) => (a.date === b.date ? order[a.shiftKey] - order[b.shiftKey] : a.date < b.date ? -1 : 1));
 }
 
 export async function getClaimsForDate(date) {

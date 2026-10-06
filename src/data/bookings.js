@@ -46,6 +46,10 @@ function bookingToRow(b) {
   };
 }
 
+// الطلب نجح من غير ما يرجع أي صف (مثلاً الحجز اتحذف من جهاز تاني أو الصلاحية
+// مش مسموحة له) - بدل ما bookingFromRow(null) يرمي TypeError ويوقع الشاشة.
+const NO_ROW_ERROR = "تعذر حفظ الحجز - ممكن يكون اتحذف أو مالكش صلاحية عليه، حدّث الصفحة وراجع الحجوزات";
+
 /* رسالة خطأ مفهومة بدل نص قاعدة البيانات التقني. أهمها قيد منع الحجز
    المزدوج (exclusion_violation، كود 23P01): معناه إن فيه حجز تاني فعلاً على
    نفس الغرفة في تواريخ متداخلة (غالبًا اتضاف من جهاز تاني في نفس اللحظة). */
@@ -69,12 +73,14 @@ export async function getBookings() {
 export async function insertBooking(booking) {
   const { data, error } = await supabase.from("bookings").insert(bookingToRow(booking)).select().maybeSingle();
   if (error) return { error: friendlyBookingError(error), code: error.code };
+  if (!data) return { error: NO_ROW_ERROR };
   return { data: bookingFromRow(data) };
 }
 
 export async function updateBooking(id, booking) {
   const { data, error } = await supabase.from("bookings").update(bookingToRow(booking)).eq("id", id).select().maybeSingle();
   if (error) return { error: friendlyBookingError(error), code: error.code };
+  if (!data) return { error: NO_ROW_ERROR };
   return { data: bookingFromRow(data) };
 }
 

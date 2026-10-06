@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildImportDraft } from "../domain/importLogic";
+import { buildImportDraft, getField, mapPaymentMethod } from "../domain/importLogic";
 import { PERMISSIONS, ROLES } from "../domain/constants";
 
 const rooms = [
@@ -42,6 +42,21 @@ describe("buildImportDraft", () => {
     const draft = buildImportDraft(row, 0, rooms, []);
     expect(draft.checkin).toBe("2026-09-01");
     expect(draft.checkout).toBe("2026-09-05");
+  });
+});
+
+describe("getField / mapPaymentMethod", () => {
+  it("finds a column case-insensitively and trims spaces", () => {
+    expect(getField({ " check in ": " 2026-09-05 " }, ["Check In"])).toBe("2026-09-05");
+  });
+  it("returns an empty string for a missing/blank column or null row", () => {
+    expect(getField({ A: "  " }, ["A"])).toBe("");
+    expect(getField(null, ["A"])).toBe("");
+  });
+  it("maps instapay/transfer wording to the merged method and defaults to cash", () => {
+    expect(mapPaymentMethod("InstaPay")).toBe("تحويل بنكي / انستاباي");
+    expect(mapPaymentMethod("bank transfer")).toBe("تحويل بنكي / انستاباي");
+    expect(mapPaymentMethod("")).toBe("كاش");
   });
 });
 

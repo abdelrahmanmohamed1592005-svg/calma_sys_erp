@@ -1,5 +1,25 @@
 import { addDays, nightsBetween, parseDateFlexible, todayStr, uid } from "./dates";
-import { getField, mapPaymentMethod, roomsOverlap } from "./bookingLogic";
+import { roomsOverlap } from "./bookingLogic";
+
+// قراءة قيمة عمود من صف مستورد بأي اسم من الأسماء المحتملة (من غير حساسية
+// لحالة الحروف أو المسافات الزايدة)، وبترجع "" لو العمود مش موجود أو فاضي.
+export function getField(row, keys) {
+  const entries = Object.entries(row || {});
+  for (const k of keys) {
+    const hit = entries.find(([kk]) => kk.trim().toLowerCase() === k.toLowerCase());
+    if (hit && String(hit[1] ?? "").trim() !== "") return String(hit[1]).trim();
+  }
+  return "";
+}
+
+// وسيلة الدفع المكتوبة في الملف المستورد -> أقرب وسيلة من PAYMENT_METHODS.
+export function mapPaymentMethod(raw) {
+  const s = String(raw || "").toLowerCase();
+  if (s.includes("visa") || s.includes("فيزا") || s.includes("card")) return "فيزا";
+  if (s.includes("insta") || s.includes("انستا") || s.includes("transfer") || s.includes("تحويل")) return "تحويل بنكي / انستاباي";
+  if (s.includes("vodafone") || s.includes("فودافون")) return "فودافون كاش";
+  return "كاش";
+}
 
 export function buildImportDraft(row, idx, rooms, existingBookings) {
   const code = getField(row, ["Code#", "Code", "Booking Code"]);

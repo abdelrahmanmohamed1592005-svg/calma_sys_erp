@@ -12,7 +12,7 @@
 // service_role، من غير ما يلمس جلسة المتصفح خالص.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { buildCorsHeaders, isRateLimited, validatePasswordStrength, safeServerError } from "../_shared/security.ts";
+import { buildCorsHeaders, isRateLimited, validatePasswordStrength, safeServerError, bearerToken, readJsonBody } from "../_shared/security.ts";
 
 const EMAIL_DOMAIN = "calma.internal";
 const VALID_ROLES = ["staff", "reservations", "accounts", "gm"];
@@ -20,15 +20,16 @@ const VALID_ROLES = ["staff", "reservations", "accounts", "gm"];
 Deno.serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req);
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "الطريقة غير مسموحة" }, 405, corsHeaders);
 
   try {
-    const authHeader = req.headers.get("Authorization") || "";
-    const jwt = authHeader.replace("Bearer ", "");
+    const jwt = bearerToken(req);
     if (!jwt) return json({ error: "لازم تكون مسجّل دخول" }, 401, corsHeaders);
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !anonKey || !serviceKey) return json({ error: safeServerError("create-user:env", "missing Supabase env vars") }, 500, corsHeaders);
 
     // تحقّق إن اللي طالب العملية مدير عام فعّال - بنفس أسلوب reset-password
     const callerClient = createClient(supabaseUrl, anonKey, {
@@ -52,17 +53,18 @@ Deno.serve(async (req) => {
     }
 
     let payload: Record<string, unknown>;
-    try { payload = await req.json(); } catch (_) { return json({ error: "طلب غير صالح" }, 400, corsHeaders); }
+    try { payload = await readJsonBody(req); } catch (_) { return json({ error: "طلب غير صالح" }, 400, corsHeaders); }
     const { username, password, name, role } = payload as { username?: string; password?: string; name?: string; role?: string };
     const cleanUsername = String(username || "").trim().toLowerCase();
-    const cleanName = String(name || "").trim().slice(0, 80);
+    const cleanName = String(name || "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
 
     if (!cleanUsername || !/^[a-z0-9_]{3,30}$/.test(cleanUsername)) {
       return json({ error: "اسم المستخدم غير صالح (٣-٣٠ حرف، إنجليزي/أرقام/_ بس)" }, 400, corsHeaders);
     }
     if (!cleanName) return json({ error: "الاسم مطلوب" }, 400, corsHeaders);
-    if (!VALID_ROLES.includes(role)) return json({ error: "دور غير معروف" }, 400, corsHeaders);
+    if (typeof role !== "string" || !VALID_ROLES.includes(role)) return json({ error: "دور غير معروف" }, 400, corsHeaders);
 
+    if (typeof password !== "string" || password.length > 128) return json({ error: "كلمة المرور غير صالحة" }, 400, corsHeaders);
     const pwCheck = validatePasswordStrength(password);
     if (!pwCheck.ok) return json({ error: pwCheck.message }, 400, corsHeaders);
 

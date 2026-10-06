@@ -4,17 +4,11 @@ import { Logo } from "./shared";
 import { emptyMoney, computeShiftTotals, bookingGrandTotal, refundDueAmount, onlineNetAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
-import { getJournaledBookingIds, getShiftRecord } from "../data/shifts";
+import { getJournaledBookingIds, getShiftRecord, getShiftRecordsInRange } from "../data/shifts";
 
-async function loadShiftsInRange(fromDate, toDate) {
-  const out = [];
-  let d = fromDate, guard = 0;
-  while (d <= toDate && guard < 370) {
-    for (const s of SHIFTS) { const r = await getShiftRecord(d, s.key); if (r) out.push(r); }
-    d = addDays(d, 1); guard++;
-  }
-  return out;
-}
+// أقصى مدة لتقرير الفترة - بيحمي الشاشة من فترة ضخمة (أو تاريخ غلط) تعلّقها.
+const MAX_RANGE_DAYS = 366;
+const isValidDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "") && !Number.isNaN(new Date(s).getTime());
 
 function addMoneyInto(target, source) {
   currencyKeysOf(source).forEach((c) => { target[c] = (target[c] || 0) + (source[c] || 0); });
@@ -151,17 +145,31 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
 
   const effFrom = rangeMode === "day" ? date : fromDate;
   const effTo = rangeMode === "day" ? date : toDate;
+  const rangeError = !isValidDate(effFrom) || !isValidDate(effTo)
+    ? "اختار تاريخ صحيح"
+    : effFrom > effTo ? "تاريخ البداية لازم يكون قبل تاريخ النهاية"
+    : nightsBetween(effFrom, effTo) + 1 > MAX_RANGE_DAYS ? `أقصى فترة للتقرير ${MAX_RANGE_DAYS} يوم` : "";
 
   useEffect(() => {
+    if (rangeError) { setLoading(false); return undefined; }
     let cancelled = false;
     (async () => {
       setLoading(true);
-      if (rangeMode === "day") { const out = {}; for (const s of SHIFTS) out[s.key] = await getShiftRecord(date, s.key); if (!cancelled) setDayRecords(out); }
-      const recs = await loadShiftsInRange(effFrom, effTo);
+      if (rangeMode === "day") {
+        const out = {};
+        for (const s of SHIFTS) out[s.key] = await getShiftRecord(date, s.key);
+        if (!cancelled) setDayRecords(out);
+      }
+      const recs = await getShiftRecordsInRange(effFrom, effTo);
       const gj = await getJournaledBookingIds();
-      if (!cancelled) { setRecords(recs); if (gj) setGlobalJournaled(gj); setLoading(false); }
+      if (cancelled) return;
+      // فشل القراءة (null) مايتحولش لتقرير فاضي مضلّل - بنسيب آخر بيانات سليمة
+      if (recs) setRecords(recs);
+      if (gj) setGlobalJournaled(gj);
+      setLoading(false);
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rangeMode, date, fromDate, toDate, dataVersion]);
 
   const agg = useMemo(() => aggregateShifts(records), [records]);
@@ -209,12 +217,13 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     Object.keys(agg.byMethodCurrency || {}).forEach((m) => set.add(m));
     return Array.from(set);
   }, [combinedByMethodCurrency, agg]);
-  const daySpan = Math.max(1, nightsBetween(effFrom, effTo) + 1);
+  const daySpan = rangeError ? 1 : Math.max(1, nightsBetween(effFrom, effTo) + 1);
   const avgOccupancy = useMemo(() => {
+    if (rangeError || !rooms.length) return 0;
     let sum = 0, d = effFrom, n = 0;
     while (n < daySpan) { const active = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= d && d < b.checkout).length; sum += active / rooms.length; d = addDays(d, 1); n++; }
     return Math.round((sum / daySpan) * 100);
-  }, [bookings, effFrom, daySpan, rooms.length]);
+  }, [bookings, effFrom, daySpan, rooms.length, rangeError]);
 
   function moneyLine(obj, currencies) { const cs = currencies || currencyKeysOf(obj); return cs.length ? cs.map((c) => `${money(obj, c)}${c === "EGP" ? "ج" : c === "USD" ? "$" : " " + c}`).join(" + ") : "0"; }
 
@@ -244,7 +253,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
         <button className="cx-btn cx-btn-gold" onClick={() => window.print()}><Printer size={13} /> طباعة التقرير</button>
       </div>
 
-      {loading ? <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>جارِ التحميل...</div> : (
+      {rangeError ? <div style={{ padding: "2rem 1rem", textAlign: "center", color: "var(--rust)", fontSize: 13 }}>{rangeError}</div> : loading ? <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>جارِ التحميل...</div> : (
         <>
           {/* ترويسة التقرير المطبوع - بتظهر بس وقت الطباعة/التصدير كـ PDF،
               مش في الشاشة، عشان الورقة تطلع شكل رسمي باسم الفندق والفترة

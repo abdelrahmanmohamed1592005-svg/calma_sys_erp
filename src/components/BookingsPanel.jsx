@@ -8,6 +8,7 @@ import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, ea
 import { useShiftGate } from "../hooks/useShiftGate";
 import { appendBookingCollection } from "../data/shifts";
 import { withBusy } from "../lib/busy";
+import { sanitizeText } from "../domain/security";
 
 function emptyBooking() {
   return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", amountTendered: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", settled: false, notes: "", imported: false, needsRoomReview: false, duplicateConfirmed: false };
@@ -118,7 +119,21 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     // تضرب قيد قاعدة البيانات وتطلّع رسالة خطأ تقنية مش مفهومة.
     const clampedExtras = { laundry: Math.max(0, Number(form.extras.laundry) || 0), cafeteria: Math.max(0, Number(form.extras.cafeteria) || 0), tours: Math.max(0, Number(form.extras.tours) || 0), pickup: Math.max(0, Number(form.extras.pickup) || 0) };
     const clampedEarlyCheckin = { ...form.earlyCheckin, fee: Math.max(0, Number(form.earlyCheckin?.fee) || 0) };
-    let cleaned = { ...form, room: Number(form.room), totalRoom: form.totalRoom !== "" ? Number(form.totalRoom) : autoTotalRoom, extras: clampedExtras, earlyCheckin: clampedEarlyCheckin, needsRoomReview: false, approvalStatus: "approved" };
+    // أرقام غلط (سالبة/كسور/نص) بتتصلّح هنا قبل الحفظ بدل ما توصل لقيود قاعدة
+    // البيانات وتطلّع رسالة تقنية، ونصوص الحقول الحرة بتتنظّف وتتحدد بطول أقصى.
+    const pd = form.paymentDetails || {};
+    const cleanPaymentDetails = { ...pd, senderName: sanitizeText(pd.senderName, 120), senderNumber: sanitizeText(pd.senderNumber, 60), ref: sanitizeText(pd.ref, 200), commissionPct: Math.min(100, Math.max(0, Number(pd.commissionPct) || 0)) };
+    const priceNightNum = Math.max(0, Number(form.priceNight) || 0);
+    const totalRoomNum = form.totalRoom !== "" ? Number(form.totalRoom) : autoTotalRoom;
+    if (!Number.isFinite(totalRoomNum) || totalRoomNum < 0) { showToast("إجمالي الغرفة لازم يكون رقم صحيح مش سالب"); return; }
+    const amountPaidNum = form.amountPaid === "" ? 0 : Number(form.amountPaid);
+    if (!Number.isFinite(amountPaidNum) || amountPaidNum < 0) { showToast("المدفوع لازم يكون رقم صحيح مش سالب"); return; }
+    let cleaned = {
+      ...form, room: Number(form.room), guestName: sanitizeText(form.guestName, 120), phone: sanitizeText(form.phone, 40), code: sanitizeText(form.code, 60), notes: sanitizeText(form.notes, 1000),
+      pax: Math.max(1, Math.floor(Number(form.pax) || 1)), priceNight: priceNightNum, totalRoom: totalRoomNum, amountPaid: amountPaidNum, amountTendered: Math.max(0, Number(form.amountTendered) || 0),
+      extras: clampedExtras, earlyCheckin: { ...clampedEarlyCheckin, note: sanitizeText(clampedEarlyCheckin.note, 300) }, paymentDetails: cleanPaymentDetails, needsRoomReview: false, approvalStatus: "approved",
+    };
+    if (!cleaned.guestName) { showToast("لازم تحدد الغرفة واسم النزيل"); return; }
     // قفل قيمة الحجز (سعر/إجمالي/رسوم/دخول مبكر/طريقة دفع): لو مدير حجوزات
     // بيعدّل حجز قديم، أو لو الحجز متحصّل بالكامل فعلاً ولسه كذلك - نفرض
     // القيم الأصلية حتى لو الواجهة اتلعب فيها بأي طريقة (دفاع إضافي، القفل
@@ -245,7 +260,8 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
   }
 
   const list = bookings.filter((b) => {
-    if (filter && !String(b.room).includes(filter) && !b.guestName.includes(filter) && !(b.code && b.code.includes(filter))) return false;
+    const q = filter.trim().toLowerCase();
+    if (q && !String(b.room).includes(q) && !(b.guestName || "").toLowerCase().includes(q) && !(b.code && b.code.toLowerCase().includes(q))) return false;
     if (dateFrom && (b.checkout < dateFrom || (b.checkout === dateFrom && b.checkin !== b.checkout))) return false;
     if (dateTo && b.checkin > dateTo) return false;
     return true;
