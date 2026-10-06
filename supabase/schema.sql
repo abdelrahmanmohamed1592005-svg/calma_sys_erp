@@ -812,18 +812,21 @@ $$;
 -- إجمالي الغرفة المسموح بعد تغيير تاريخ الخروج (نفس حساب repricedTotalRoom
 -- في src/domain/bookingLogic.js بالظبط):
 --   * تمديد: الإجمالي الحالي + سعر الليلة × الليالي الزيادة.
---   * تقصير: الإجمالي الحالي × (الليالي الجديدة ÷ القديمة) - يعني متوسط سعر
---     الليلة الفعلي (يراعي أي خصم متفق عليه)، وصفر ليالي = صفر.
+--   * تقصير: الإجمالي الحالي × (الليالي اللي قعدها ÷ المحجوزة) - متوسط سعر
+--     الليلة الفعلي (يراعي أي خصم)، والحد الأدنى ليلة (مشي نفس اليوم = ليلة).
 create or replace function reprice_total(b bookings, new_checkout date)
 returns numeric language plpgsql immutable as $$
 declare
   old_n int := b.checkout - b.checkin;
   new_n int := new_checkout - b.checkin;
+  n int;
 begin
-  if new_n <= 0 then return 0; end if;
-  if new_n >= old_n then return coalesce(b.total_room, 0) + coalesce(b.price_night, 0) * (new_n - old_n); end if;
+  if new_n = old_n then return coalesce(b.total_room, 0); end if;
+  n := greatest(new_n, 1);  -- الحد الأدنى ليلة: نزيل دخل ومشي نفس اليوم بيتحاسب ليلة
+  if n = old_n then return coalesce(b.total_room, 0); end if;
+  if n > old_n then return coalesce(b.total_room, 0) + coalesce(b.price_night, 0) * (n - old_n); end if;
   if old_n <= 0 then return coalesce(b.total_room, 0); end if;
-  return round(coalesce(b.total_room, 0) * new_n * 100 / old_n) / 100;
+  return round(coalesce(b.total_room, 0) * n * 100 / old_n) / 100;
 end;
 $$;
 
@@ -1410,12 +1413,29 @@ end $$;
 drop policy if exists "claims delete" on shift_claims;
 create policy "claims delete" on shift_claims for delete using (is_gm());
 
+-- موظف الشيفت التالي (اللي اختار شيفته فعلاً) يقدر يقفل الشيفت اللي قبله
+-- لو لسه مفتوح (إقفال تلقائي لحظة ما الموظف الجديد يبدأ، حتى لو الأوفر تايم
+-- ماخلصش) - ترتيب الشيفتات: صباحي ← مسائي ← ليلي ← صباحي اليوم اللي بعده.
+create or replace function is_next_shift_claimant(rec_date date, rec_shift text)
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (
+    select 1 from shift_claims c
+    where c.username = (select username from profiles where id = auth.uid())
+      and ((rec_shift = 'morning' and c.date = rec_date and c.shift_key = 'evening')
+        or (rec_shift = 'evening' and c.date = rec_date and c.shift_key = 'night')
+        or (rec_shift = 'night' and c.date = rec_date + 1 and c.shift_key = 'morning'))
+  );
+$$;
+grant execute on function is_next_shift_claimant(date, text) to authenticated;
+
 drop policy if exists "shifts update" on shift_records;
 create policy "shifts update" on shift_records for update using (
-  (is_staff() and staff_username = (select username from profiles where id = auth.uid()))
+  (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
+                   or (closed = false and is_next_shift_claimant(date, shift_key))))
   or can_manage_financials() or (closed = true and is_gm_or_reservations())
 ) with check (
-  (is_staff() and staff_username = (select username from profiles where id = auth.uid()))
+  (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
+                   or is_next_shift_claimant(date, shift_key)))
   or can_manage_financials() or is_gm_or_reservations()
 );
 

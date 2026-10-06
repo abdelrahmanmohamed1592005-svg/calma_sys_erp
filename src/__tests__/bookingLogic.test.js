@@ -187,25 +187,27 @@ describe("findOverlappingBooking(s)", () => {
   });
 });
 
-describe("earlyLeavePatch", () => {
-  it("same-day leave: zero nights, total 0, status left-early (NOT cancelled)", () => {
+describe("earlyLeavePatch (nights stayed are billed, min 1 night)", () => {
+  it("same-day leave: left-early, checkout = checkin, total/paid/settled UNTOUCHED, never cancelled", () => {
     const c = makeBooking({ checkin: "2026-09-07", checkout: "2026-09-08", priceNight: 1200, totalRoom: 1200, amountPaid: 1200, settled: true });
     const p = earlyLeavePatch(c, "2026-09-07");
-    expect(p).toMatchObject({ checkout: "2026-09-07", totalRoom: 0, status: "تم تسجيل الخروج", leftEarly: true });
+    expect(p).toMatchObject({ checkout: "2026-09-07", status: "تم تسجيل الخروج", leftEarly: true });
     expect(p.status).not.toBe("ملغي");
-    expect(p.settled).toBe(true); // المدفوع (1200) لسه مغطّي الإجمالي الجديد (0)
+    expect(p.totalRoom).toBe(1200); // minimum 1 night is charged
+    expect(p.settled).toBe(true);
+    expect(p.amountPaid).toBeUndefined();
   });
-  it("trim reprices to the nights actually stayed and keeps the booking's own price", () => {
-    const c = makeBooking({ checkin: "2026-09-05", checkout: "2026-09-09", priceNight: 100, totalRoom: 400, amountPaid: 400, settled: true });
+  it("multi-night booking left same day: 1 night charged, rest reprices down", () => {
+    const c = makeBooking({ checkin: "2026-09-07", checkout: "2026-09-10", priceNight: 400, totalRoom: 1200, amountPaid: 1200, settled: true });
     const p = earlyLeavePatch(c, "2026-09-07");
-    expect(p.totalRoom).toBe(200);
+    expect(p.totalRoom).toBe(400);
+    expect(p.amountPaid).toBeUndefined();
+  });
+  it("trim only moves the checkout date and adds a note", () => {
+    const c = makeBooking({ checkin: "2026-09-05", checkout: "2026-09-09", notes: "x" });
+    const p = earlyLeavePatch(c, "2026-09-07");
     expect(p.checkout).toBe("2026-09-07");
-  });
-  it("a discounted booking never goes below zero and settled drops if money no longer covers it", () => {
-    const c = makeBooking({ checkin: "2026-09-07", checkout: "2026-09-08", priceNight: 1000, totalRoom: 500, amountPaid: 0, settled: false });
-    const p = earlyLeavePatch(c, "2026-09-07");
-    expect(p.totalRoom).toBe(0);
-    expect(p.settled).toBe(false);
+    expect(p.notes.startsWith("x — ")).toBe(true);
   });
 });
 
@@ -215,8 +217,8 @@ describe("repricedTotalRoom (discount-aware, matches DB reprice_total)", () => {
     expect(repricedTotalRoom(b, "2026-09-05", "2026-09-06")).toBe(300);
     expect(repricedTotalRoom(b, "2026-09-05", "2026-09-07")).toBe(600);
   });
-  it("zero nights is always zero, even with priceNight 0 (imported bookings)", () => {
-    expect(repricedTotalRoom({ checkin: "2026-09-05", checkout: "2026-09-06", priceNight: 0, totalRoom: 1000 }, "2026-09-05", "2026-09-05")).toBe(0);
+  it("same-day leave is charged a minimum of 1 night", () => {
+    expect(repricedTotalRoom({ checkin: "2026-09-05", checkout: "2026-09-06", priceNight: 0, totalRoom: 1000 }, "2026-09-05", "2026-09-05")).toBe(1000);
   });
   it("extension adds the booking's nightly rate", () => {
     expect(repricedTotalRoom({ checkin: "2026-09-05", checkout: "2026-09-06", priceNight: 1400, totalRoom: 1400 }, "2026-09-05", "2026-09-07")).toBe(2800);

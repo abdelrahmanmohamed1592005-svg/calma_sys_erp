@@ -299,6 +299,17 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     if (res.conflict) { showToast("حد تاني اختار نفس الشيفت في نفس اللحظة بالظبط - اختار شيفت تاني"); setRefreshKey((k) => k + 1); return; }
     if (res.error) { showToast(res.error); return; }
     onLog(`${profile.name} اختار ${SHIFTS.find((s) => s.key === shiftKey)?.label} ليوم ${today}`);
+    // الموظف الجديد بدأ شيفته: الشيفت اللي قبله لو لسه مفتوح (حتى لو الأوفر
+    // تايم ماخلصش) بيتقفل تلقائيًا بنفس بياناته، وعهدته بتتنقل للشيفت الجديد.
+    const prev = prevShiftOf(today, shiftKey);
+    const prevRec = await getShiftRecord(prev.date, prev.shiftKey);
+    if (prevRec && !prevRec.closed) {
+      const t = computeShiftTotals(prevRec);
+      const closedPrev = { ...prevRec, closed: true, closedBy: `${prevRec.staffName} (إقفال تلقائي - ${profile.name} بدأ الشيفت التالي)`, closedAt: Date.now(), ...t };
+      const r = await updateShiftRecordIfUnchanged(prev.date, prev.shiftKey, prevRec.updatedAt, closedPrev);
+      if (r.data) onLog(`إقفال تلقائي لشيفت ${SHIFTS.find((s) => s.key === prev.shiftKey)?.label} ليوم ${prev.date} لأن ${profile.name} بدأ الشيفت التالي`);
+      else showToast("⚠ الشيفت اللي قبلك لسه مفتوح وماتقفلش تلقائيًا - خليه يقفله أو مدير الحجوزات/المدير العام يقفله");
+    }
     setRefreshKey((k) => k + 1);
   }
 

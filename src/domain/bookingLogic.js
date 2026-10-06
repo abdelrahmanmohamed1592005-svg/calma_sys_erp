@@ -56,11 +56,10 @@ export function findOverlappingBookings(bookings, room, checkin, checkout, exclu
    مفيش ساعة). كل نزيل قديم بدأ فعلاً وخرج بدري بيتسجّل "غادر مبكرًا" - مش
    "ملغي" أبدًا (الإلغاء قرار مدير الحجوزات بس):
    - "trim": دخل قبل يوم دخول الجديد: خروجه بيتقصّر لتاريخ دخول الجديد
-     والإجمالي بيتعاد تسعيره على الليالي اللي قعدها فعلاً.
+     (الإجمالي بيتحسب على الليالي اللي قعدها فعلاً، والزيادة المدفوعة طلب رد فلوس).
    - "early_leave_same_day": دخل في نفس يوم دخول الجديد وخرج (ماقعدش أي ليلة):
-     بيتسجّل "غادر مبكرًا" وخروجه = دخوله (صفر ليالي) والإجمالي بيبقى صفر.
-   في الحالتين لو المدفوع بقى أكبر من الإجمالي الجديد، قاعدة البيانات بتفتح
-   تلقائيًا "طلب رد فلوس" لمدير الحجوزات يقرر فيه (رد أو رفض).
+     بيتسجّل "غادر مبكرًا" وخروجه = دخوله، وبيتحاسب ليلة واحدة (الحد الأدنى).
+   الليالي الزيادة اللي ماقعدهاش (لو كان دافعها) بتتحوّل لطلب رد فلوس.
    - الحجز القديم بيبدأ بعد النهارده (حجز مستقبلي فعلاً): ده مش خروج مبكر
      ولا تسكين مكرر - ده حجز مزدوج حقيقي وإلغاؤه قرار مدير الحجوزات يدويًا.
    - الجديد بيبدأ بعد النهارده والقديم لسه نزيله في الغرفة: مرفوض، مدير
@@ -76,8 +75,10 @@ export function resolveDuplicateCheckin(clash, newCheckin, today = todayStr()) {
 }
 
 /* التعديلات اللي بتتطبق على حجز قديم "غادر مبكرًا" في تسكين مكرر: تاريخ
-   الخروج الجديد، إجمالي الغرفة بعد إعادة التسعير على الليالي الفعلية،
-   وعلامة التحصيل (بتفضل بس لو المدفوع لسه مغطّي الإجمالي الجديد). */
+   الخروج الجديد + الحالة + العلامة، وإجمالي الغرفة بيتعاد حسابه على الليالي
+   اللي النزيل قعدها فعلاً (الحد الأدنى ليلة - لو مشي نفس يوم دخوله بيتحاسب
+   ليلة). لو كان دافع أكتر من الإجمالي الجديد، الزيادة (ليالي ماقعدهاش)
+   بتتحوّل تلقائيًا لطلب رد فلوس لمدير الحجوزات (قاعدة البيانات بتفتحه). */
 export function earlyLeavePatch(clash, newCheckout) {
   const totalRoom = repricedTotalRoom(clash, clash.checkin, newCheckout);
   const next = { ...clash, checkout: newCheckout, totalRoom };
@@ -103,19 +104,20 @@ export function planDuplicateResolution(clashes, newCheckin, today = todayStr())
   return { ok: true, actions };
 }
 
-/* لما مدير الحجوزات (أو الموظف في بلوك الغرف) يغيّر تاريخ خروج حجز موجود،
-   إجمالي سعر الغرفة بيتحرك تلقائيًا من غير ما يحتاج يفتح قفل الأسعار - نفس
-   حساب reprice_total في قاعدة البيانات بالظبط (schema.sql):
+/* لما حجز يتغيّر تاريخ خروجه (تمديد / تقصير / خروج مبكر)، إجمالي سعر الغرفة
+   بيتحرك تلقائيًا - نفس حساب reprice_total في قاعدة البيانات بالظبط:
+   - الحد الأدنى ليلة واحدة: نزيل دخل ومشي في نفس اليوم بيتحاسب ليلة.
    - تمديد: الإجمالي الحالي + سعر الليلة × الليالي الزيادة.
-   - تقصير: الإجمالي الحالي × (الليالي الجديدة ÷ القديمة) - متوسط سعر الليلة
-     الفعلي (يراعي أي خصم/سعر مخصوص متفق عليه)، وصفر ليالي = صفر. */
+   - تقصير: الإجمالي الحالي × (الليالي اللي قعدها ÷ الليالي المحجوزة) - متوسط
+     سعر الليلة الفعلي (يراعي أي خصم متفق عليه). */
 export function repricedTotalRoom(original, newCheckin, newCheckout) {
   const oldNights = nightsBetween(original.checkin, original.checkout);
   const newNights = nightsBetween(newCheckin, newCheckout);
   const base = Number(original.totalRoom) || 0;
   if (oldNights === newNights) return base;
-  if (newNights <= 0) return 0;
-  if (newNights > oldNights) return base + (newNights - oldNights) * (Number(original.priceNight) || 0);
+  const n = Math.max(newNights, 1);
+  if (n === oldNights) return base;
+  if (n > oldNights) return base + (n - oldNights) * (Number(original.priceNight) || 0);
   if (oldNights <= 0) return base;
-  return Math.round(base * newNights * 100 / oldNights) / 100;
+  return Math.round(base * n * 100 / oldNights) / 100;
 }

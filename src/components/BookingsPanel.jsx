@@ -162,14 +162,13 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     }
     // "تسكين مكرر" (الخطة اتأكدت فوق إنها سليمة): لكل حجز قديم متعارض -
     // - بدأ قبل الجديد: نقصّر تاريخ خروجه لتاريخ دخول الجديد ونعلّمه "غادر مبكرًا"
-    //   (مش "ملغي"، عشان إيراد الليالي اللي قعدها فعلاً يفضل محسوب صحيح).
-    // - نزل نفس يوم الجديد وخرج (ماقعدش أي ليلة): بيتسجّل "غادر مبكرًا" برضه
-    //   (خروجه = دخوله، إجماليه صفر)، ولو كان مدفوع عليه حاجة بتتفتح تلقائيًا
-    //   طلب رد فلوس لمدير الحجوزات.
+    //   (مش "ملغي"؛ بيتحاسب على الليالي اللي قعدها والزيادة المدفوعة طلب رد).
+    // - نزل نفس يوم الجديد وخرج: بيتسجّل "غادر مبكرًا" برضه (خروجه = دخوله)
+    //   وبيتحاسب ليلة واحدة (الحد الأدنى).
     // لو حفظ الحجز الجديد فشل بعد كده، كل اللي اتغيّر بيترجع تاني تلقائيًا.
     const resolved = [];
     const refundRequests = [];
-    if (conflict && form.duplicateConfirmed && duplicatePlan?.ok) {
+        if (conflict && form.duplicateConfirmed && duplicatePlan?.ok) {
       for (const act of duplicatePlan.actions) {
         const c = act.clash;
         const patch = earlyLeavePatch(c, act.checkout);
@@ -217,11 +216,11 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     } else if (paidDelta !== 0) {
       note += " — ⚠ مفيش شيفتك شغال دلوقتي فالمبلغ ماتسجّلش في اليومية تلقائيًا، سجّليه يدويًا";
     }
+    refundRequests.forEach((c) => { note += ` — ${c.guestName} غادر مبكرًا: اتحاسب على الليالي اللي قعدها، و${fmt((Number(c.amountPaid) || 0) - bookingGrandTotal(c))} ${c.currency} زيادة مدفوعة عن الليالي اللي ماقعدهاش اتبعتت كطلب رد فلوس لمدير الحجوزات`; });
     if (reopenedDue > 0) note += ` — الحجز عليه ${fmt(reopenedDue)} ${cleaned.currency} متبقي (فرق الليالي) والغرفة هتظهر حمراء لحد ما موظف الشيفت يحصّله`;
     const paidAfter = Number(cleaned.amountPaid) || 0;
     if (!cleaned.paymentDetails?.onlinePaid && isExistingBooking && paidAfter > bookingGrandTotal(cleaned) && cleaned.status !== "ملغي") note += ` — ⚠ المدفوع (${fmt(paidAfter)}) بقى أكبر من الإجمالي الجديد بـ ${fmt(paidAfter - bookingGrandTotal(cleaned))} ${cleaned.currency} - فيه فلوس زيادة لازم تترد للنزيل`;
     if (cleaned.status === "ملغي" && originalBooking?.status !== "ملغي" && paidAfter > 0) note += ` — الحجز اتلغى وفيه ${fmt(paidAfter)} ${cleaned.currency} متحصّل: اتبعت طلب رد فلوس لمدير الحجوزات (هو اللي يقرر يرد أو يرفض، ولو رد بيتشال من التحصيل واليومية)`;
-    refundRequests.forEach((c) => { note += ` — ${c.guestName} غادر مبكرًا وفيه ${fmt((Number(c.amountPaid) || 0) - bookingGrandTotal(c))} ${c.currency} زيادة عن اللي استحقه: اتبعت طلب رد فلوس لمدير الحجوزات يقرر فيه`; });
     setForm(null); showToast("تم الحفظ" + note);
   }
   async function removeBooking(id) { const b = bookings.find((x) => x.id === id); const res = await onDeleteBooking(id); if (res?.error) { showToast(res.error); return; } onLog(`حذف حجز ${roomLabel(rooms, b?.room)} — ${b?.guestName}`); showToast("تم الحذف"); }
@@ -338,8 +337,8 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
               {duplicatePlan?.ok && form.duplicateConfirmed && (
                 <div style={{ marginTop: 6, fontWeight: 400, color: "var(--teal)" }}>
                   اللي هيحصل عند الحفظ: {duplicatePlan.actions.map((act) => act.action === "trim"
-                    ? `${act.clash.guestName} هيتسجّل "غادر مبكرًا" وخروجه يتقصّر لـ ${act.checkout} (بيتحاسب على الليالي اللي قعدها بس)`
-                    : `${act.clash.guestName} (دخل ${act.clash.checkin} وخرج في نفس اليوم) هيتسجّل "غادر مبكرًا" بصفر ليالي${(Number(act.clash.amountPaid) || 0) > 0 ? ` وفلوسه (${fmt(act.clash.amountPaid)} ${act.clash.currency}) هتتبعت كطلب رد فلوس لمدير الحجوزات يقرر فيه` : ""}`).join(" · ")} - والحجزين بتفاصيلهم يفضلوا ظاهرين في القائمة.
+                    ? `${act.clash.guestName} هيتسجّل "غادر مبكرًا" وخروجه يتقصّر لـ ${act.checkout} (بيتحاسب على الليالي اللي قعدها بس${(Number(act.clash.amountPaid) || 0) > 0 ? " - والزيادة المدفوعة لو فيه بتتبعت طلب رد فلوس لمدير الحجوزات" : ""})`
+                    : `${act.clash.guestName} (دخل ${act.clash.checkin} وخرج في نفس اليوم) هيتسجّل "غادر مبكرًا" ويتحاسب ليلة واحدة (الحد الأدنى)${(Number(act.clash.amountPaid) || 0) > 0 ? " - والزيادة المدفوعة لو فيه بتتبعت طلب رد فلوس لمدير الحجوزات" : ""}`).join(" · ")} - والحجزين بتفاصيلهم يفضلوا ظاهرين في القائمة.
                 </div>
               )}
             </div>
