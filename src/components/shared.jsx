@@ -116,6 +116,21 @@ export function PaymentDetailsInline({ method, details, onChange, disabled }) {
   );
 }
 
+/* أكواد الأفراد (كود لكل فرد في الحجز، مربوط بالغرفة اللي سكن فيها) - بتتعرض كشرايح صغيرة */
+export function GuestCodeChips({ codes }) {
+  if (!codes || !codes.length) return null;
+  return (
+    <div data-testid="guest-codes" style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+      {codes.map((g) => (
+        <span key={g.seq} className="cx-pill" title={`كود الفرد ${g.seq}`} style={{ background: "#fff", border: "1px solid var(--hair)", fontSize: 11.5 }}>
+          <span dir="ltr" style={{ fontFamily: "monospace", fontWeight: 700 }}>{g.code}</span>
+          <span style={{ color: "var(--muted)", marginInlineStart: 6 }}>فرد {g.seq}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /*
   حماية من "CSV Formula Injection": لو اسم نزيل أو ملاحظة بدأت بـ = أو + أو -
   أو @، برنامج زي Excel ممكن يتعامل معاها كصيغة (formula) بدل نص عادي لما

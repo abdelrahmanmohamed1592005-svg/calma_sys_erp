@@ -13,7 +13,7 @@ import { supabaseConfigured } from "./lib/supabaseClient";
 import { subscribeToAllChanges } from "./lib/realtime";
 import { signUpUser, signIn, signOut, getSession, onAuthStateChange, getMyProfile, listProfiles, checkSetupNeeded, changeOwnPassword as authChangeOwnPassword } from "./lib/auth";
 import { getRooms, getRoomOverrides, setRoomOverride } from "./data/rooms";
-import { getBookings, insertBooking, updateBookingIfUnchanged, deleteBooking, decideBookingRefund } from "./data/bookings";
+import { getBookings, getBookingGuests, insertBooking, updateBookingIfUnchanged, deleteBooking, decideBookingRefund } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
 
 import { PERMISSIONS, ROOMS_DEFAULT } from "./domain/constants";
@@ -30,6 +30,7 @@ export default function App() {
   const [overrides, setOverrides] = useState({});
   const [bookings, setBookings] = useState([]);
   const [activity, setActivity] = useState([]);
+  const [guestCodes, setGuestCodes] = useState({});     // أكواد الأفراد: { bookingId: [{seq, code, room}] }
   const [loadingData, setLoadingData] = useState(true);
   const [toast, setToast] = useState(null);
   const [pendingEditBookingId, setPendingEditBookingId] = useState(null);
@@ -147,13 +148,14 @@ export default function App() {
     let cancelled = false;
     const seqAtStart = mutationSeq.current;
     (async () => {
-      const [r, o, b, a] = await Promise.all([getRooms(), getRoomOverrides(), getBookings(), getActivity()]);
+      const [r, o, b, a, g] = await Promise.all([getRooms(), getRoomOverrides(), getBookings(), getActivity(), getBookingGuests()]);
       if (cancelled) return;
       if (mutationSeq.current !== seqAtStart) { setDataVersion((v) => v + 1); return; }
       if (r) setRooms(r.length ? r : ROOMS_DEFAULT);
       if (o) setOverrides(o);
       if (b) setBookings(b);
       if (a) setActivity(a);
+      if (g) setGuestCodes(g);
       setLoadingData(false);
     })();
     return () => { cancelled = true; };
@@ -174,11 +176,16 @@ export default function App() {
     const res = await updateBookingIfUnchanged(id, booking.updatedAt, booking);
     mutationSeq.current++; // بعد الكتابة كمان: تحميل بدأ وقت الكتابة ماينفعش يكتب نتيجته فوقها
     if (res.conflict) { setDataVersion((v) => v + 1); return { error: "في حد عدّل نفس الحجز ده في نفس اللحظة - البيانات اتحدّثت، راجعي وجرّبي تاني" }; }
-    if (res.data) setBookings((prev) => prev.map((b) => (b.id === id ? res.data : b)));
+    if (res.data) {
+      const old = bookings.find((b) => b.id === id);
+      setBookings((prev) => prev.map((b) => (b.id === id ? res.data : b)));
+      // عدد الأفراد أو الغرفة اتغيّروا => أكواد الأفراد اتغيّرت في قاعدة البيانات، نحمّلها
+      if (!old || old.pax !== res.data.pax || old.room !== res.data.room) setDataVersion((v) => v + 1);
+    }
     return res;
   }
   async function handleToggleSettled(booking, value) { return safeUpdateBooking(booking.id, { ...booking, settled: value }); }
-  async function handleInsertBooking(booking) { mutationSeq.current++; const res = await insertBooking(booking); mutationSeq.current++; if (res.data) setBookings((prev) => [res.data, ...prev]); return res; }
+  async function handleInsertBooking(booking) { mutationSeq.current++; const res = await insertBooking(booking); mutationSeq.current++; if (res.data) { setBookings((prev) => [res.data, ...prev]); setDataVersion((v) => v + 1); } return res; }
   async function handleUpdateBooking(id, booking) { return safeUpdateBooking(id, booking); }
   // قرار مدير الحجوزات في طلب رد فلوس (رد فعلي / إبقاء الفلوس) - معاملة واحدة
   // في قاعدة البيانات (decide_booking_refund)، وبعدها نحدّث الحجوزات واليومية.
@@ -235,9 +242,9 @@ export default function App() {
       )}
       {loadingData ? <LoadingScreen /> : (
         <>
-          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} guestCodes={guestCodes} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "ledger" && <DailyLedger rooms={rooms} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDeleteBooking={handleDeleteBooking} onDecideRefund={handleDecideRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
+          {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} guestCodes={guestCodes} overrides={overrides} onSaveOverride={handleSaveOverride} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDeleteBooking={handleDeleteBooking} onDecideRefund={handleDecideRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
           {activeTab === "activity" && <ActivityPanel activity={activity} />}
           {activeTab === "users" && <UsersPanel users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}

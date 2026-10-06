@@ -315,6 +315,7 @@ select t.eq('E4 مفيش طلب رد (مفيش مدفوع نقدي)', t.f('E4', 
 -- F) تطابق إعادة تسعير الإقامة (نفس معادلة الواجهة repricedTotalRoom)
 -- ======================================================================
 \ir more_flows.sql
+\ir guests_and_rows.sql
 
 create table t.reprice_cases (checkin date, checkout date, new_checkout date, total numeric, price numeric, expected numeric);
 \o

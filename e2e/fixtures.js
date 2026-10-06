@@ -87,7 +87,7 @@ export const test = base.extend({
       const bc = [];
       for (const c of collections) {
         const row = rows.find((x) => x.room === c.room);
-        Object.assign(row, { collectionAmt: c.amount, collectionMethod: c.method || "كاش", collectionCurrency: c.currency || "USD", collectionDesc: c.desc || "تحصيل سابق" });
+        Object.assign(row, { collectionAmt: c.amount, collectionMethod: c.method || "كاش", collectionCurrency: c.currency || "USD", collectionDesc: c.desc || "تحصيل سابق", ...(c.bookingId ? { bookingId: c.bookingId } : {}) });
         if (c.bookingId) bc.push({ id: randomUUID(), bookingId: c.bookingId });
       }
       for (const [room, patch] of Object.entries(rowsPatch)) Object.assign(rows.find((x) => String(x.room) === String(room)), patch);

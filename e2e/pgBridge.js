@@ -17,7 +17,7 @@ pg.types.setTypeParser(1184, (v) => v.replace(" ", "T").replace(/([+-]\d{2})$/, 
 
 const IDENT = /^[a-z_][a-z0-9_]*$/;
 const ident = (s) => { if (!IDENT.test(s)) throw new Error("bad identifier " + s); return `"${s}"`; };
-const PK = { rooms: ["number"], room_overrides: ["room_number"], profiles: ["id"], bookings: ["id"], shift_records: ["date", "shift_key"], shift_claims: ["date", "shift_key"], activity_log: ["id"] };
+const PK = { booking_guests: ["id"], rooms: ["number"], room_overrides: ["room_number"], profiles: ["id"], bookings: ["id"], shift_records: ["date", "shift_key"], shift_claims: ["date", "shift_key"], activity_log: ["id"] };
 const TABLES = Object.keys(PK);
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 

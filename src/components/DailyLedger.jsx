@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen } from "lucide-react";
 import { Logo } from "./shared";
-import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord } from "../domain/money";
+import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
@@ -79,6 +79,56 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, onUpdateCafeteria }) 
           </tr>
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const hotelRowsOf = (record) => (record.hotelRows && record.hotelRows.length ? record.hotelRows : [emptyLedgerRow(HOTEL_ROW_LABEL)]);
+
+/* بنود "مصاريف وإيرادات الفندق": مش مرتبطة بغرفة (كهرباء، إيجار قاعة، مشتريات...). بنفس خانات
+   صف الكافيتيريا (مصروف + إيراد) لكن الموظف يقدر يضيف منها بنود حسب الحاجة. */
+function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) {
+  const rows = hotelRowsOf(record);
+  return (
+    <div className="cx-card" data-testid="hotel-rows" style={{ marginTop: 14, padding: 12 }}>
+      <div style={{ fontWeight: 800, marginBottom: 2 }}>مصاريف وإيرادات الفندق</div>
+      <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>بنود مش مرتبطة بغرفة (كهرباء، إيجار قاعة، مشتريات...). المصروف بيتخصم من الخزينة (كاش) والإيراد بيتضاف زي أي تحصيل، وبيدخلوا في إجماليات اليومية والتقارير.</div>
+      <div style={{ overflowX: "auto" }}>
+        <table className="cx-table" style={{ fontSize: 12, minWidth: 760 }}>
+          <thead><tr><th className="cx-th" style={{ width: 70 }}>البند</th><th className="cx-th">المصاريف</th><th className="cx-th">الإيرادات</th><th className="cx-th">تفاصيل الدفع الأونلاين</th><th className="cx-th">ملاحظات</th>{!locked && <th className="cx-th" style={{ width: 36 }} />}</tr></thead>
+          <tbody>
+            {rows.map((row, idx) => (
+              <tr key={idx} data-testid={"hotel-row-" + idx}>
+                <td style={{ textAlign: "center", fontWeight: 700, whiteSpace: "nowrap" }}>فندق {idx + 1}</td>
+                <td>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={row.expenseCategory} onChange={(e) => onUpdateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    <input className="cx-input" placeholder="بيان المصروف" disabled={locked} value={row.expenseDesc} onChange={(e) => onUpdateRow(idx, { expenseDesc: e.target.value })} />
+                    <div style={{ display: "flex", gap: 3 }}>
+                      <input className="cx-input" type="number" placeholder="مبلغ المصروف" disabled={locked} value={row.expenseAmt} onChange={(e) => onUpdateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
+                      <CurrencyPicker value={row.expenseCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { expenseCurrency: v })} />
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => onUpdateRow(idx, { collectionMethod: e.target.value })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                    <input className="cx-input" placeholder="بيان الإيراد" disabled={locked} value={row.collectionDesc} onChange={(e) => onUpdateRow(idx, { collectionDesc: e.target.value })} />
+                    <div style={{ display: "flex", gap: 3 }}>
+                      <input className="cx-input" type="number" placeholder="مبلغ الإيراد" disabled={locked} value={row.collectionAmt} onChange={(e) => onUpdateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
+                      <CurrencyPicker value={row.collectionCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { collectionCurrency: v })} />
+                    </div>
+                  </div>
+                </td>
+                <td><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => onUpdateRow(idx, { paymentDetails: d })} /></td>
+                <td><input className="cx-input" disabled={locked} value={row.notes} onChange={(e) => onUpdateRow(idx, { notes: e.target.value })} /></td>
+                {!locked && <td style={{ textAlign: "center" }}>{rows.length > 1 && <button className="cx-btn cx-btn-outline" title="شيل البند ده" aria-label={"شيل بند فندق " + (idx + 1)} style={{ padding: "3px 8px" }} onClick={() => onRemoveRow(idx)}>×</button>}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!locked && <button className="cx-btn cx-btn-outline" data-testid="hotel-row-add" style={{ marginTop: 8, fontSize: 12 }} onClick={onAddRow}><Plus size={13} /> إضافة بند مصاريف/إيرادات فندق</button>}
     </div>
   );
 }
@@ -354,6 +404,9 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     debounceTimer.current = setTimeout(flushPending, 700);
   }
   function updateRow(idx, patch) { const rows = record.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)); persist({ ...record, rows }, { silent: true }); }
+  function updateHotelRow(idx, patch) { const hotelRows = hotelRowsOf(record).map((r, i) => (i === idx ? { ...r, ...patch } : r)); persist({ ...record, hotelRows }, { silent: true }); }
+  function addHotelRow() { persist({ ...record, hotelRows: [...hotelRowsOf(record), emptyLedgerRow(HOTEL_ROW_LABEL)] }, { silent: true, immediate: true }); }
+  function removeHotelRow(idx) { persist({ ...record, hotelRows: hotelRowsOf(record).filter((_, i) => i !== idx) }, { silent: true, immediate: true }); }
   function updateCafeteria(patch) { persist({ ...record, cafeteria: { ...record.cafeteria, ...patch } }, { silent: true }); }
   function updateHandover(cur, val) { persist({ ...record, handover: { ...record.handover, [cur]: Number(val) || 0 } }, { silent: true }); }
   function addCurrency(cur) { if (!cur || record.handover?.[cur] != null) return; persist({ ...record, handover: { ...record.handover, [cur]: 0 } }, { silent: true, immediate: true }); }
@@ -451,6 +504,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
             <LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} onUpdateCafeteria={updateCafeteria} />
+            <HotelRowsTable record={record} locked={locked} onUpdateRow={updateHotelRow} onAddRow={addHotelRow} onRemoveRow={removeHotelRow} />
             <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <input type="checkbox" checked={record.flagged} disabled={locked} onChange={(e) => persist({ ...record, flagged: e.target.checked }, { immediate: true })} />
@@ -487,6 +541,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
                 </div>
               )}
               <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
+              {(histRecord.hotelRows || []).some((r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || r.expenseDesc || r.collectionDesc) && <HotelRowsTable record={histRecord} locked={true} onUpdateRow={() => {}} onAddRow={() => {}} onRemoveRow={() => {}} />}
               <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
               <LedgerPrintFooter />

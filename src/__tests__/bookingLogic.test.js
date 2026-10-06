@@ -229,3 +229,37 @@ describe("repricedTotalRoom (discount-aware, matches DB reprice_total)", () => {
     expect(roomsOverlap([zero], 601, "2026-09-06", "2026-09-09")).toBe(false);
   });
 });
+
+
+describe("computeRoomStatus - الحالة اليدوية مابتخفيش نزيل جديد اتسكّن بعدها (تسكين مكرر)", () => {
+  const T = new Date(2026, 8, 10, 12, 0, 0).getTime();       // ١٠ سبتمبر ١٢ ظهرًا (بتوقيت الجهاز)
+  const today = "2026-09-10";
+  const mk = (over) => ({ id: "x", room: 601, status: "مؤكد", checkin: today, checkout: "2026-09-12", amountPaid: 0, totalRoom: 100, extras: {}, ...over });
+  const ovAt = (status, updatedAt) => ({ 601: { status, updatedAt } });
+
+  it("غادر مبكرًا اتحدّدت قبل الحجز الجديد => الحجز الجديد هو اللي يبان", () => {
+    const s = computeRoomStatus(601, [mk({ guestName: "New", createdAt: T + 5000 })], ovAt("early_checkout", T), today);
+    expect(s.key).toBe("occupied_unpaid");
+    expect(s.booking.guestName).toBe("New");
+  });
+
+  it("غادر مبكرًا اتحدّدت بعد الحجز => لسه بتظهر (الغرفة فعلاً فاضية)", () => {
+    const s = computeRoomStatus(601, [mk({ createdAt: T - 5000 })], ovAt("early_checkout", T), today);
+    expect(s.key).toBe("early_checkout");
+  });
+
+  it("تحت التنظيف بتتلغي بنفس الطريقة بحجز أحدث", () => {
+    const s = computeRoomStatus(601, [mk({ createdAt: T + 5000 })], ovAt("cleaning", T), today);
+    expect(s.key).toBe("occupied_unpaid");
+  });
+
+  it("الصيانة مابتتلغيش بحجز أحدث", () => {
+    const s = computeRoomStatus(601, [mk({ createdAt: T + 5000 })], ovAt("maintenance", T), today);
+    expect(s.key).toBe("maintenance");
+  });
+
+  it("من غير حجز نشط الحالة اليدوية بتفضل", () => {
+    const s = computeRoomStatus(601, [], ovAt("early_checkout", T), today);
+    expect(s.key).toBe("early_checkout");
+  });
+});

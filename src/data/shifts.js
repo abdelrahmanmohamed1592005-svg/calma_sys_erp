@@ -6,7 +6,7 @@ import { SHIFTS } from "../domain/constants";
 function shiftFromRow(r) {
   return {
     date: r.date, shiftKey: r.shift_key, staffName: r.staff_name, staffUsername: r.staff_username,
-    handover: r.handover || { EGP: 0, USD: 0 }, methodHandover: r.method_handover || {}, rows: r.rows || [], cafeteria: r.cafeteria || {},
+    handover: r.handover || { EGP: 0, USD: 0 }, methodHandover: r.method_handover || {}, rows: r.rows || [], cafeteria: r.cafeteria || {}, hotelRows: r.hotel_rows || [],
     bookingCollections: r.booking_collections || [],
     shiftNotes: r.shift_notes || "", flagged: !!r.flagged, closed: !!r.closed, closedBy: r.closed_by,
     closedAt: r.closed_at ? new Date(r.closed_at).getTime() : null,
@@ -21,7 +21,7 @@ function shiftFromRow(r) {
 function shiftToRow(rec) {
   return {
     date: rec.date, shift_key: rec.shiftKey, staff_name: rec.staffName, staff_username: rec.staffUsername,
-    handover: rec.handover, method_handover: rec.methodHandover, rows: rec.rows, cafeteria: rec.cafeteria,
+    handover: rec.handover, method_handover: rec.methodHandover, rows: rec.rows, cafeteria: rec.cafeteria, hotel_rows: rec.hotelRows || [],
     booking_collections: rec.bookingCollections || [], shift_notes: rec.shiftNotes,
     flagged: rec.flagged, closed: rec.closed, closed_by: rec.closedBy,
     closed_at: rec.closedAt ? new Date(rec.closedAt).toISOString() : null,

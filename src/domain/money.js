@@ -21,8 +21,8 @@ export function methodOptionsFor(currentValue) {
   return currentValue && !PAYMENT_METHODS.includes(currentValue) ? [...PAYMENT_METHODS, currentValue] : PAYMENT_METHODS;
 }
 export const EXPENSE_CATEGORIES = ["كهرباء ومياه", "مشتريات ومطبخ", "صيانة", "مرتبات وحوافز", "نظافة", "أخرى"];
-export const DEFAULT_ONLINE_COMMISSION_PCT = 15;
 
+export const HOTEL_ROW_LABEL = "فندق";
 export const emptyMoney = () => ({});
 /* كل عملة اتسجل ليها أي مبلغ (عهدة/تحصيل/مصاريف) في أي مكان في السجل - مش
    بس جنيه ودولار. بيتستخدم عشان نعرض كارت لكل عملة استُخدمت فعليًا بدل
@@ -32,20 +32,12 @@ export function currencyKeysOf(...moneyObjects) {
   moneyObjects.forEach((m) => { if (m && typeof m === "object") Object.keys(m).forEach((k) => { if (k) set.add(k); }); });
   return Array.from(set).sort((a, b) => (a === "EGP" ? -1 : b === "EGP" ? 1 : a === "USD" ? -1 : b === "USD" ? 1 : a.localeCompare(b)));
 }
-export const emptyPaymentDetails = () => ({ senderName: "", senderNumber: "", ref: "", onlinePaid: false, commissionPct: DEFAULT_ONLINE_COMMISSION_PCT });
+export const emptyPaymentDetails = () => ({ senderName: "", senderNumber: "", ref: "", onlinePaid: false });
 export const emptyLedgerRow = (room) => ({
   room, expenseDesc: "", expenseAmt: "", expenseCategory: "أخرى", expenseCurrency: "EGP",
   collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP",
   paymentDetails: emptyPaymentDetails(), notes: "",
 });
-
-/* المبلغ الصافي بعد خصم عمولة منصة الحجز الأونلاين (Booking.com وغيرها) */
-export function onlineNetAmount(grossAmount, commissionPct) {
-  const gross = Number(grossAmount) || 0;
-  const pct = Number(commissionPct) || 0;
-  return gross * (1 - pct / 100);
-}
-
 
 export function fmt(n) {
   return (Number(n) || 0).toLocaleString("ar-EG");
@@ -65,6 +57,9 @@ export function freshShiftRecord(date, shiftKey, staffName, staffUsername, rooms
     methodHandover: (methodHandover && Object.keys(methodHandover).length > 0) ? methodHandover : {},
     rows: rooms.map((r) => emptyLedgerRow(r.number)),
     cafeteria: emptyLedgerRow("كافيتيريا"),
+    // بنود "مصاريف وإيرادات الفندق": مش مرتبطة بغرفة (كهرباء، إيجار قاعة، مشتريات...) - الموظف
+    // بيضيف منها بنود حسب الحاجة، وبتدخل في إجماليات اليومية والتقارير زي باقي الصفوف.
+    hotelRows: [emptyLedgerRow(HOTEL_ROW_LABEL)],
     // سجل داخلي بس (مش بيظهر في أي شاشة) بيحفظ أرقام الحجوزات اللي تحصيلها
     // اتضاف فعليًا لصف غرفتها في rows فوق (عن طريق appendBookingCollection في
     // data/shifts.js) - كل عنصر {id, bookingId}. الهدف الوحيد منه إن تقرير
@@ -89,16 +84,24 @@ export function applyCollectionToRows(rows, entry) {
   if (amount === 0) return { rows, added: false };
   const label = `${entry.note || "تحصيل"}${entry.guestName ? " - " + entry.guestName : ""} (${amount > 0 ? "+" : ""}${amount} ${entry.currency})`;
   const isEmptyRow = (r) => (Number(r.collectionAmt) || 0) === 0 && !r.collectionDesc;
-  let idx = rows.findIndex((r) => r.room === entry.room && !isEmptyRow(r) && r.collectionMethod === entry.method && r.collectionCurrency === entry.currency);
-  if (idx === -1) idx = rows.findIndex((r) => r.room === entry.room && isEmptyRow(r));
+  const bid = entry.bookingId || null;
+  const sameMethod = (r) => r.collectionMethod === entry.method && r.collectionCurrency === entry.currency;
+  // تحصيل كل حجز بيتسجّل في صف مستقل بتاعه (bookingId) - فتحصيل التسكين المكرر مابيتدمجش
+  // مع تحصيل الحجز اللي كان قبله على نفس الغرفة، وبيبان لوحده في اليومية.
+  let idx = -1;
+  if (bid) idx = rows.findIndex((r) => r.room === entry.room && r.bookingId === bid && !isEmptyRow(r) && sameMethod(r));
+  // من غير bookingId (تحصيل قديم/يدوي): السلوك القديم - بيتجمّع مع صف الغرفة بنفس الوسيلة والعملة
+  else idx = rows.findIndex((r) => r.room === entry.room && !isEmptyRow(r) && sameMethod(r));
+  if (idx === -1) idx = rows.findIndex((r) => r.room === entry.room && isEmptyRow(r) && !r.bookingId);
   const out = rows.slice();
   if (idx === -1) {
-    out.push({ ...emptyLedgerRow(entry.room), collectionAmt: amount, collectionMethod: entry.method, collectionCurrency: entry.currency, collectionDesc: label });
+    out.push({ ...emptyLedgerRow(entry.room), ...(bid ? { bookingId: bid } : {}), collectionAmt: amount, collectionMethod: entry.method, collectionCurrency: entry.currency, collectionDesc: label });
     return { rows: out, added: true };
   }
   const r = rows[idx];
   out[idx] = {
     ...r,
+    ...(bid && !r.bookingId ? { bookingId: bid } : {}),
     collectionAmt: (Number(r.collectionAmt) || 0) + amount,
     collectionMethod: entry.method,
     collectionCurrency: entry.currency,
@@ -108,7 +111,7 @@ export function applyCollectionToRows(rows, entry) {
 }
 
 export function computeShiftTotals(record) {
-  const allRows = [...record.rows, { ...record.cafeteria, room: "كافيتيريا" }];
+  const allRows = [...record.rows, { ...record.cafeteria, room: "كافيتيريا" }, ...(record.hotelRows || [])];
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
   const byMethodCurrency = {}, byCategory = {};
   allRows.forEach((r) => {
@@ -202,18 +205,38 @@ export function refundDueAmount(b) {
    فوق آخر نسخة من السيرفر (fresh). خانة هو ما لمسهاش بتتاخد من السيرفر زي ما هي. */
 export function rebaseShiftRecord(base, mine, fresh) {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  const skip = new Set(["rows", "bookingCollections", "updatedAt", "closed", "closedBy", "closedAt"]);
+  const skip = new Set(["rows", "hotelRows", "bookingCollections", "updatedAt", "closed", "closedBy", "closedAt"]);
   const out = { ...fresh };
   Object.keys(mine).forEach((k) => { if (!skip.has(k) && !same(mine[k], base?.[k])) out[k] = mine[k]; });
-  const rows = (fresh.rows || []).slice();
-  (mine.rows || []).forEach((row, i) => {
-    const b = base?.rows?.[i];
-    if (!b) { rows.push(row); return; }
-    if (!rows[i] || same(row, b)) return;
-    const merged = { ...rows[i] };
-    Object.keys(row).forEach((k) => { if (!same(row[k], b[k])) merged[k] = row[k]; });
-    rows[i] = merged;
-  });
-  out.rows = rows;
+  // الصفوف (الغرف وبنود الفندق): نطبّق بس الخانات اللي الموظف غيّرها فعلاً فوق نسخة السيرفر
+  const mergeRows = (baseRows, mineRows, freshRows) => {
+    const rows = (freshRows || []).slice();
+    (mineRows || []).forEach((row, i) => {
+      const b = baseRows?.[i];
+      if (!b) { rows.push(row); return; }
+      if (!rows[i] || same(row, b)) return;
+      const merged = { ...rows[i] };
+      Object.keys(row).forEach((k) => { if (!same(row[k], b[k])) merged[k] = row[k]; });
+      rows[i] = merged;
+    });
+    return rows;
+  };
+  out.rows = mergeRows(base?.rows, mine.rows, fresh.rows);
+  out.hotelRows = mergeRows(base?.hotelRows, mine.hotelRows, fresh.hotelRows);
   return out;
+}
+
+/* حالة الفلوس لحجز ملغي (أو اترد منه فلوس) بنص واضح - بتظهر دايمًا في قائمة الحجوزات:
+   kind = pending | refunded | kept | holding | none. بترجّع null لحجز شغال ماحصلش فيه رد. */
+export function refundStatusOf(b) {
+  if (!b) return null;
+  const paid = Number(b.amountPaid) || 0;
+  const cur = b.currency || "";
+  const fmtN = (n) => (Number(n) || 0).toLocaleString("ar-EG");
+  if (b.refundPending && refundDueAmount(b) > 0) return { kind: "pending", text: `طلب رد فلوس معلّق: ${fmtN(refundDueAmount(b))} ${cur} - منتظر قرار مدير الحجوزات` };
+  if (b.refundDecision === "refunded" && Number(b.refundedAmount) > 0) return { kind: "refunded", text: `اترد للنزيل ${fmtN(b.refundedAmount)} ${cur}${b.refundedBy ? " (بواسطة " + b.refundedBy + ")" : ""}` };
+  if (b.status !== "ملغي") return null;
+  if (b.refundDecision === "kept") return { kind: "kept", text: `رُفض الرد - ${fmtN(paid)} ${cur} فضلت متحصّلة على الحجز` };
+  if (paid > 0) return { kind: "holding", text: `لسه على الحجز ${fmtN(paid)} ${cur} متحصّلة - محدش قرر رد` };
+  return { kind: "none", text: "ملغي من غير فلوس متحصّلة - مفيش رد مطلوب" };
 }

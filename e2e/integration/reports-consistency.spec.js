@@ -42,7 +42,7 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
   await env.seedShift("omar", { key: "night", day, rowsPatch: night, cafePatch: cafeN });
 
   // ---- الحجوزات ----
-  const online = { onlinePaid: true, commissionPct: 15, senderName: "", senderNumber: "", ref: "BK-1" };
+  const online = { onlinePaid: true, senderName: "", senderNumber: "", ref: "BK-1" };
   await env.seedBooking({ room: 607, guest: "Online One", start: 0, nights: 1, price: 500, total: 500, payment_details: online, source: "Booking.com" });
   await env.seedBooking({ room: 612, guest: "Online Extras", start: 0, nights: 1, price: 200, total: 200, payment_details: online, source: "Booking.com", extras: { laundry: 0, cafeteria: 0, tours: 50, pickup: 0 } });
   await env.seedBooking({ room: 608, guest: "Visa Direct", start: 0, nights: 1, price: 300, total: 300, paid: 300, settled: true, method: "فيزا", currency: "EGP" });
@@ -99,12 +99,12 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
   for (const [c, o] of Object.entries(byCat)) {
     expect(digits(await catTable.locator("tr", { hasText: c }).first().innerText()), `بند ${c}`).toBe(c.replace(/\s/g, "") + curOrder.map((k) => o[k] || 0).join(""));
   }
-  // الأونلاين: إجمالي ٧٠٠ (٥٠٠ + ٢٠٠ + رسوم ٥٠) بالدولار، والصافي بعد ١٥٪
-  const onlineGross = 500 + 250, onlineNet = (500 + 250) * 0.85;
+  // الأونلاين: إجمالي ٧٥٠ بالدولار (٥٠٠ + ٢٠٠ + رسوم ٥٠) - من غير عمولة
+  const onlineGross = 500 + 250;
   const onlineCard = page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last();
   const ot = digits(await onlineCard.innerText());
-  expect(ot).toContain(`الإجماليمنغيرعمولة${onlineGross}$`);
-  expect(ot).toContain(`الصافيبعدالعمولة${String(onlineNet).replace(".", "٫")}$`);      // ٦٣٧٫٥ (فاصلة عربية)
+  expect(ot).toContain(`إجماليالحجوزاتالأونلاين${onlineGross}$`);
+  expect(ot).not.toContain("العمولة");
   // المتبقي على نزلاء: 609 → ٣٠٠$ (٤٠٠ - ١٠٠)، وحجز الأونلاين بتاع الرسوم → ٥٠$ بس
   const outstanding = digits(await page.locator(".cx-card", { hasText: "مبالغ متبقية على نزلاء" }).last().innerText());
   expect(outstanding).toContain("مبالغمتبقيةعلىنزلاء(2)");
@@ -137,7 +137,7 @@ test("مجموع تقارير الأيام = تقرير الفترة (من غي�
   await env.seedShift("sara", { key: "night", day: d1, closed: true, rowsPatch: p1, stored: totalsOf(rowsFor(p1), emptyRow("كافيتيريا")) });
   await env.seedShift("ahmed", { key: myShiftKey(), day: d0, rowsPatch: p0 });
   // حجز أونلاين ٣ ليالي بدأ امبارح: بيتحسب مرة واحدة بس (في يوم الدخول)
-  await env.seedBooking({ room: 607, guest: "Online Multi", start: -1, nights: 3, price: 100, total: 300, payment_details: { onlinePaid: true, commissionPct: 10, senderName: "", senderNumber: "", ref: "" } });
+  await env.seedBooking({ room: 607, guest: "Online Multi", start: -1, nights: 3, price: 100, total: 300, payment_details: { onlinePaid: true, senderName: "", senderNumber: "", ref: "" } });
   await page.goto("/");
   await login(page, "boss");
   await goTab(page, "التقارير");
@@ -153,14 +153,14 @@ test("مجموع تقارير الأيام = تقرير الفترة (من غي�
   await expect(grid.locator(".cx-card", { hasText: "إجمالي التحصيل" }).first()).toContainText("٦٠");
   const t0 = await read("إجمالي التحصيل"), o0 = await onlineNet();
   expect(t1).toBe("100$"); expect(e1).toBe("40ج"); expect(t0).toBe("25ج+60$");
-  expect(o1).toContain("270$");        // ٣٠٠ - ١٠٪ عمولة، في يوم الدخول (امبارح)
-  expect(o0).not.toContain("270$");     // مش بيتكرر النهارده
+  expect(o1).toContain("300$");        // الإجمالي في يوم الدخول (امبارح)
+  expect(o0).not.toContain("300$");     // مش بيتكرر النهارده
   await page.getByRole("button", { name: "فترة", exact: true }).click();
   const dates = page.locator('input[type="date"]');
   await dates.nth(0).fill(d1);
   await dates.nth(1).fill(d0);
-  await expect.poll(onlineNet).toContain("270$");
+  await expect.poll(onlineNet).toContain("300$");
   expect(await read("إجمالي التحصيل")).toBe("25ج+160$");          // ١٠٠ + ٦٠ دولار، ٢٥ جنيه
   expect(await read("إجمالي المصاريف")).toBe("40ج");
-  expect(await onlineNet()).toContain("270$");
+  expect(await onlineNet()).toContain("300$");
 });

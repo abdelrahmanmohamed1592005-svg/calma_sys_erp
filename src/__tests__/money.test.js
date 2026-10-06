@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, onlineNetAmount, emptyPaymentDetails, directBookingPaymentsByMethod, DEFAULT_ONLINE_COMMISSION_PCT, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, applyCollectionToRows, refundDueAmount, rebaseShiftRecord } from "../domain/money";
+import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, emptyPaymentDetails, directBookingPaymentsByMethod, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, applyCollectionToRows, refundDueAmount, rebaseShiftRecord, refundStatusOf } from "../domain/money";
 
 // انستاباي والتحويل البنكي وسيلة واحدة فعليًا - اتدمجوا في خيار واحد بدل
 // خيارين مختلفين، وفضلت العملات المعتمدة خمسة بس.
@@ -94,24 +94,6 @@ describe("computeShiftTotals - عملات غير EGP/USD (كانت باگ قبل
     // ومفيش حاجة اتسجلت غلط في EGP/USD من غير داعي
     expect(totals.closingCash.EGP).toBeUndefined();
     expect(totals.closingCash.USD).toBeUndefined();
-  });
-});
-
-describe("onlineNetAmount (حجوزات أونلاين - السعر بالعمولة)", () => {
-  it("subtracts the commission percentage from the gross amount", () => {
-    expect(onlineNetAmount(1000, 15)).toBe(850);
-  });
-  it("returns the full amount when commission is 0", () => {
-    expect(onlineNetAmount(1000, 0)).toBe(1000);
-  });
-  it("treats a missing/undefined commission as 0", () => {
-    expect(onlineNetAmount(1000, undefined)).toBe(1000);
-  });
-  it("treats a missing/undefined gross amount as 0", () => {
-    expect(onlineNetAmount(undefined, 15)).toBe(0);
-  });
-  it("handles a 100% commission (net is zero)", () => {
-    expect(onlineNetAmount(500, 100)).toBe(0);
   });
 });
 
@@ -242,10 +224,10 @@ describe("computeShiftTotals - room row collectionAmt can be negative (booking r
 });
 
 describe("emptyPaymentDetails online fields", () => {
-  it("defaults onlinePaid to false and commissionPct to the standard default", () => {
+  it("defaults onlinePaid to false and has no platform commission field (commission was removed)", () => {
     const pd = emptyPaymentDetails();
     expect(pd.onlinePaid).toBe(false);
-    expect(pd.commissionPct).toBe(DEFAULT_ONLINE_COMMISSION_PCT);
+    expect(pd).not.toHaveProperty("commissionPct");
   });
 });
 
@@ -342,5 +324,117 @@ describe("rebaseShiftRecord (typing in the ledger while a refund/collection land
     const out = rebaseShiftRecord(base, mine, fresh);
     expect(out.shiftNotes).toBe("ملاحظة");
     expect(out.rows.length).toBe(2);
+  });
+});
+
+describe("applyCollectionToRows - صف مستقل لكل حجز (تسكين مكرر)", () => {
+  const baseRows = () => [emptyLedgerRow(601), emptyLedgerRow(602)];
+  const entry = (over = {}) => ({ room: 601, amount: 100, currency: "USD", method: "كاش", guestName: "Old", note: "تحصيل", bookingId: "b-old", ...over });
+
+  it("أول حجز بياخد صف الغرفة الفاضي وبيتربط بيه", () => {
+    const { rows } = applyCollectionToRows(baseRows(), entry());
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ bookingId: "b-old", collectionAmt: 100 });
+  });
+
+  it("حجز تاني على نفس الغرفة (نفس الوسيلة والعملة) بياخد صف جديد منفصل مش بيتدمج", () => {
+    let { rows } = applyCollectionToRows(baseRows(), entry());
+    ({ rows } = applyCollectionToRows(rows, entry({ bookingId: "b-new", guestName: "New", amount: 60 })));
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({ bookingId: "b-old", collectionAmt: 100 });
+    expect(rows[2]).toMatchObject({ room: 601, bookingId: "b-new", collectionAmt: 60 });
+    expect(rows[2].collectionDesc).toContain("New");
+  });
+
+  it("تحصيل تاني لنفس الحجز بنفس الوسيلة بيتجمّع على صفه هو", () => {
+    let { rows } = applyCollectionToRows(baseRows(), entry());
+    ({ rows } = applyCollectionToRows(rows, entry({ bookingId: "b-new", amount: 60 })));
+    ({ rows } = applyCollectionToRows(rows, entry({ bookingId: "b-new", amount: 40 })));
+    expect(rows).toHaveLength(3);
+    expect(rows[2].collectionAmt).toBe(100);
+    expect(rows[0].collectionAmt).toBe(100);
+  });
+
+  it("رد فلوس (سالب) لحجز بيتخصم من صفه هو بس", () => {
+    let { rows } = applyCollectionToRows(baseRows(), entry());
+    ({ rows } = applyCollectionToRows(rows, entry({ bookingId: "b-new", amount: 60 })));
+    ({ rows } = applyCollectionToRows(rows, entry({ bookingId: "b-new", amount: -60, note: "رد فلوس" })));
+    expect(rows[2].collectionAmt).toBe(0);
+    expect(rows[0].collectionAmt).toBe(100);
+  });
+
+  it("وسيلة مختلفة لنفس الحجز بتعمل صف خاص بيها برضه (من غير خلط وسائل)", () => {
+    let { rows } = applyCollectionToRows(baseRows(), entry());
+    ({ rows } = applyCollectionToRows(rows, entry({ method: "فيزا", amount: 50 })));
+    expect(rows).toHaveLength(3);
+    expect(rows[2]).toMatchObject({ bookingId: "b-old", collectionMethod: "فيزا", collectionAmt: 50 });
+  });
+});
+
+describe("بنود مصاريف وإيرادات الفندق (hotelRows)", () => {
+  it("اليومية الجديدة فيها بند فندق فاضي", () => {
+    const rec = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", [{ number: 601 }], { EGP: 0 });
+    expect(rec.hotelRows).toHaveLength(1);
+    expect(rec.hotelRows[0].room).toBe("فندق");
+  });
+
+  it("المصاريف والإيرادات بتدخل في إجماليات اليومية ورصيد الخزينة والبنود", () => {
+    const rec = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", [{ number: 601 }], { EGP: 1000 });
+    rec.hotelRows = [
+      { ...emptyLedgerRow("فندق"), expenseAmt: 200, expenseCategory: "كهرباء ومياه", expenseCurrency: "EGP", collectionAmt: 500, collectionMethod: "كاش", collectionCurrency: "EGP" },
+      { ...emptyLedgerRow("فندق"), expenseAmt: 30, expenseCategory: "صيانة", expenseCurrency: "USD" },
+    ];
+    const t = computeShiftTotals(rec);
+    expect(t.totalExpenses).toEqual({ EGP: 200, USD: 30 });
+    expect(t.totalCollections).toEqual({ EGP: 500 });
+    expect(t.byCategory["كهرباء ومياه"]).toEqual({ EGP: 200 });
+    expect(t.closingCash.EGP).toBe(1000 + 500 - 200);
+    expect(t.closingCash.USD).toBe(-30);
+  });
+
+  it("سجل قديم من غير hotelRows بيتحسب عادي", () => {
+    const rec = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", [{ number: 601 }], { EGP: 0 });
+    delete rec.hotelRows;
+    expect(() => computeShiftTotals(rec)).not.toThrow();
+  });
+
+  it("الدمج المتزامن (rebase) بيحفظ تعديل الموظف على بنود الفندق فوق نسخة السيرفر", () => {
+    const base = freshShiftRecord("2026-09-05", "morning", "Ahmed", "ahmed", [{ number: 601 }], { EGP: 0 });
+    const mine = { ...base, hotelRows: [{ ...base.hotelRows[0], expenseAmt: 75 }] };
+    const fresh = { ...base, updatedAt: "later", rows: [{ ...base.rows[0], collectionAmt: -100 }] };
+    const merged = rebaseShiftRecord(base, mine, fresh);
+    expect(merged.hotelRows[0].expenseAmt).toBe(75);
+    expect(merged.rows[0].collectionAmt).toBe(-100);
+  });
+});
+
+describe("refundStatusOf - حالة الفلوس لحجز ملغي", () => {
+  const base = { currency: "USD", status: "ملغي", amountPaid: 0, refundPending: false, refundDecision: null, refundedAmount: null };
+  it("حجز شغّال ماحصلش فيه رد => null", () => {
+    expect(refundStatusOf({ ...base, status: "مؤكد", amountPaid: 100 })).toBeNull();
+  });
+  it("ملغي من غير فلوس => none", () => {
+    expect(refundStatusOf(base).kind).toBe("none");
+  });
+  it("ملغي وعليه طلب رد معلّق => pending بالمبلغ", () => {
+    const r = refundStatusOf({ ...base, amountPaid: 300, refundPending: true });
+    expect(r.kind).toBe("pending");
+    expect(r.text).toContain("٣٠٠");
+  });
+  it("اترد => refunded بالمبلغ ومين رد", () => {
+    const r = refundStatusOf({ ...base, amountPaid: 0, refundDecision: "refunded", refundedAmount: 300, refundedBy: "rawan" });
+    expect(r.kind).toBe("refunded");
+    expect(r.text).toContain("rawan");
+  });
+  it("رفض الرد => kept وبيذكر إن الفلوس فضلت", () => {
+    const r = refundStatusOf({ ...base, amountPaid: 200, refundDecision: "kept" });
+    expect(r.kind).toBe("kept");
+    expect(r.text).toContain("٢٠٠");
+  });
+  it("ملغي وفيه فلوس من غير قرار => holding", () => {
+    expect(refundStatusOf({ ...base, amountPaid: 50 }).kind).toBe("holding");
+  });
+  it("حجز شغّال اترد منه جزء (تقصير) => refunded", () => {
+    expect(refundStatusOf({ ...base, status: "تم تسجيل الخروج", amountPaid: 200, refundDecision: "refunded", refundedAmount: 200 }).kind).toBe("refunded");
   });
 });
