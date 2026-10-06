@@ -189,6 +189,18 @@ export function bookingGrandTotal(b) {
   return (Number(b.totalRoom) || 0) + (Number(extras.laundry) || 0) + (Number(extras.cafeteria) || 0) + (Number(extras.tours) || 0) + (Number(extras.pickup) || 0) + earlyFee;
 }
 
+/* اللي الفندق نفسه مطلوب يحصّله من النزيل (وده اللي بيدخل اليومية والتقرير والتوتال):
+   - حجز عادي: الإجمالي الكلي (غرفة + خدمات + دخول مبكر).
+   - حجز مدفوع أونلاين: سعر الغرفة اتدفع للمنصة، فالفندق بيحصّل بس الخدمات الإضافية
+     والدخول المبكر (الإجمالي - سعر الغرفة). amountPaid في الحالتين = اللي الفندق حصّله فعلاً. */
+export function bookingHotelTotal(b) {
+  const gt = bookingGrandTotal(b);
+  return b.paymentDetails?.onlinePaid ? Math.max(0, gt - (Number(b.totalRoom) || 0)) : gt;
+}
+export function bookingAmountDue(b) {
+  return Math.max(0, bookingHotelTotal(b) - (Number(b.amountPaid) || 0));
+}
+
 /* المبلغ المطلوب رده للنزيل لو فيه طلب رد فلوس معلّق (refundPending):
    حجز ملغي => كل المدفوع، حجز لسه شغال/خرج بدري => الزيادة عن الإجمالي بس.
    نفس حساب decide_booking_refund في قاعدة البيانات بالظبط. */

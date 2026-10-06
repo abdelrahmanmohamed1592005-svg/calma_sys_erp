@@ -99,8 +99,8 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
   for (const [c, o] of Object.entries(byCat)) {
     expect(digits(await catTable.locator("tr", { hasText: c }).first().innerText()), `بند ${c}`).toBe(c.replace(/\s/g, "") + curOrder.map((k) => o[k] || 0).join(""));
   }
-  // الأونلاين: إجمالي ٧٥٠ بالدولار (٥٠٠ + ٢٠٠ + رسوم ٥٠) - من غير عمولة
-  const onlineGross = 500 + 250;
+  // الأونلاين: إجمالي ٧٠٠ بالدولار (٥٠٠ + ٢٠٠ سعر الغرفة بس) - من غير عمولة، والرسوم (٥٠) بتتحصّل في الفندق ومش جزء منه
+  const onlineGross = 500 + 200;
   const onlineCard = page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last();
   const ot = digits(await onlineCard.innerText());
   expect(ot).toContain(`إجماليالحجوزاتالأونلاين${onlineGross}$`);

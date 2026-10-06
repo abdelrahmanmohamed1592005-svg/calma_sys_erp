@@ -1,5 +1,5 @@
 import { addDays, todayStr, nightsBetween } from "./dates";
-import { bookingGrandTotal } from "./money";
+import { bookingGrandTotal, bookingAmountDue } from "./money";
 import { MANUAL_STATUS_OPTIONS } from "./constants";
 
 export function isOverrideStillActive(ov, dateStr) {
@@ -25,11 +25,11 @@ export function computeRoomStatus(roomNumber, bookings, overrides, dateStr) {
     }
   }
   if (active) {
-    const gt = bookingGrandTotal(active);
     // "متحصّل" = المدفوع فعلًا وصل للإجمالي الحالي (أو مدفوع أونلاين) - مش
     // علامة settled لوحدها: لو الإجمالي زاد (تمديد/رسوم) والمدفوع لسه أقل،
     // الغرفة لازم تظهر "متبقي عليها فلوس" حتى لو العلامة القديمة لسه موجودة.
-    const paid = !!active.paymentDetails?.onlinePaid || (Number(active.amountPaid) || 0) >= gt;
+    // حجز أونلاين: سعر الغرفة متسدّد، لكن لو عليه خدمات/دخول مبكر لسه ماتحصّلتش بيفضل "متبقي عليها فلوس"
+    const paid = bookingAmountDue(active) <= 0;
     return { key: paid ? "occupied_paid" : "occupied_unpaid", label: paid ? "مشغولة - متحصّل بالكامل" : "مشغولة - متبقي عليها فلوس", guest: active.guestName, booking: active, paid };
   }
   const upcoming = bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.checkin > dateStr && b.checkin <= addDays(dateStr, 2));
@@ -86,14 +86,15 @@ export function resolveDuplicateCheckin(clash, newCheckin, today = todayStr()) {
    اللي النزيل قعدها فعلاً (الحد الأدنى ليلة - لو مشي نفس يوم دخوله بيتحاسب
    ليلة). لو كان دافع أكتر من الإجمالي الجديد، الزيادة (ليالي ماقعدهاش)
    بتتحوّل تلقائيًا لطلب رد فلوس لمدير الحجوزات (قاعدة البيانات بتفتحه). */
-export function earlyLeavePatch(clash, newCheckout) {
+export function earlyLeavePatch(clash, newCheckout, reason = "duplicate") {
   const totalRoom = repricedTotalRoom(clash, clash.checkin, newCheckout);
   const next = { ...clash, checkout: newCheckout, totalRoom };
   const online = !!clash.paymentDetails?.onlinePaid;
   const settled = !!clash.settled && (online || (Number(clash.amountPaid) || 0) >= bookingGrandTotal(next));
+  const tail = reason === "duplicate" ? " - الغرفة اتسلمت لحجز تسكين مكرر جديد" : ` (قبل معاده ${clash.checkout})`;
   const note = newCheckout === clash.checkin
-    ? `غادر مبكرًا في نفس يوم الدخول (${clash.checkin}) - الغرفة اتسلمت لحجز تسكين مكرر جديد`
-    : `غادر مبكرًا في ${newCheckout} - الغرفة اتسلمت لحجز تسكين مكرر جديد`;
+    ? `غادر مبكرًا في نفس يوم الدخول (${clash.checkin})${tail}`
+    : `غادر مبكرًا في ${newCheckout}${tail}`;
   return { checkout: newCheckout, totalRoom, settled, status: "تم تسجيل الخروج", leftEarly: true, notes: (clash.notes ? clash.notes + " — " : "") + note };
 }
 
@@ -127,4 +128,37 @@ export function repricedTotalRoom(original, newCheckin, newCheckout) {
   if (n > oldNights) return base + (n - oldNights) * (Number(original.priceNight) || 0);
   if (oldNights <= 0) return base;
   return Math.round(base * n * 100 / oldNights) / 100;
+}
+
+
+/* أكواد الأفراد: بيكتبها المستخدم بنفسه (كود لكل فرد بعدد الأفراد) ومحفوظة على الحجز نفسه
+   (guestCodes). الخانة الفاضية = فرد من غير كود. */
+export function normalizeGuestCodes(codes, pax) {
+  const n = Math.max(1, Math.floor(Number(pax) || 1));
+  return Array.from({ length: n }, (_, i) => String((codes && codes[i]) ?? "").trim().slice(0, 40));
+}
+export function guestCodeEntries(b) {
+  return (Array.isArray(b?.guestCodes) ? b.guestCodes : [])
+    .slice(0, Math.max(1, Number(b?.pax) || 1))
+    .map((code, i) => ({ seq: i + 1, code: String(code || "").trim() }))
+    .filter((g) => g.code);
+}
+/* أول تكرار جوه نفس الحجز (من غير حساسية لحالة الحروف) أو null */
+export function duplicateGuestCode(codes) {
+  const seen = new Set();
+  for (const c of codes || []) {
+    const k = String(c || "").trim().toUpperCase();
+    if (!k) continue;
+    if (seen.has(k)) return String(c).trim();
+    seen.add(k);
+  }
+  return null;
+}
+/* كل مرة الكود ده اتسجّل: [{code, seq, booking}] (الأحدث أولاً) - نزيل راجع بيطلّع كل غرفه */
+export function findGuestCodeHits(bookings, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return [];
+  return (bookings || [])
+    .flatMap((b) => guestCodeEntries(b).filter((g) => g.code.toLowerCase() === q).map((g) => ({ ...g, room: b.room, booking: b })))
+    .sort((a, b) => String(b.booking.checkin).localeCompare(String(a.booking.checkin)));
 }

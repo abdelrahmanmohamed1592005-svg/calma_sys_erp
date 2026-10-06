@@ -14,6 +14,9 @@ import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairo
 const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const ROOMS = [601, 602, 603, 604];
 const grand = (b) => Number(b.total_room) + Object.values(b.extras || {}).reduce((s, v) => s + (Number(v) || 0), 0) + (b.early_checkin?.applied ? Number(b.early_checkin.fee) || 0 : 0);
+const isOnline = (b) => !!b.payment_details?.onlinePaid;
+// اللي الفندق نفسه بيحصّله (الأونلاين: من غير سعر الغرفة اللي اتدفع للمنصة)
+const hotelTotal = (b) => (isOnline(b) ? grand(b) - Number(b.total_room) : grand(b));
 const nightsBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
 
 async function snapshot(env) {
@@ -28,7 +31,7 @@ async function checkInvariants(env, label) {
   expect(ledger, `${label}: صافي اليومية = مجموع المدفوع`).toBeCloseTo(paidSum, 2);
   for (const b of bookings) {
     expect(Number(b.amount_paid), `${label}: مدفوع غير سالب (${b.guest_name})`).toBeGreaterThanOrEqual(0);
-    if (b.settled) expect(Number(b.amount_paid), `${label}: متحصّل لازم يكون مغطّى (${b.guest_name})`).toBeGreaterThanOrEqual(grand(b) - 0.005);
+    if (b.settled && !isOnline(b)) expect(Number(b.amount_paid), `${label}: متحصّل لازم يكون مغطّى (${b.guest_name})`).toBeGreaterThanOrEqual(grand(b) - 0.005);
     if (b.refund_pending) {
       const due = b.status === "ملغي" ? Number(b.amount_paid) : Number(b.amount_paid) - grand(b);
       expect(due, `${label}: طلب رد لازم يبقى فيه فلوس (${b.guest_name})`).toBeGreaterThan(0);
@@ -41,9 +44,9 @@ async function checkInvariants(env, label) {
   }
 }
 
-for (const seed of [11, 2024, 77]) {
+for (const seed of [11, 2024, 77, 5, 313, 9001]) {
   test(`سلسلة عمليات عشوائية (seed ${seed}) من جلستين: القواعد بتفضل صحيحة بعد كل عملية`, async ({ page: staff, env }) => {
-    test.setTimeout(240000);
+    test.setTimeout(420000);
     await env.seedUser("ahmed", "staff", "أحمد");
     await env.seedUser("rawan", "reservations", "روان");
     await env.seedUser("boss", "gm", "المدير");
@@ -78,14 +81,53 @@ for (const seed of [11, 2024, 77]) {
       },
       async collect() {
         const { bookings } = await snapshot(env);
-        const c = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout && !b.payment_details?.onlinePaid && grand(b) > Number(b.amount_paid));
+        const c = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout && hotelTotal(b) > Number(b.amount_paid) + 0.005);
         if (!c.length) return false;
         const b = pick(c);
         log.push(`collect ${b.guest_name}`);
         await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
         await expect(roomCard(staff)).toContainText(b.guest_name);
-        await roomCard(staff).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-        await expect(toast(staff)).toContainText("تم تسجيل التحصيل الكامل");
+        if (isOnline(b)) {
+          await roomCard(staff).getByTestId("collect-extras").click();
+          await expect(toast(staff)).toContainText("تم تسجيل تحصيل الخدمات");
+        } else {
+          await roomCard(staff).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
+          await expect(toast(staff)).toContainText("تم تسجيل التحصيل الكامل");
+        }
+      },
+      async earlyCheckin() {
+        const { bookings } = await snapshot(env);
+        const c = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout && !b.early_checkin?.applied);
+        if (!c.length) return false;
+        const b = pick(c);
+        const fee = pick([20, 40]), now = rnd() < 0.6;
+        log.push(`early ${b.guest_name} ${fee} ${now ? "collect" : "later"}`);
+        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await expect(roomCard(staff)).toContainText(b.guest_name);
+        await staff.getByTestId("early-fee").fill(String(fee));
+        if (!now) await staff.getByTestId("early-collect").uncheck();
+        await staff.getByTestId("early-apply").click();
+        await expect(toast(staff)).toContainText("تم تسجيل الدخول المبكر");
+      },
+      async earlyLeave() {
+        const { bookings } = await snapshot(env);
+        const c = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout);
+        if (!c.length) return false;
+        const b = pick(c);
+        log.push(`leave ${b.guest_name}`);
+        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await expect(roomCard(staff)).toContainText(b.guest_name);
+        await roomCard(staff).getByTestId("early-leave").getByRole("button", { name: /غادر مبكرًا/ }).click();
+        await roomCard(staff).getByRole("button", { name: "تأكيد المغادرة المبكرة؟" }).click();
+        await expect(toast(staff)).toContainText("النزيل غادر مبكرًا");
+      },
+      async addOnline() {
+        const { bookings } = await snapshot(env);
+        const room = pick(ROOMS), nights = pick([1, 2]);
+        if (overlaps(bookings, room, cairoDate(0), cairoDate(nights))) return false;
+        const guest = `O${++n}`;
+        log.push(`online ${guest} r${room}`);
+        await env.seedBooking({ room, guest, start: 0, nights, price: 60, payment_details: { senderName: "", senderNumber: "", ref: "BK", onlinePaid: true } });
       },
       async extend() {
         const { bookings } = await snapshot(env);
@@ -106,10 +148,11 @@ for (const seed of [11, 2024, 77]) {
         const b = pick(c);
         log.push(`cancel ${b.guest_name} paid ${b.amount_paid}`);
         await goTab(res, "الحجوزات");
-        await res.locator(".cx-card", { hasText: b.guest_name }).last().locator("button").first().click();
-        await res.locator("xpath=//label[contains(.,'الحالة')]/following-sibling::select").selectOption("ملغي");
-        await res.getByRole("button", { name: /حفظ الحجز/ }).click();
-        await expect(res.locator(".cx-card[data-calma-editing]")).toHaveCount(0);
+        await res.getByTestId("status-filter-all").click();
+        const c0 = res.locator(".cx-card", { hasText: b.guest_name }).last();
+        await c0.getByRole("button", { name: "إلغاء الحجز" }).click();
+        await c0.getByRole("button", { name: "تأكيد الإلغاء؟" }).click();
+        await expect(toast(res)).toContainText("تم إلغاء الحجز");
       },
       async decide() {
         const { bookings } = await snapshot(env);
@@ -141,9 +184,9 @@ for (const seed of [11, 2024, 77]) {
 
     // البداية: كام حجز عشان العمليات تلاقي حاجة تشتغل عليها
     for (let i = 0; i < 3; i++) { await ops.add(); await sync(); await checkInvariants(env, `بداية ${i}`); }
-    const weights = [["add", 3], ["collect", 3], ["extend", 2], ["cancel", 1], ["decide", 3], ["shorten", 2]];
+    const weights = [["add", 3], ["collect", 3], ["extend", 2], ["cancel", 1], ["decide", 3], ["shorten", 2], ["earlyCheckin", 2], ["earlyLeave", 2], ["addOnline", 1]];
     const bag = weights.flatMap(([k, w]) => Array(w).fill(k));
-    for (let step = 0; step < 14; step++) {
+    for (let step = 0; step < 20; step++) {
       const op = pick(bag);
       const r = await ops[op]();
       await sync();
@@ -160,11 +203,14 @@ for (const seed of [11, 2024, 77]) {
     await goTab(res, "لوحة الغرف");
     const live = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout);
     const rooms = new Set(live.map((b) => b.room));
-    const unpaid = [...rooms].filter((r) => { const b = live.find((x) => x.room === r); return !(Number(b.amount_paid) >= grand(b) || b.payment_details?.onlinePaid); }).length;
+    const unpaid = [...rooms].filter((r) => { const b = live.find((x) => x.room === r); return !(Number(b.amount_paid) >= hotelTotal(b) - 0.005); }).length;
     await expect(res.getByText(new RegExp(`مشغولة - متبقي فلوس ${unpaid}\\b`))).toBeVisible();
     await expect(res.getByText(new RegExp(`مشغولة - متحصّلة ${rooms.size - unpaid}\\b`))).toBeVisible();
-    const soon = new Set(bookings.filter((b) => b.status !== "ملغي" && b.checkin > today && b.checkin <= cairoDate(2) && !rooms.has(b.room)).map((b) => b.room));
+    // غرف اتعلّمت "غادر مبكرًا" النهارده (من زرار المغادرة المبكرة) ومفيش عليها نزيل نشط دلوقتي
+    const ovRooms = new Set((await env.q("select room_number from room_overrides where status = 'early_checkout'")).map((o) => o.room_number).filter((r) => !rooms.has(r)));
+    const soon = new Set(bookings.filter((b) => b.status !== "ملغي" && b.checkin > today && b.checkin <= cairoDate(2) && !rooms.has(b.room) && !ovRooms.has(b.room)).map((b) => b.room));
     await expect(res.getByText(new RegExp(`قادمة قريبًا ${soon.size}\\b`))).toBeVisible();
-    await expect(res.getByText(new RegExp(`متاحة ${16 - rooms.size - soon.size}\\b`)).first()).toBeVisible();
+    await expect(res.getByText(new RegExp(`غادر مبكرًا ${ovRooms.size}\\b`))).toBeVisible();
+    await expect(res.getByText(new RegExp(`متاحة ${16 - rooms.size - soon.size - ovRooms.size}\\b`)).first()).toBeVisible();
   });
 }

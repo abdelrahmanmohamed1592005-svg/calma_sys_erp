@@ -21,7 +21,7 @@ const collectOnBoard = async (page, room, method) => {
   await goTab(page, "لوحة الغرف");
   await boardTile(page, room).click();
   const card = roomCard(page);
-  if (method) await card.locator("select.cx-select").selectOption(method);
+  if (method) await card.getByTestId("collect-method").selectOption(method);
   await card.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
   await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
 };

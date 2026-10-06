@@ -24,7 +24,7 @@ test("تحصيل كامل من لوحة الغرف: الحجز + اليومية 
   await boardTile(page, 601).click();
   const card = roomCard(page);
   await expect(card).toContainText("Guest One");
-  await card.locator("select.cx-select").selectOption("فيزا");
+  await card.getByTestId("collect-method").selectOption("فيزا");
   await card.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
   await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
 
