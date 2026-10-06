@@ -1591,6 +1591,38 @@ drop trigger if exists shift_records_provenance_guard on shift_records;
 create trigger shift_records_provenance_guard before update on shift_records
   for each row execute function protect_record_provenance();
 
+-- (ز) المدير العام والمحاسبة كانوا يقدروا يعدّلوا محتوى يومية شيفت **مفتوح** (سياسة
+--     التعديل كانت بتسمح لـ can_manage_financials() في أي حالة)، مع إن صلاحياتهم
+--     (editLedger = false) تصحيح بعد الإقفال بس. دلوقتي: الموظف صاحب الشيفت (أو
+--     التالي له) على المفتوح، والمدير/المحاسبة/مدير الحجوزات على المقفول بس
+--     (تصحيح أو إعادة فتح). WITH CHECK بيفضل واسع عشان إعادة الفتح (closed true -> false) تعدّي.
+drop policy if exists "shifts update" on shift_records;
+create policy "shifts update" on shift_records for update using (
+  (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
+                   or (closed = false and is_next_shift_claimant(date, shift_key))))
+  or (closed = true and (can_manage_financials() or is_gm_or_reservations()))
+) with check (
+  (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
+                   or is_next_shift_claimant(date, shift_key)))
+  or can_manage_financials() or is_gm_or_reservations()
+);
+
+-- (ح) مفيش حذف لحجز عليه حركة فلوس (مدفوع / طلب رد معلّق / اترد منه مبلغ): الواجهة
+--     كانت بتمنع ده بس، لكن قاعدة البيانات كانت بتسمح لمدير الحجوزات يمسح الحجز
+--     (ويضيّع الأثر المالي بتاعه). الإلغاء (status = 'ملغي') هو الطريق الصح.
+create or replace function prevent_delete_booking_with_money()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(old.amount_paid, 0) > 0 or coalesce(old.refund_pending, false) or coalesce(old.refunded_amount, 0) > 0 then
+    raise exception 'الحجز ده عليه حركة فلوس (مدفوع أو رد) - استخدم حالة "ملغي" بدل الحذف';
+  end if;
+  return old;
+end;
+$$;
+drop trigger if exists bookings_no_delete_with_money on bookings;
+create trigger bookings_no_delete_with_money before delete on bookings
+  for each row execute function prevent_delete_booking_with_money();
+
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):
 --
