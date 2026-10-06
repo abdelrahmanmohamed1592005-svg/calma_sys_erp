@@ -1623,6 +1623,33 @@ drop trigger if exists bookings_no_delete_with_money on bookings;
 create trigger bookings_no_delete_with_money before delete on bookings
   for each row execute function prevent_delete_booking_with_money();
 
+-- (ط) توحيد صلاحيات اليومية مع الواجهة (constants.js):
+--     * إعادة فتح شيفت مقفول: المدير العام ومدير الحجوزات بس (reopenShift) - المحاسبة كانت
+--       تقدر تفتحه من قاعدة البيانات رغم إن الواجهة بتمنعها. المحاسبة لسه تقدر تصحّح المحتوى.
+--     * مسح سجل يومية: المدير العام بس (لإلغاء اختيار شيفت بالغلط) وللشيفت المفتوح بس - يومية
+--       مقفولة (متثبّتة فيها أرصدة) لازم تتفتح الأول؛ المحاسبة كانت تقدر تمسح أي يومية.
+create or replace function prevent_closed_shift_edit()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.closed = true then
+    if new.closed = false then
+      if not is_gm_or_reservations() then
+        raise exception 'إعادة فتح شيفت مقفول من صلاحية المدير العام أو مدير الحجوزات بس';
+      end if;
+    else
+      -- الشيفت فاضل مقفول وبيتم تعديل محتواه (تصحيح): المدير العام/الحسابات بس
+      if not can_manage_financials() then
+        raise exception 'لا يمكن تعديل شيفت مقفول إلا من المدير العام أو الحسابات';
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop policy if exists "shifts delete" on shift_records;
+create policy "shifts delete" on shift_records for delete using (is_gm() and closed = false);
+
 -- ============================================================================
 -- خطوات يدوية لازم تتأكدي منها بعد تشغيل السكريبت ده (مرة واحدة بس):
 --

@@ -13,6 +13,7 @@ import { defineConfig } from "@playwright/test";
 */
 export default defineConfig({
   testDir: "e2e",
+  globalSetup: "./e2e/globalSetup.js",
   timeout: 30_000,
   expect: { timeout: 7_000 },
   fullyParallel: true,

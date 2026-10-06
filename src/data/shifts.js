@@ -97,8 +97,10 @@ export async function clearClaimRow(date, shiftKey) {
    الوقت ده مش مرتبطة بشيفت معين في قاعدة البيانات، فمش بتُمسح تلقائيًا معاها
    - تحتاج مراجعة ومراجعة يدوية لو فيها خطأ (انظر ملاحظة في UsersPanel.jsx). */
 export async function deleteShiftRecord(date, shiftKey) {
-  const { error } = await supabase.from("shift_records").delete().eq("date", date).eq("shift_key", shiftKey);
-  return { error: error?.message };
+  // .select() عشان نعرف عدد الصفوف اللي اتمسحت فعلاً: قاعدة البيانات بترفض مسح يومية مقفولة
+  // (من غير خطأ - بترجّع صفر صفوف)، ومينفعش نقول للمدير إنها اتمسحت وهي لسه موجودة.
+  const { data, error } = await supabase.from("shift_records").delete().eq("date", date).eq("shift_key", shiftKey).select("date");
+  return { error: error?.message, deleted: data?.length || 0 };
 }
 
 /* إعادة فتح شيفت مقفول - صلاحية مدير الحجوزات/المدير العام/الحسابات (انظر

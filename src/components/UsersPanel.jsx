@@ -3,7 +3,7 @@ import { Info, UserPlus, Key, Check, AlertTriangle } from "lucide-react";
 import { TwoStepButton } from "./shared";
 import { ROLES, SHIFTS } from "../domain/constants";
 import { shiftDayNow } from "../domain/dates";
-import { getClaimsForDate, clearClaimRow, deleteShiftRecord } from "../data/shifts";
+import { getClaimsForDate, clearClaimRow, deleteShiftRecord, getShiftRecord } from "../data/shifts";
 import { adminCreateUser, setProfileActive, adminResetPassword } from "../lib/auth";
 import { validatePasswordStrength, validateUsername, sanitizeText } from "../domain/security";
 
@@ -25,8 +25,11 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
   async function clearClaim(shiftKey) {
     // نمسح ورقة اليومية الأول: لو فشل المسح مانلغيش الاختيار (كان هيسيب ورقة
     // يتيمة والرسالة تقول إنها اتمسحت).
+    const existing = await getShiftRecord(today, shiftKey);
+    if (existing?.closed) { showToast("اليومية دي مقفولة - افتحها الأول من تاب اليومية (استعراض شيفتات سابقة) وبعدها ألغي الاختيار"); return; }
     const del = await deleteShiftRecord(today, shiftKey);
     if (del.error) { showToast("تعذر مسح ورقة اليومية: " + del.error); return; }
+    if (existing && del.deleted === 0) { showToast("ورقة اليومية ماتمسحتش (ممكن حد قفلها دلوقتي) - حدّث الصفحة وجرّب تاني"); return; }
     const res = await clearClaimRow(today, shiftKey);
     if (res.error) { showToast(res.error); return; }
     setClaims((prev) => { const next = { ...prev }; delete next[shiftKey]; return next; });

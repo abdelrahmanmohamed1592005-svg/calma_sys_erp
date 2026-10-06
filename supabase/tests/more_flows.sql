@@ -38,6 +38,12 @@ select t.pass('G5 مدير الحجوزات يفتح الشيفت', t.dml('res1'
 select t.pass('G5 الموظف يكمل بعد إعادة الفتح', t.dml('st1', $q$update shift_records set shift_notes = 'كمّلت' where date = hotel_today() and shift_key = 'morning'$q$));
 select t.pass('G5 الموظف يقفل تاني', t.dml('st1', $q$update shift_records set closed = true where date = hotel_today() and shift_key = 'morning'$q$));
 select t.pass('G5 المدير العام يفتحه', t.dml('gm1', $q$update shift_records set closed = false where date = hotel_today() and shift_key = 'morning'$q$));
+select t.pass('G5 الموظف يقفل تاني للاختبار القادم', t.dml('st1', $q$update shift_records set closed = true where date = hotel_today() and shift_key = 'morning'$q$));
+select t.reject('G5b المحاسبة مايفتحش شيفت مقفول (صلاحية المدير العام ومدير الحجوزات بس)', t.dml('acc1', $q$update shift_records set closed = false where date = hotel_today() and shift_key = 'morning'$q$), 'إعادة فتح');
+select t.pass('G5c المحاسبة تصحّح محتوى شيفت مقفول', t.dml('acc1', $q$update shift_records set shift_notes = 'تصحيح' where date = hotel_today() and shift_key = 'morning'$q$));
+select t.reject('G8b مفيش مسح ليومية مقفولة (حتى للمدير العام)', t.dml('gm1', $q$delete from shift_records where date = hotel_today() and shift_key = 'morning'$q$), 'NO_ROWS');
+select t.reject('G8c المحاسبة مامسحش يومية', t.dml('acc1', $q$delete from shift_records where date = hotel_today() - 1 and shift_key = 'evening'$q$), 'NO_ROWS');
+select t.pass('G5d المدير العام يفتحه تاني', t.dml('gm1', $q$update shift_records set closed = false where date = hotel_today() and shift_key = 'morning'$q$));
 select t.reject('G8 الموظف مايمسحش يومية', t.dml('st1', $q$delete from shift_records where date = hotel_today()$q$), 'NO_ROWS');
 select t.reject('G11 موظف يحجز شيفت بتاريخ بعيد', t.dml('st2', $q$insert into shift_claims(date, shift_key, username, name) values (hotel_today() + 30, 'morning', 'st2', 'st2')$q$), 'row-level security');
 select t.reject('G11 موظف ينشئ يومية لشيفت مش حاجزه', t.dml('st2', $q$insert into shift_records(date, shift_key) values (hotel_today(), 'evening')$q$), 'row-level security');
