@@ -74,7 +74,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         await addBooking(staff, { room, guest, price: 50, nights, startOffset: start, paid: Math.min(paid, total) || undefined, expectSaved: false });
         // التعارض: لو القديم دخل فعلاً بيتسجّل خروجه المبكر والجديد بيتسكّن، وغير كده (مزدوج حقيقي) مرفوض بسبب واضح
         await expect(toast(staff)).toContainText(conflict ? /تم الحفظ|لسه ماجاش معاده|نزيله لسه في الغرفة|قبل دخول/ : "تم الحفظ");
-        if (await staff.locator(".cx-card[data-calma-editing]").count()) await staff.getByRole("button", { name: "إلغاء", exact: true }).click();
+        await staff.locator(".cx-card[data-calma-editing]").getByRole("button", { name: "إلغاء", exact: true }).click({ timeout: 1500 }).catch(() => {});      // لو الفورم لسه مفتوح (مرفوض) نقفله
       },
       async collect() {
         const { bookings } = await snapshot(env);
@@ -202,8 +202,8 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
     const unpaid = [...rooms].filter((r) => { const b = live.find((x) => x.room === r); return !(Number(b.amount_paid) >= hotelTotal(b) - 0.005); }).length;
     await expect(res.getByText(new RegExp(`مشغولة - متبقي فلوس ${unpaid}\\b`))).toBeVisible();
     await expect(res.getByText(new RegExp(`مشغولة - متحصّلة ${rooms.size - unpaid}\\b`))).toBeVisible();
-    // غرف اتعلّمت "غادر مبكرًا" النهارده (من زرار المغادرة المبكرة) ومفيش عليها نزيل نشط دلوقتي
-    const ovRooms = new Set((await env.q("select room_number from room_overrides where status = 'early_checkout'")).map((o) => o.room_number).filter((r) => !rooms.has(r)));
+    // غرف نزيلها غادر مبكرًا النهارده (متحسبة من الحجز نفسه) ومفيش عليها نزيل ساكن دلوقتي
+    const ovRooms = new Set(bookings.filter((b) => b.left_early && b.status !== "ملغي" && b.checkout === today && !rooms.has(b.room)).map((b) => b.room));
     const soon = new Set(bookings.filter((b) => b.status !== "ملغي" && b.checkin > today && b.checkin <= cairoDate(2) && !rooms.has(b.room) && !ovRooms.has(b.room)).map((b) => b.room));
     await expect(res.getByText(new RegExp(`قادمة قريبًا ${soon.size}\\b`))).toBeVisible();
     await expect(res.getByText(new RegExp(`غادر مبكرًا ${ovRooms.size}\\b`))).toBeVisible();
