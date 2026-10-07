@@ -160,9 +160,9 @@ test.describe("شيفت الموظف والحجوزات", () => {
     expect(store.bookings).toHaveLength(0);
   });
 
-  test("حجز متعارض مع حجز موجود بيتحذّر منه ومبيتحفظش من غير تأكيد", async ({ page }) => {
+  test("حجز متعارض مع حجز مستقبلي (مزدوج حقيقي) بيتحذّر منه ومبيتحفظش", async ({ page }) => {
     const store = await open(page);
-    store.bookings.push({ id: "b1", room: 601, guest_name: "نزيل قديم", checkin: "2026-10-06", checkout: "2026-10-09", price_night: 40, currency: "USD", total_room: 120, pax: 1, status: "مؤكد", approval_status: "approved", extras: { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 }, early_checkin: { applied: false, fee: 0, note: "" }, payment_details: {}, payment_method: "كاش", source: "مباشر", amount_paid: 0, amount_tendered: 0, settled: false, notes: "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    store.bookings.push({ id: "b1", room: 601, guest_name: "نزيل قديم", checkin: "2026-10-07", checkout: "2026-10-10", price_night: 40, currency: "USD", total_room: 120, pax: 1, status: "مؤكد", approval_status: "approved", extras: { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 }, early_checkin: { applied: false, fee: 0, note: "" }, payment_details: {}, payment_method: "كاش", source: "مباشر", amount_paid: 0, amount_tendered: 0, settled: false, notes: "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
     await login(page, "ahmed");
     await tabs(page).filter({ hasText: "اليومية" }).click();
     await page.getByRole("button", { name: /الشيفت الصباحي/ }).click();
@@ -171,9 +171,10 @@ test.describe("شيفت الموظف والحجوزات", () => {
     await page.getByRole("button", { name: /حجز جديد/ }).click();
     await page.locator("select.cx-select").first().selectOption("601");
     await field(page, "اسم النزيل").fill("نزيل جديد");
-    await expect(page.getByText(/محجوزة بالفعل في تواريخ متداخلة/)).toBeVisible();
+    await field(page, "تاريخ الخروج").fill("2026-10-09");
+    await expect(page.getByTestId("duplicate-blocked")).toContainText("لسه ماجاش معاده");
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
-    await expect(page.getByText(/الغرفة متعارضة مع حجز موجود/)).toBeVisible();
+    await expect(page.locator(".cx-toast")).toContainText("لسه ماجاش معاده");
     expect(store.bookings).toHaveLength(1);
   });
 });

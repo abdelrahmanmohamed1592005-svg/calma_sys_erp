@@ -1,7 +1,7 @@
 // أكواد الأفراد اللي المستخدم بيكتبها، إلغاء الحجز (بدل المسح) وحالة رد الفلوس، الدخول المبكر
 // (عادي وأونلاين) والمغادرة المبكرة وطلب الرد، وإن أي تحصيل بيتسمع في الحجز واليومية والتقرير بنفس الرقم.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -152,7 +152,6 @@ test.describe("إلغاء الحجز (مش مسح)", () => {
     expect(await get(env, "Paid Cancel")).toMatchObject({ status: "ملغي", refund_pending: true, amount_paid: 200 });
     await expectSync(env, { USD: 200 });                  // لسه ماترّدش: الفلوس لسه في اليومية
     await card.getByRole("button", { name: "رد الفلوس" }).click();
-    await card.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     expect(await get(env, "Paid Cancel")).toMatchObject({ status: "ملغي", refund_pending: false, refund_decision: "refunded", amount_paid: 0 });
     await expect(card.getByTestId("refund-status")).toContainText("اترد للنزيل");
@@ -169,7 +168,7 @@ test.describe("الدخول المبكر", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 604).click();
+    await openRoom(page, 604);
     await page.getByTestId("early-fee").fill("50");
     await page.getByTestId("early-note").fill("وصل ٧ الصبح");
     await page.getByTestId("early-apply").click();
@@ -201,7 +200,7 @@ test.describe("الدخول المبكر", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 605).click();
+    await openRoom(page, 605);
     await page.getByTestId("early-fee").fill("30");
     await page.getByTestId("early-apply").click();
     await expect(toast(page)).toContainText("اتحصّل");
@@ -216,7 +215,7 @@ test.describe("الدخول المبكر", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 606).click();
+    await openRoom(page, 606);
     await page.getByTestId("early-fee").fill("40");
     await page.getByTestId("early-collect").uncheck();
     await page.getByTestId("early-apply").click();
@@ -238,7 +237,7 @@ test.describe("الدخول المبكر", () => {
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
     await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();          // مفيش حاجة مستحقة في الفندق لسه
-    await boardTile(page, 607).click();
+    await openRoom(page, 607);
     await page.getByTestId("early-fee").fill("40");
     await page.getByTestId("early-apply").click();
     await expect(toast(page)).toContainText("اتحصّل");
@@ -284,7 +283,7 @@ test.describe("الدخول المبكر", () => {
     await logout(page);
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 608).click();
+    await openRoom(page, 608);
     await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
     await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
     expect(await get(env, "Res Early")).toMatchObject({ amount_paid: 125, settled: true });
@@ -295,7 +294,7 @@ test.describe("الدخول المبكر", () => {
 test.describe("المغادرة المبكرة وطلب رد الفلوس", () => {
   async function leave(page, room) {
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, room).click();
+    await openRoom(page, room);
     await roomCard(page).getByTestId("early-leave").getByRole("button", { name: /غادر مبكرًا/ }).click();
     await roomCard(page).getByRole("button", { name: "تأكيد المغادرة المبكرة؟" }).click();
   }
@@ -317,7 +316,6 @@ test.describe("المغادرة المبكرة وطلب رد الفلوس", () =
     const req = guestCard(page, "Leaves Early").getByTestId("refund-request");
     expect(digits(await req.innerText())).toContain("200USD");
     await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await req.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     expect(await get(env, "Leaves Early")).toMatchObject({ amount_paid: 100, refund_pending: false, refund_decision: "refunded", refunded_amount: 200 });
     await expectSync(env, { USD: 100 });

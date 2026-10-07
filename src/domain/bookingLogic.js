@@ -1,6 +1,6 @@
 import { addDays, todayStr, nightsBetween } from "./dates";
 import { bookingGrandTotal, bookingAmountDue } from "./money";
-import { MANUAL_STATUS_OPTIONS } from "./constants";
+import { STATUS_LABELS } from "./constants";
 
 export function isOverrideStillActive(ov, dateStr) {
   if (!ov) return false;
@@ -10,20 +10,16 @@ export function isOverrideStillActive(ov, dateStr) {
   return setDateStr === dateStr; // باقي الحالات صالحة ليوم واحد بس وبترجع تلقائي بعده
 }
 
+/* حالة الغرفة بتتحسب من الحجوزات بس + حالتين يدويتين (صيانة / تحت التنظيف):
+   1) فيه نزيل ساكن النهارده => مشغولة (الحالة اليدوية بتتجاهل - مفيش حاجة بتخفي نزيل).
+   2) صيانة (لحد ما تتشال) أو تنظيف (لليوم بس) => حالتها.
+   3) نزيل غادر مبكرًا النهارده => "غادر مبكرًا" (متحسبة من الحجز نفسه).
+   4) حجز قادم خلال يومين => قادمة قريبًا، وغير كده => متاحة. */
 export function computeRoomStatus(roomNumber, bookings, overrides, dateStr) {
   const ov = overrides[roomNumber];
   const active = bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.checkin <= dateStr && dateStr < b.checkout);
-  if (ov && ov.status && ov.status !== "auto" && isOverrideStillActive(ov, dateStr)) {
-    // "غادر مبكرًا" / "تحت التنظيف" بتخص النزيل (أو الحالة) اللي كانت وقت ما اتحددت. لو بعدها
-    // اتسكّن حجز جديد على الغرفة (تسكين مكرر مثلاً) الحجز الجديد هو اللي يبان - من غير كده
-    // الحالة اليدوية كانت بتخفي النزيل الجديد وتفاصيله طول اليوم. الصيانة بتفضل لحد ما تتشال يدويًا.
-    const supersedable = ov.status === "early_checkout" || ov.status === "cleaning";
-    const newerGuest = active && Number(active.createdAt) > Number(ov.updatedAt);
-    if (!(supersedable && newerGuest)) {
-      const opt = MANUAL_STATUS_OPTIONS.find((o) => o.key === ov.status);
-      return { key: ov.status, label: opt ? opt.label : ov.status, source: "manual" };
-    }
-  }
+  const manual = !active && ov && (ov.status === "maintenance" || ov.status === "cleaning") && isOverrideStillActive(ov, dateStr) ? ov.status : null;
+  if (manual) return { key: manual, label: STATUS_LABELS[manual], source: "manual" };
   if (active) {
     // "متحصّل" = المدفوع فعلًا وصل للإجمالي الحالي (أو مدفوع أونلاين) - مش
     // علامة settled لوحدها: لو الإجمالي زاد (تمديد/رسوم) والمدفوع لسه أقل،
@@ -32,6 +28,8 @@ export function computeRoomStatus(roomNumber, bookings, overrides, dateStr) {
     const paid = bookingAmountDue(active) <= 0;
     return { key: paid ? "occupied_paid" : "occupied_unpaid", label: paid ? "مشغولة - متحصّل بالكامل" : "مشغولة - متبقي عليها فلوس", guest: active.guestName, booking: active, paid };
   }
+  const departed = bookings.find((b) => b.room === roomNumber && b.leftEarly && b.status !== "ملغي" && b.checkout === dateStr);
+  if (departed) return { key: "early_checkout", label: STATUS_LABELS.early_checkout, guest: departed.guestName, departed, derived: true };
   const upcoming = bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.checkin > dateStr && b.checkin <= addDays(dateStr, 2));
   if (upcoming) return { key: "reserved", label: "قادمة قريبًا", guest: upcoming.guestName, booking: upcoming };
   return { key: "available", label: "متاحة" };
@@ -161,4 +159,27 @@ export function findGuestCodeHits(bookings, query) {
   return (bookings || [])
     .flatMap((b) => guestCodeEntries(b).filter((g) => g.code.toLowerCase() === q).map((g) => ({ ...g, room: b.room, booking: b })))
     .sort((a, b) => String(b.booking.checkin).localeCompare(String(a.booking.checkin)));
+}
+
+/* الكود فريد جوه الشهر (شهر تاريخ الدخول) - زي قاعدة البيانات بالظبط: بيرجّع أول كود من codes
+   مستخدم في حجز تاني في نفس الشهر {code, room, guestName} أو null. */
+const monthKey = (d) => String(d || "").slice(0, 7);
+export function findGuestCodeConflict(bookings, codes, checkin, excludeId) {
+  const wanted = new Set((codes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean));
+  if (!wanted.size) return null;
+  for (const b of bookings || []) {
+    if (b.id === excludeId || monthKey(b.checkin) !== monthKey(checkin)) continue;
+    const hit = guestCodeEntries(b).find((g) => wanted.has(g.code.toUpperCase()));
+    if (hit) return { code: hit.code, room: b.room, guestName: b.guestName };
+  }
+  return null;
+}
+/* الرقم التالي المتاح الشهر ده (أكبر كود رقمي في الشهر + 1) - العداد بيبدأ من ١ كل شهر */
+export function nextGuestNumber(bookings, checkin, excludeId) {
+  let max = 0;
+  for (const b of bookings || []) {
+    if (b.id === excludeId || monthKey(b.checkin) !== monthKey(checkin)) continue;
+    for (const g of guestCodeEntries(b)) if (/^\d+$/.test(g.code)) max = Math.max(max, Number(g.code));
+  }
+  return max + 1;
 }

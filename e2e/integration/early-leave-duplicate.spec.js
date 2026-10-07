@@ -1,6 +1,6 @@
 // الخروج المبكر والتسكين المكرر من شاشة الحجوزات (موظف الشيفت) فوق قاعدة حقيقية.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -32,7 +32,6 @@ test.describe("تسكين مكرر", () => {
     expect(await env.q("select 1 from bookings")).toHaveLength(1);
 
     // تأكيد التسكين المكرر: الخطة بتظهر قبل الحفظ
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
     await expect(page.getByText(/اللي هيحصل عند الحفظ/)).toContainText("غادر مبكرًا");
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
@@ -46,7 +45,7 @@ test.describe("تسكين مكرر", () => {
 
     // لوحة الغرف: الغرفة مشغولة بالنزيل الجديد (متبقي فلوس) + بطاقة "غادر مبكرًا" للقديم
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 611).click();
+    await openRoom(page, 611);
     await expect(roomCard(page)).toContainText("New Guest");
     await expect(roomCard(page)).toContainText("تسكين مكرر");
     await expect(page.getByText(/Old Guest - غادر النهارده/)).toContainText("طلب رد فلوس");
@@ -59,7 +58,6 @@ test.describe("تسكين مكرر", () => {
     const req = page.getByTestId("refund-request");
     expect(digits(await req.innerText())).toContain("200USD");
     await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await req.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     const after = await get(env, "Old Guest");
     expect(after).toMatchObject({ amount_paid: 200, refund_pending: false, refund_decision: "refunded", refunded_amount: 200, settled: true });
@@ -78,7 +76,6 @@ test.describe("تسكين مكرر", () => {
     await field(page, "اسم النزيل").fill("Replacement");
     await field(page, "تاريخ الخروج").fill(cairoDate(1));
     await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']").fill("100");
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
     await expect(page.getByText(/دخل .* وخرج في نفس اليوم/)).toBeVisible();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
@@ -154,7 +151,6 @@ test.describe("تسكين مكرر", () => {
     await field(page, "اسم النزيل").fill("Will Fail");
     await field(page, "تاريخ الخروج").fill(cairoDate(1));
     await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']").fill("100");
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("الحجز القديم رجع زي ما كان");
     const old = (await env.q("select * from bookings where id = $1", [oldId]))[0];
@@ -172,7 +168,7 @@ test.describe("خروج مبكر من لوحة الغرف", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 601).click();
+    await openRoom(page, 601);
     await expect(page.getByText(/تغيير حالتها بشكل عام يتم من مدير الحجوزات فقط/)).toBeVisible();
     await expect(page.getByRole("button", { name: "صيانة" })).toHaveCount(0);
     // "غادر مبكرًا" على غرفة عليها نزيل بقى بيقصّر الإقامة ويحسب الليالي (مش مجرد حالة)

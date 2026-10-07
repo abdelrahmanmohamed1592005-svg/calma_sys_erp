@@ -9,7 +9,7 @@
   وفي الآخر التقرير ولوحة الغرف بيطابقوا القاعدة.
 */
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom } from "../ui";
 
 const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const ROOMS = [601, 602, 603, 604];
@@ -85,7 +85,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         if (!c.length) return false;
         const b = pick(c);
         log.push(`collect ${b.guest_name}`);
-        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
         if (isOnline(b)) {
           await roomCard(staff).getByTestId("collect-extras").click();
@@ -102,7 +102,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         const b = pick(c);
         const fee = pick([20, 40]), now = rnd() < 0.6;
         log.push(`early ${b.guest_name} ${fee} ${now ? "collect" : "later"}`);
-        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
         await staff.getByTestId("early-fee").fill(String(fee));
         if (!now) await staff.getByTestId("early-collect").uncheck();
@@ -115,7 +115,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         if (!c.length) return false;
         const b = pick(c);
         log.push(`leave ${b.guest_name}`);
-        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
         await roomCard(staff).getByTestId("early-leave").getByRole("button", { name: /غادر مبكرًا/ }).click();
         await roomCard(staff).getByRole("button", { name: "تأكيد المغادرة المبكرة؟" }).click();
@@ -136,7 +136,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         const b = pick(c);
         const blocked = overlaps(bookings, b.room, b.checkout, cairoDate(nightsBetween(today, b.checkout) + 1), b.id);
         log.push(`extend ${b.guest_name}${blocked ? " (blocked)" : ""}`);
-        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
         await roomCard(staff).getByRole("button", { name: /تمديد الحجز/ }).click();
         await expect(toast(staff)).toContainText(blocked ? /محجوزة لحد تاني|مدير الحجوزات ضايف/ : "تم تمديد الحجز");
@@ -164,7 +164,6 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         await goTab(res, "الحجوزات");
         const req = res.locator(".cx-card", { hasText: b.guest_name }).last().getByTestId("refund-request");
         await req.getByRole("button", { name: refund ? "رد الفلوس" : /رفض الرد/ }).click();
-        await req.getByRole("button", { name: refund ? "تأكيد الرد؟" : "تأكيد الرفض؟" }).click();
         await expect(toast(res)).toContainText(refund ? "تم رد" : "تم رفض الرد");
       },
       async shorten() {

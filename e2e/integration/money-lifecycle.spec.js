@@ -1,7 +1,7 @@
 // دورة حياة الفلوس من الشاشات فوق قاعدة بيانات حقيقية: تحصيل، رسوم إضافية، تمديد،
 // إلغاء، طلب رد الفلوس وقراره - ومتابعة الأثر على الحجز واليومية ولوحة الغرف والتقرير.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -19,7 +19,7 @@ const sumLedger = async (env, cur = "USD") => {
 };
 const collectOnBoard = async (page, room, method) => {
   await goTab(page, "لوحة الغرف");
-  await boardTile(page, room).click();
+  await openRoom(page, room);
   const card = roomCard(page);
   if (method) await card.getByTestId("collect-method").selectOption(method);
   await card.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
@@ -92,7 +92,7 @@ test.describe("التمديد من لوحة الغرف", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 603).click();
+    await openRoom(page, 603);
     await roomCard(page).getByRole("button", { name: /تمديد الحجز/ }).click();
     await expect(toast(page)).toContainText("تم تمديد الحجز");
     let [b] = await env.q("select * from bookings where id = $1", [id]);
@@ -114,7 +114,7 @@ test.describe("التمديد من لوحة الغرف", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 606).click();
+    await openRoom(page, 606);
     await roomCard(page).getByRole("button", { name: /تمديد الحجز/ }).click();
     await expect(toast(page)).toContainText("مدير الحجوزات ضايف حجز على الغرفة دي");
     const [b] = await env.q("select * from bookings where id = $1", [id]);
@@ -169,7 +169,6 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     await goTab(page, "الحجوزات");
     const req = page.getByTestId("refund-request");
     await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await req.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ amount_paid: 0, settled: false, refund_pending: false, refund_decision: "refunded", refunded_amount: 300, refunded_by: "rawan" });
@@ -200,7 +199,6 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     await expect(toast(page)).toContainText("طلب رد فلوس");
     const req = page.getByTestId("refund-request");
     await req.getByRole("button", { name: /رفض الرد/ }).click();
-    await req.getByRole("button", { name: "تأكيد الرفض؟" }).click();
     await expect(toast(page)).toContainText("تم رفض الرد");
     const [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ status: "ملغي", refund_pending: false, refund_decision: "kept", amount_paid: 200 });
@@ -222,7 +220,6 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     const req = page.getByTestId("refund-request");
     await req.locator("select.cx-select").selectOption("كاش");
     await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await req.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     const { rows } = await ledgerRows(env, 608);
     expect(rows.map((r) => [r.collectionMethod, Number(r.collectionAmt)]).sort()).toEqual([["كاش", -100], ["فيزا", 100]].sort());
@@ -238,7 +235,6 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     await goTab(page, "الحجوزات");
     const req = page.getByTestId("refund-request");
     await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await req.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("مفيش شيفت مفتوح");
     const [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ refund_pending: true, amount_paid: 100 });
@@ -261,7 +257,6 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     const req = page.getByTestId("refund-request");
     expect(digits(await req.innerText())).toContain("200USD");
     await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await req.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ amount_paid: 200, refund_pending: false, settled: true });

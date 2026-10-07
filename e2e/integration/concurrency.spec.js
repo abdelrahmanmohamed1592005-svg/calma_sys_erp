@@ -1,7 +1,7 @@
 // تزامن بين جهازين/مستخدمين على نفس البيانات (فوق قاعدة حقيقية): لازم ماحدش يكتب فوق
 // تعديل التاني بصمت، وماحدش ياخد الفلوس مرتين، ومحدش يحجز نفس الغرفة مرتين.
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, claimShift, cairoDate, refresh, digits, shiftDay, myShiftKey, SHIFT_LABEL } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, claimShift, cairoDate, refresh, digits, shiftDay, myShiftKey, SHIFT_LABEL, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -25,7 +25,7 @@ test("مدير الحجوزات بيعدّل حجز والموظف حصّله ف
   await staff.goto("/");
   await login(staff, "ahmed");
   await goTab(staff, "لوحة الغرف");
-  await boardTile(staff, 601).click();
+  await openRoom(staff, 601);
   await roomCard(staff).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
   await expect(toast(staff)).toContainText("تم تسجيل التحصيل الكامل");
 
@@ -90,7 +90,7 @@ test("قرار رد الفلوس من جهازين: بيتنفّذ مرة واح
   await other.goto("/");
   await login(other, "rawan");
   await goTab(other, "الحجوزات");
-  const decide = async (p) => { const req = p.getByTestId("refund-request"); await req.getByRole("button", { name: "رد الفلوس" }).click(); await req.getByRole("button", { name: "تأكيد الرد؟" }).click(); };
+  const decide = async (p) => { const req = p.getByTestId("refund-request"); await req.getByRole("button", { name: "رد الفلوس" }).click(); };
   await decide(page);
   await expect(toast(page)).toContainText("تم رد");
   await decide(other);                // الجهاز التاني لسه شايف الطلب

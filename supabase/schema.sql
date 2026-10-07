@@ -1699,13 +1699,18 @@ revoke all on booking_guests from anon, authenticated;
 grant select on booking_guests to authenticated;
 grant all on booking_guests to service_role;
 
--- بيبني أكواد الأفراد من bookings.guest_codes (بنفس ترتيب الأفراد) ومربوطة بالغرفة الحالية
+-- بيبني أكواد الأفراد من bookings.guest_codes (بنفس ترتيب الأفراد) ومربوطة بالغرفة الحالية.
+-- الكود فريد جوه الشهر (شهر تاريخ الدخول): نفس الرقم مرفوض لو اتكتب لنزيل تاني في نفس الشهر
+-- (حتى لو الحجز القديم اتلغى أو النزيل مشي - الكود بيفضل محفوظ)، ومسموح في شهر مختلف.
+alter table booking_guests add column if not exists ym text;
+update booking_guests g set ym = to_char(b.checkin, 'YYMM') from bookings b where b.id = g.booking_id and g.ym is null;
 create or replace function bookings_sync_guests()
 returns trigger language plpgsql security definer set search_path = public as $$
-declare codes jsonb; n int; i int; c text; seen text[] := '{}';
+declare codes jsonb; n int; i int; c text; seen text[] := '{}'; ym_v text; clash record;
 begin
   codes := coalesce(new.guest_codes, '[]'::jsonb);
   n := least(greatest(coalesce(new.pax, 1), 1), jsonb_array_length(codes));
+  ym_v := to_char(new.checkin, 'YYMM');
   delete from booking_guests where booking_id = new.id;
   for i in 0 .. n - 1 loop
     if jsonb_typeof(codes -> i) is distinct from 'string' then continue; end if;
@@ -1714,15 +1719,21 @@ begin
     if char_length(c) > 40 then raise exception 'كود الفرد % أطول من ٤٠ حرف', i + 1; end if;
     if upper(c) = any(seen) then raise exception 'الكود % مكرر جوه نفس الحجز', c; end if;
     seen := seen || upper(c);
-    insert into booking_guests(booking_id, room, seq, code) values (new.id, new.room, i + 1, c);
+    select g.room, b.guest_name into clash from booking_guests g join bookings b on b.id = g.booking_id
+      where g.ym = ym_v and upper(g.code) = upper(c) and g.booking_id <> new.id limit 1;
+    if found then
+      raise exception 'الكود % مستخدم الشهر ده بالفعل (غرفة % - %) - اختار كود تاني أو استنى الشهر الجاي', c, clash.room, clash.guest_name;
+    end if;
+    insert into booking_guests(booking_id, room, seq, code, ym) values (new.id, new.room, i + 1, c, ym_v);
   end loop;
   return null;
 end;
 $$;
 drop trigger if exists bookings_guests_sync on bookings;
-create trigger bookings_guests_sync after insert or update of pax, room, guest_codes on bookings
+create trigger bookings_guests_sync after insert or update of pax, room, guest_codes, checkin on bookings
   for each row execute function bookings_sync_guests();
 revoke all on function bookings_sync_guests() from public, anon, authenticated;
+create index if not exists booking_guests_ym_code_idx on booking_guests (ym, upper(code));
 
 do $$ begin
   begin execute 'alter publication supabase_realtime add table booking_guests';
@@ -1861,3 +1872,53 @@ grant execute on function decide_booking_refund(uuid, text, timestamptz, text) t
 --    NOTICE بدل ما يوقف باقي السكريبت - راجعيها يدويًا وشغلي القسم ده لوحده
 --    تاني بعد كده.
 -- ============================================================================
+
+-- --------------------------------------------------------------------------
+-- 29) كود الحجز تلقائي: B + سنة/شهر + رقم متسلسل بيبدأ من ١ كل شهر (مثلاً B2610-0001).
+--     بيتولّد وقت إنشاء الحجز ومايتغيّرش بعد كده (المستخدم مابيكتبوش). الحجوزات القديمة
+--     اللي من غير كود بتاخد كود تلقائي، واللي ليها كود قديم بتفضل زي ما هي.
+-- --------------------------------------------------------------------------
+create table if not exists booking_code_counters (
+  ym text primary key,
+  n integer not null default 0
+);
+alter table booking_code_counters enable row level security;
+revoke all on booking_code_counters from anon, authenticated;
+grant all on booking_code_counters to service_role;
+
+create or replace function next_booking_code(p_day date default null)
+returns text language plpgsql security definer set search_path = public as $$
+declare ym_v text := to_char(coalesce(p_day, hotel_today()), 'YYMM'); k int;
+begin
+  insert into booking_code_counters(ym, n) values (ym_v, 1)
+    on conflict (ym) do update set n = booking_code_counters.n + 1
+    returning n into k;
+  return 'B' || ym_v || '-' || lpad(k::text, 4, '0');
+end;
+$$;
+revoke all on function next_booking_code(date) from public, anon, authenticated;
+
+create or replace function bookings_auto_code()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if TG_OP = 'INSERT' then
+    new.code := next_booking_code();
+  elsif coalesce(old.code, '') <> '' then
+    new.code := old.code;                       -- مابيتغيّرش
+  elsif coalesce(new.code, '') = '' then
+    new.code := next_booking_code();
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists bookings_auto_code_guard on bookings;
+create trigger bookings_auto_code_guard before insert or update on bookings
+  for each row execute function bookings_auto_code();
+revoke all on function bookings_auto_code() from public, anon, authenticated;
+
+-- الحجوزات الموجودة من غير كود (بالترتيب الزمني)
+do $$ declare r record; begin
+  for r in select id from bookings where coalesce(code, '') = '' order by created_at loop
+    update bookings set code = next_booking_code() where id = r.id;
+  end loop;
+end $$;

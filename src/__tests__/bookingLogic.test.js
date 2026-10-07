@@ -39,11 +39,11 @@ describe("computeRoomStatus", () => {
     expect(status.key).toBe("reserved");
   });
 
-  it("respects a maintenance override even with an active booking", () => {
+  it("نزيل ساكن مابيتخباش بأي حالة يدوية (حتى الصيانة)", () => {
     const booking = makeBooking();
     const overrides = { 601: { status: "maintenance", updatedAt: Date.now() } };
     const status = computeRoomStatus(601, [booking], overrides, "2026-09-06");
-    expect(status.key).toBe("maintenance");
+    expect(status.key).toBe("occupied_paid");
   });
 
   it("auto-expires a non-maintenance override from a previous day", () => {
@@ -231,35 +231,39 @@ describe("repricedTotalRoom (discount-aware, matches DB reprice_total)", () => {
 });
 
 
-describe("computeRoomStatus - الحالة اليدوية مابتخفيش نزيل جديد اتسكّن بعدها (تسكين مكرر)", () => {
+describe("computeRoomStatus - الحالات اليدوية والمغادرة المبكرة", () => {
   const T = new Date(2026, 8, 10, 12, 0, 0).getTime();       // ١٠ سبتمبر ١٢ ظهرًا (بتوقيت الجهاز)
   const today = "2026-09-10";
   const mk = (over) => ({ id: "x", room: 601, status: "مؤكد", checkin: today, checkout: "2026-09-12", amountPaid: 0, totalRoom: 100, extras: {}, ...over });
   const ovAt = (status, updatedAt) => ({ 601: { status, updatedAt } });
 
-  it("غادر مبكرًا اتحدّدت قبل الحجز الجديد => الحجز الجديد هو اللي يبان", () => {
-    const s = computeRoomStatus(601, [mk({ guestName: "New", createdAt: T + 5000 })], ovAt("early_checkout", T), today);
-    expect(s.key).toBe("occupied_unpaid");
-    expect(s.booking.guestName).toBe("New");
+  it("نزيل ساكن => هو اللي يبان مهما كانت الحالة اليدوية (تنظيف/صيانة/غادر مبكرًا القديمة)", () => {
+    for (const st of ["cleaning", "maintenance", "early_checkout"]) {
+      const s = computeRoomStatus(601, [mk({ guestName: "G", createdAt: T - 5000 })], ovAt(st, T), today);
+      expect(s.key, st).toBe("occupied_unpaid");
+      expect(s.booking.guestName).toBe("G");
+    }
   });
-
-  it("غادر مبكرًا اتحدّدت بعد الحجز => لسه بتظهر (الغرفة فعلاً فاضية)", () => {
-    const s = computeRoomStatus(601, [mk({ createdAt: T - 5000 })], ovAt("early_checkout", T), today);
+  it("من غير نزيل: الصيانة والتنظيف بيظهروا", () => {
+    expect(computeRoomStatus(601, [], ovAt("maintenance", T), today).key).toBe("maintenance");
+    expect(computeRoomStatus(601, [], ovAt("cleaning", T), today).key).toBe("cleaning");
+  });
+  it("حالة 'غادر مبكرًا' اليدوية القديمة مابقتش بتتعامل كحالة (اتشالت)", () => {
+    expect(computeRoomStatus(601, [], ovAt("early_checkout", T), today).key).toBe("available");
+  });
+  it("نزيل غادر مبكرًا النهارده => الغرفة 'غادر مبكرًا' (متحسبة من الحجز نفسه)", () => {
+    const left = mk({ guestName: "Gone", checkin: "2026-09-08", checkout: today, leftEarly: true });
+    const s = computeRoomStatus(601, [left], {}, today);
     expect(s.key).toBe("early_checkout");
+    expect(s.guest).toBe("Gone");
+    expect(computeRoomStatus(601, [left], {}, "2026-09-11").key).toBe("available");        // تاني يوم رجعت متاحة
   });
-
-  it("تحت التنظيف بتتلغي بنفس الطريقة بحجز أحدث", () => {
-    const s = computeRoomStatus(601, [mk({ createdAt: T + 5000 })], ovAt("cleaning", T), today);
-    expect(s.key).toBe("occupied_unpaid");
+  it("غادر مبكرًا ونزيل جديد اتسكّن => الجديد هو اللي يبان", () => {
+    const left = mk({ id: "old", guestName: "Gone", checkin: "2026-09-08", checkout: today, leftEarly: true });
+    const nw = mk({ id: "new", guestName: "New", checkin: today, checkout: "2026-09-12", duplicatePlacement: true });
+    expect(computeRoomStatus(601, [left, nw], {}, today).guest).toBe("New");
   });
-
-  it("الصيانة مابتتلغيش بحجز أحدث", () => {
-    const s = computeRoomStatus(601, [mk({ createdAt: T + 5000 })], ovAt("maintenance", T), today);
-    expect(s.key).toBe("maintenance");
-  });
-
-  it("من غير حجز نشط الحالة اليدوية بتفضل", () => {
-    const s = computeRoomStatus(601, [], ovAt("early_checkout", T), today);
-    expect(s.key).toBe("early_checkout");
+  it("حجز ملغي ومعلّم غادر مبكرًا مايظهرش كغادر", () => {
+    expect(computeRoomStatus(601, [mk({ checkout: today, checkin: "2026-09-08", leftEarly: true, status: "ملغي" })], {}, today).key).toBe("available");
   });
 });

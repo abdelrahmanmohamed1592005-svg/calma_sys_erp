@@ -1,7 +1,7 @@
 // الميزات الجديدة: أكواد الأفراد، الحجز الأونلاين (من غير وسيلة دفع ولا عمولة)، ظهور التسكين المكرر
 // وتحصيله المنفصل، مصاريف وإيرادات الفندق في اليومية، سعر الليلة على بلوك الغرفة، وحالة الحجز الملغي.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, SHIFT_LABEL } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, SHIFT_LABEL, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -42,7 +42,7 @@ test.describe("الحجز المدفوع أونلاين", () => {
     await expect(card).toContainText("مدفوع أونلاين");
     expect(digits(await card.innerText())).not.toMatch(/Booking\.com·كاش|مباشر·كاش/);
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 605).click();
+    await openRoom(page, 605);
     await expect(roomCard(page)).toContainText("مدفوع أونلاين");
     await expect(roomCard(page).getByText("طريقة الدفع")).toHaveCount(0);
   });
@@ -68,7 +68,6 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await field(page, "عدد الأفراد").fill("2");
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await priceInput(page).fill("150");
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
 
@@ -97,7 +96,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await page.goto("/");
     await login(page, "rawan");
     await expect(boardTile(page, 612)).toContainText("Newcomer");
-    await boardTile(page, 612).click();
+    await openRoom(page, 612);
     await expect(roomCard(page)).toContainText("Newcomer");
   });
 
@@ -115,7 +114,6 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await priceInput(page).fill("100");
     await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill("50");
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
     const nw = await get(env, "Replacement Guest");
@@ -135,7 +133,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
 
     // تحصيل باقي المبلغ من لوحة الغرف بيروح لنفس صف الحجز الجديد
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 613).click();
+    await openRoom(page, 613);
     await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
     await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
     [rec] = await env.q("select rows from shift_records");
@@ -151,7 +149,6 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await goTab(page, "الحجوزات");
     const req = guestCard(page, "Previous Guest").getByTestId("refund-request");
     await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await req.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     [rec] = await env.q("select rows from shift_records");
     rows = rec.rows.filter((r) => r.room === 613);
@@ -311,7 +308,6 @@ test.describe("الحجز الملغي وحالة الفلوس", () => {
     // رد
     const r1 = guestCard(page, "Will Refund").getByTestId("refund-request");
     await r1.getByRole("button", { name: "رد الفلوس" }).click();
-    await r1.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     const s1 = guestCard(page, "Will Refund").getByTestId("refund-status");
     await expect(s1).toContainText("اترد للنزيل");
@@ -321,7 +317,6 @@ test.describe("الحجز الملغي وحالة الفلوس", () => {
     // رفض
     const r2 = guestCard(page, "Will Keep").getByTestId("refund-request");
     await r2.getByRole("button", { name: /رفض الرد/ }).click();
-    await r2.getByRole("button", { name: "تأكيد الرفض؟" }).click();
     await expect(toast(page)).toContainText("تم رفض الرد");
     const s2 = guestCard(page, "Will Keep").getByTestId("refund-status");
     await expect(s2).toContainText("رُفض الرد");

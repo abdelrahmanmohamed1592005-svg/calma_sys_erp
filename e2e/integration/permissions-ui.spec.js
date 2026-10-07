@@ -1,7 +1,7 @@
 // الصلاحيات من الواجهة لكل دور، فوق قاعدة بيانات حقيقية (RLS + triggers):
 // اللي الشاشة بتعرضه واللي بتسمح بيه، واللي قاعدة البيانات نفسها بتفرضه.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, tab, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey } from "../ui";
+import { login, logout, goTab, field, tab, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -25,12 +25,12 @@ test.describe("موظف الشيفت", () => {
     await expect(page.getByText(/مش شيفتك دلوقتي/)).toBeVisible();
 
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 601).click();
+    await openRoom(page, 601);
     await expect(roomCard(page)).toContainText("Booked Guest");
     await expect(page.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /تمديد الحجز/ })).toHaveCount(0);
     await expect(page.getByText(/مش شيفتك دلوقتي/).first()).toBeVisible();
-    await boardTile(page, 602).click();
+    await openRoom(page, 602);
     await expect(page.getByText(/مش شيفتك دلوقتي - الحالة مش هتتعدل/)).toBeVisible();
 
     // حتى بالـ API مباشرة: قاعدة البيانات بترفض (موظف من غير شيفت مقفول عليه كل حاجة بتخص اليومية)
@@ -48,7 +48,7 @@ test.describe("موظف الشيفت", () => {
     await expect(page.getByRole("button", { name: /حجز جديد/ })).toHaveCount(0);
     await expect(page.getByText(/شيفتك مقفول/)).toBeVisible();
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 602).click();
+    await openRoom(page, 602);
     await expect(page.getByText(/شيفتك مقفول/).first()).toBeVisible();
     await expect(page.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ })).toHaveCount(0);
   });
@@ -59,10 +59,10 @@ test.describe("موظف الشيفت", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 603).click();
+    await openRoom(page, 603);
     await page.getByRole("button", { name: "صيانة" }).click();
     await expect(toast(page)).toContainText("تم تحديث حالة الغرفة");
-    await boardTile(page, 604).click();
+    await openRoom(page, 604);
     await page.getByRole("button", { name: "تحت التنظيف" }).click();
     await expect(toast(page)).toContainText("تم تحديث حالة الغرفة");
     const ovs = await env.q("select room_number, status, updated_by from room_overrides order by room_number");
@@ -95,7 +95,7 @@ test.describe("موظف الشيفت", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 605).click();
+    await openRoom(page, 605);
     await page.getByRole("button", { name: "صيانة" }).click();
     await expect(toast(page)).toContainText("تم تحديث حالة الغرفة");
     await page.waitForTimeout(500);
@@ -121,7 +121,7 @@ test.describe("مدير الحجوزات", () => {
 
     // لوحة الغرف: بيعدّل رسوم إضافية (من غير غسيل/كافيتيريا) وبيشوف زر التعديل
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 601).click();
+    await openRoom(page, 601);
     await expect(roomCard(page)).toContainText("Res Edit");
     await expect(page.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ })).toHaveCount(0);   // التحصيل مش شغله
     await expect(field(page, "غسيل")).toHaveCount(0);
@@ -183,7 +183,7 @@ test.describe("المحاسبة والمدير العام (عرض فقط)", () =
       expect(await tabsOf(page)).toEqual(tabsExpected);
 
       await goTab(page, "لوحة الغرف");
-      await boardTile(page, 601).click();
+      await openRoom(page, 601);
       await expect(roomCard(page)).toContainText("View Only");
       await expect(page.getByText("عرض فقط لدورك الحالي")).toBeVisible();
       for (const name of [/تسجيل تحصيل/, /تمديد الحجز/, /تعديل تفاصيل الحجز/, /حفظ الرسوم/]) await expect(page.getByRole("button", { name })).toHaveCount(0);

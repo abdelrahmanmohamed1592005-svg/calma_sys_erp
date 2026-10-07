@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ONLINE_METHODS } from "../domain/money";
+import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt } from "../domain/money";
 import { roomLabel } from "../domain/constants";
 
 export function GlobalStyle() {
@@ -113,6 +113,61 @@ export function PaymentDetailsInline({ method, details, onChange, disabled }) {
       <input className="cx-input" style={{ fontSize: 11, padding: "4px 6px" }} placeholder="اسم المرسل" disabled={disabled} value={d.senderName} onChange={(e) => onChange({ ...d, senderName: e.target.value })} />
       <input className="cx-input" style={{ fontSize: 11, padding: "4px 6px" }} placeholder={method === "فيزا" ? "آخر ٤ أرقام الكارت" : "رقم المحفظة / الهاتف"} disabled={disabled} value={d.senderNumber} onChange={(e) => onChange({ ...d, senderNumber: e.target.value })} />
       <input className="cx-input" style={{ fontSize: 11, padding: "4px 6px" }} placeholder="رقم العملية / ملاحظة" disabled={disabled} value={d.ref} onChange={(e) => onChange({ ...d, ref: e.target.value })} />
+    </div>
+  );
+}
+
+/* حساب الحجز في سطر واحد واضح (نفس الشكل في لوحة الغرف وقايمة الحجوزات):
+   الإجمالي | المدفوع | المتبقي (أو "مستحق رده" لو فيه فلوس زيادة). */
+export function MoneyBox({ b }) {
+  const total = bookingGrandTotal(b), paid = Number(b.amountPaid) || 0, due = bookingAmountDue(b);
+  const owed = refundDueAmount(b);
+  const online = !!b.paymentDetails?.onlinePaid;
+  const cells = [["الإجمالي", fmt(total), null]];
+  if (online) cells.push(["مدفوع أونلاين (سعر الغرفة)", fmt(Number(b.totalRoom) || 0), "var(--sage)"]);
+  if (!online || paid > 0 || due > 0) cells.push([online ? "المتحصّل في الفندق" : "المدفوع", fmt(paid), null]);
+  if (b.status !== "ملغي" && (due > 0 || !online)) cells.push([online ? "المتبقي (خدمات/دخول مبكر)" : "المتبقي", fmt(due), due > 0 ? "var(--rust)" : "var(--sage)"]);
+  if (owed > 0) cells.push(["مستحق رده للنزيل", fmt(owed), "var(--rust)"]);
+  return (
+    <div data-testid="money-box" style={{ display: "flex", gap: 14, flexWrap: "wrap", background: "#fff", borderRadius: 8, padding: "8px 12px" }}>
+      {cells.map(([label, val, color]) => (
+        <div key={label}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>{label}</div><div style={{ fontWeight: 800, color: color || "inherit" }}>{val} {b.currency}</div></div>
+      ))}
+    </div>
+  );
+}
+
+/* طلب رد الفلوس / حالته بنفس الشكل في كل مكان (قايمة الحجوزات، لوحة الغرف، شريط الطلبات):
+   - طلب معلّق: السبب والمبلغ، ومدير الحجوزات بضغطة واحدة يوافق ويرد (بيتخصم من اليومية) أو يرفض.
+   - اتقرر: النتيجة بنص واضح (اترد X / رُفض الرد / مفيش رد). */
+export function RefundBox({ b, canDecide, onDecide }) {
+  const [method, setMethod] = useState(b.paymentMethod);
+  const rs = refundStatusOf(b);
+  if (!rs) return null;
+  if (rs.kind !== "pending") {
+    return (
+      <div className="cx-no-print" data-testid="refund-status" style={{ width: "100%", fontSize: 12, fontWeight: 700, color: rs.kind === "refunded" ? "var(--sage)" : rs.kind === "none" ? "var(--muted)" : "var(--rust)" }}>
+        {rs.kind === "refunded" ? "✓ " : "• "}{rs.text}
+      </div>
+    );
+  }
+  const reason = b.status === "ملغي" ? "الحجز اتلغى" : "النزيل مشي بدري / الإقامة اتقصّرت والمدفوع زاد عن الإجمالي";
+  return (
+    <div className="cx-no-print" data-testid="refund-request" style={{ width: "100%", background: "#FBE2E4", borderRadius: 8, padding: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 12, color: "var(--rust)", fontWeight: 700 }}>
+        ⚠ طلب رد فلوس: {fmt(refundDueAmount(b))} {b.currency} - {reason}
+      </span>
+      {canDecide ? (
+        <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <select className="cx-select" title="وسيلة رد الفلوس للنزيل (اللي هتتخصم من اليومية)" style={{ width: 130 }} value={method} onChange={(e) => setMethod(e.target.value)}>
+            {methodOptionsFor(b.paymentMethod).map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <button className="cx-btn cx-btn-gold" data-testid="refund-approve" onClick={() => onDecide(b, "refund", method)}>رد الفلوس</button>
+          <button className="cx-btn cx-btn-outline" data-testid="refund-reject" onClick={() => onDecide(b, "keep", method)}>رفض الرد (الفلوس تفضل)</button>
+        </span>
+      ) : (
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>في انتظار موافقة مدير الحجوزات</span>
+      )}
     </div>
   );
 }

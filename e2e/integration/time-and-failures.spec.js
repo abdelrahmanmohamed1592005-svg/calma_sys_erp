@@ -1,6 +1,6 @@
 // الوقت (الأوفر تايم، منتصف الليل، الشيفت الليلي) وأعطال الشبكة/السيرفر وسط العمليات.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, setCairoTime, SHIFT_LABEL, refresh } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, setCairoTime, SHIFT_LABEL, refresh, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -27,7 +27,7 @@ test.describe("الأوفر تايم", () => {
     await page.waitForTimeout(1300);
     expect(Number((await rec(env, "ahmed")).rows.find((r) => r.room === 602).expenseAmt)).toBe(15);
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 601).click();
+    await openRoom(page, 601);
     await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
     await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
     expect((await env.q("select closed from shift_records"))[0].closed).toBe(false);
@@ -57,7 +57,7 @@ test.describe("الأوفر تايم", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 602).click();
+    await openRoom(page, 602);
     await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
     await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
     const r = await rec(env, "ahmed");
@@ -67,7 +67,7 @@ test.describe("الأوفر تايم", () => {
     await setCairoTime(page, 2, 30);
     await page.reload();
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 603).click();
+    await openRoom(page, 603);
     await expect(page.getByText(/مش شيفتك دلوقتي/).first()).toBeVisible();
   });
 });
@@ -120,7 +120,7 @@ test.describe("أعطال الشبكة والسيرفر", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 601).click();
+    await openRoom(page, 601);
     await page.route(/fake-supabase\.test\/rest\/v1\/shift_records/, async (route) => {
       if (route.request().method() === "PATCH") return route.fulfill({ status: 500, headers: { "access-control-allow-origin": "*", "content-type": "application/json" }, body: JSON.stringify({ message: "boom", code: "XX000" }) });
       return route.fallback();
@@ -176,7 +176,7 @@ test.describe("الحجز الملغي مبيعطّلش الغرفة", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 601).click();
+    await openRoom(page, 601);
     await roomCard(page).getByRole("button", { name: /تمديد الحجز/ }).click();
     await expect(toast(page)).toContainText("تم تمديد الحجز");
     expect((await env.q("select checkout from bookings where id = $1", [cur]))[0].checkout).toBe(cairoDate(2));
