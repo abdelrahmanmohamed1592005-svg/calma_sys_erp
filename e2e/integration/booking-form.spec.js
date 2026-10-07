@@ -199,7 +199,7 @@ test.describe("البحث والتصفية في قائمة الحجوزات", ()
     await env.seedBooking({ room: 601, guest: "Ali Hassan", start: 0, nights: 2 });
     await env.seedBooking({ room: 602, guest: "Mona Salem", start: 10, nights: 2 });
     await env.seedBooking({ room: 603, guest: "Omar Fathy", start: -20, nights: 2 });
-    await env.q("update bookings set code = 'ABC-123' where guest_name = 'Omar Fathy'");
+    await env.qRaw("update bookings set code = 'ABC-123' where guest_name = 'Omar Fathy'");
     await page.goto("/");
     await login(page, "rawan");
     await goTab(page, "الحجوزات");

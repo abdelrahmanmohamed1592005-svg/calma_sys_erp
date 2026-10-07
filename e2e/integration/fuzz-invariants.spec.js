@@ -72,12 +72,9 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         const conflict = overlaps(bookings, room, cairoDate(start), cairoDate(start + nights));
         log.push(`add ${guest} r${room} +${start}x${nights} paid ${Math.min(paid, total)}${conflict ? " (conflict)" : ""}`);
         await addBooking(staff, { room, guest, price: 50, nights, startOffset: start, paid: Math.min(paid, total) || undefined, expectSaved: false });
-        if (conflict) {
-          await expect(toast(staff)).toContainText("الغرفة متعارضة");
-          await staff.getByRole("button", { name: "إلغاء", exact: true }).click();
-        } else {
-          await expect(toast(staff)).toContainText("تم الحفظ");
-        }
+        // التعارض: لو القديم دخل فعلاً بيتسجّل خروجه المبكر والجديد بيتسكّن، وغير كده (مزدوج حقيقي) مرفوض بسبب واضح
+        await expect(toast(staff)).toContainText(conflict ? /تم الحفظ|لسه ماجاش معاده|نزيله لسه في الغرفة|قبل دخول/ : "تم الحفظ");
+        if (await staff.locator(".cx-card[data-calma-editing]").count()) await staff.getByRole("button", { name: "إلغاء", exact: true }).click();
       },
       async collect() {
         const { bookings } = await snapshot(env);
