@@ -17,41 +17,63 @@ function CurrencyPicker({ value, onChange, disabled, width }) {
   );
 }
 
+// صف الغرفة "فيه بيانات" = فيه مبلغ أو بيان أو ملاحظة أو مربوط بحجز. باقي الغرف الفاضية مخفية
+// (عشان اليومية ماتبقاش ١٦ صف فاضي) ويتضافوا بالاختيار من القايمة أو "عرض كل الغرف".
+const rowHasData = (r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || !!r.expenseDesc || !!r.collectionDesc || !!r.notes || !!r.bookingId;
+
 function LedgerTable({ record, rooms, locked, onUpdateRow, onUpdateCafeteria }) {
+  const [shown, setShown] = useState(() => new Set());
+  const [all, setAll] = useState(false);
+  const visible = (r) => all || shown.has(r.room) || rowHasData(r);
+  const hiddenRooms = [...new Set(record.rows.filter((r) => !visible(r)).map((r) => r.room))];
+  const touch = (idx, patch) => { const room = record.rows[idx]?.room; if (room != null && !shown.has(room)) setShown(new Set([...shown, room])); onUpdateRow(idx, patch); };
+  const updateRow = touch;
   return (
     <div style={{ overflowX: "auto" }}>
+      {!locked && (hiddenRooms.length > 0 || all) && (
+        <div className="cx-no-print" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 4px", fontSize: 12, color: "var(--muted)" }}>
+          <span>الغرف اللي فيها حركة بس ظاهرة.</span>
+          {hiddenRooms.length > 0 && (
+            <select className="cx-select" data-testid="ledger-add-room" style={{ width: 150 }} value="" onChange={(e) => { if (e.target.value) setShown(new Set([...shown, Number(e.target.value)])); }}>
+              <option value="">＋ أضف غرفة...</option>
+              {hiddenRooms.map((n) => <option key={n} value={n}>{roomLabel(rooms, n)}</option>)}
+            </select>
+          )}
+          <button type="button" className="cx-btn cx-btn-outline" data-testid="ledger-show-all" style={{ fontSize: 11, padding: "2px 8px" }} onClick={() => setAll(!all)}>{all ? "إخفاء الغرف الفاضية" : "عرض كل الغرف"}</button>
+        </div>
+      )}
       <table className="cx-table" style={{ fontSize: 12, minWidth: 860 }}>
         <thead><tr><th className="cx-th" style={{ width: 60 }}>الغرفة</th><th className="cx-th">المصاريف</th><th className="cx-th">التحصيل</th><th className="cx-th">تفاصيل الدفع الأونلاين</th><th className="cx-th">ملاحظات</th></tr></thead>
         <tbody>
-          {record.rows.map((row, idx) => (
+          {record.rows.map((row, idx) => (!visible(row) ? null : (
             <tr key={row.room + "-" + idx}>
               {/* ممكن يكون لنفس الغرفة أكتر من صف (لو اتحصّل عليها بوسيلتين دفع أو
                   عملتين مختلفتين، أو اتردّ ليها فلوس) - الصف الإضافي بيتعلّم. */}
               <td style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}>{roomLabel(rooms, row.room)}{record.rows.findIndex((r) => r.room === row.room) !== idx && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)" }}>صف إضافي</div>}</td>
               <td>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={row.expenseCategory} onChange={(e) => onUpdateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                  <input className="cx-input" placeholder="البيان" disabled={locked} value={row.expenseDesc} onChange={(e) => onUpdateRow(idx, { expenseDesc: e.target.value })} />
+                  <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={row.expenseCategory} onChange={(e) => updateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                  <input className="cx-input" placeholder="البيان" disabled={locked} value={row.expenseDesc} onChange={(e) => updateRow(idx, { expenseDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
-                    <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.expenseAmt} onChange={(e) => onUpdateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
-                    <CurrencyPicker value={row.expenseCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { expenseCurrency: v })} />
+                    <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.expenseAmt} onChange={(e) => updateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
+                    <CurrencyPicker value={row.expenseCurrency} disabled={locked} onChange={(v) => updateRow(idx, { expenseCurrency: v })} />
                   </div>
                 </div>
               </td>
               <td>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => onUpdateRow(idx, { collectionMethod: e.target.value })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                  <input className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={row.collectionDesc} onChange={(e) => onUpdateRow(idx, { collectionDesc: e.target.value })} />
+                  <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                  <input className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={row.collectionDesc} onChange={(e) => updateRow(idx, { collectionDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
-                    <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.collectionAmt} onChange={(e) => onUpdateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
-                    <CurrencyPicker value={row.collectionCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { collectionCurrency: v })} />
+                    <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.collectionAmt} onChange={(e) => updateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
+                    <CurrencyPicker value={row.collectionCurrency} disabled={locked} onChange={(v) => updateRow(idx, { collectionCurrency: v })} />
                   </div>
                 </div>
               </td>
-              <td><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => onUpdateRow(idx, { paymentDetails: d })} /></td>
-              <td><input className="cx-input" disabled={locked} value={row.notes} onChange={(e) => onUpdateRow(idx, { notes: e.target.value })} /></td>
+              <td><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => updateRow(idx, { paymentDetails: d })} /></td>
+              <td><input className="cx-input" disabled={locked} value={row.notes} onChange={(e) => updateRow(idx, { notes: e.target.value })} /></td>
             </tr>
-          ))}
+          )))}
           <tr>
             <td style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff" }}>كافيتيريا</td>
             <td>

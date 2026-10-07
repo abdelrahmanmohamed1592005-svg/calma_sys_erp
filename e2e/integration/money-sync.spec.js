@@ -1,7 +1,7 @@
 // أكواد الأفراد اللي المستخدم بيكتبها، إلغاء الحجز (بدل المسح) وحالة رد الفلوس، الدخول المبكر
 // (عادي وأونلاين) والمغادرة المبكرة وطلب الرد، وإن أي تحصيل بيتسمع في الحجز واليومية والتقرير بنفس الرقم.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh, openRoom, openSec } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh, openRoom, openSec, openMore } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -274,6 +274,7 @@ test.describe("الدخول المبكر", () => {
     await login(page, "rawan");
     await goTab(page, "الحجوزات");
     await guestCard(page, "Res Early").locator("button").first().click();
+    await openMore(page);
     const early = page.locator("xpath=//input[@type='checkbox'][ancestor::label[contains(.,'دخول مبكر')]]");
     await expect(early).toBeEnabled();
     await early.check();

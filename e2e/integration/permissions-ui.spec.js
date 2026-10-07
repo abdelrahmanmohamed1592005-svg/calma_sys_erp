@@ -1,7 +1,7 @@
 // الصلاحيات من الواجهة لكل دور، فوق قاعدة بيانات حقيقية (RLS + triggers):
 // اللي الشاشة بتعرضه واللي بتسمح بيه، واللي قاعدة البيانات نفسها بتفرضه.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, tab, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, openRoom } from "../ui";
+import { login, logout, goTab, field, tab, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, openRoom, openMore } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -138,6 +138,7 @@ test.describe("مدير الحجوزات", () => {
     await expect(page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']")).toBeDisabled();
     await expect(page.getByText(/حجز قديم - أي حاجة فلوس فيه بقت مقفولة/)).toBeVisible();
     await field(page, "اسم النزيل").fill("Res Edit Renamed");
+    await openMore(page);
     await page.locator("xpath=//label[contains(.,'جهة الحجز')]/following-sibling::select").selectOption("Booking.com");
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");

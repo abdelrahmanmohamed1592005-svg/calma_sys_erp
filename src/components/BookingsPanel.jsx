@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock } from "lucide-react";
-import { TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox } from "./shared";
+import { TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, methodOptionsFor, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, bookingAmountDue, refundDueAmount, refundStatusOf } from "../domain/money";
 import { todayStr, shiftDayNow, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
@@ -310,14 +310,15 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
 
       {form && (
         <div className="cx-card cx-no-print" data-calma-editing="booking" style={{ padding: 14, marginBottom: 14 }}>
+          {form.code && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>كود الحجز: <span dir="ltr" data-testid="booking-code" style={{ fontFamily: "monospace", fontWeight: 700 }}>{form.code}</span></div>}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>كود الحجز (تلقائي)</label><div data-testid="booking-code" dir="ltr" style={{ padding: "6px 0", fontFamily: "monospace", fontWeight: 700, textAlign: "right" }}>{form.code || "بيتولّد عند الحفظ"}</div></div>
+
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الغرفة</label><select className="cx-select" value={form.room} onChange={(e) => onRoomChange(e.target.value)}><option value="">اختر</option>{rooms.map((r) => <option key={r.number} value={r.number}>{r.name || `غرفة ${r.number}`}</option>)}</select></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>اسم النزيل</label><input className="cx-input" value={form.guestName} onChange={(e) => setForm({ ...form, guestName: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الهاتف</label><input className="cx-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>عدد الأفراد</label><input className="cx-input" type="number" min="1" value={form.pax} onChange={(e) => setForm({ ...form, pax: e.target.value })} /></div>
             <div style={{ gridColumn: "1 / -1" }} data-testid="guest-code-inputs">
-              <label style={{ fontSize: 11, color: "var(--muted)" }}>أكواد الأفراد (كود لكل فرد - اكتبه بنفسك، واختياري؛ بيربط النزيل بالغرفة وتقدر تبحث بيه)</label>
+              <label style={{ fontSize: 11, color: "var(--muted)" }}>كود لكل فرد (اختياري - فريد جوه الشهر)</label>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: 6, marginTop: 2 }}>
                 {Array.from({ length: Math.min(100, Math.max(1, Math.floor(Number(form.pax) || 1))) }, (_, i) => (
                   <input key={i} className="cx-input" data-testid={`guest-code-input-${i + 1}`} dir="ltr" maxLength={40} placeholder={`كود الفرد ${i + 1}`} value={form.guestCodes?.[i] ?? ""} onChange={(e) => { const next = normalizeGuestCodes(form.guestCodes, form.pax); next[i] = e.target.value; setForm({ ...form, guestCodes: next }); }} />
@@ -339,14 +340,14 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>السعر لليلة {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={chargeLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value })} /><select className="cx-select" disabled={chargeLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 90 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={chargeLocked} placeholder={String(autoTotalRoom)} value={lockedRepricedTotal != null ? lockedRepricedTotal : form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
             {!form.paymentDetails?.onlinePaid && <div><label style={{ fontSize: 11, color: "var(--muted)" }}>طريقة الدفع {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><select className="cx-select" disabled={chargeLocked} value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}>{methodOptionsFor(form.paymentMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select></div>}
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>جهة الحجز</label><select className="cx-select" value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })}>{sourceOptionsFor(form.source).map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
+
             {/* الحالة (ومعاها "ملغي") من صلاحية مدير الحجوزات بس - موظف
                 الشيفت وقت إضافة حجز جديد (walk-in) مش بيشوف الاختيار ده
                 خالص، فيفضل الحجز "مؤكد" بالقيمة الافتراضية. ده غير القفل
                 الحقيقي في قاعدة البيانات نفسها (قسم ٢٣ في schema.sql) اللي
                 بيمنع موظف الشيفت من كتابة "ملغي" حتى لو حد حاول يتخطى
                 الواجهة. */}
-            {perms.editBookings && <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الحالة</label><select className="cx-select" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{BOOKING_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>}
+
           </div>
 
           {moneyLocked && <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", background: "var(--paper2)", borderRadius: 8, padding: 8, display: "flex", gap: 6, alignItems: "center" }}><Lock size={13} /> حجز قديم - أي حاجة فلوس فيه بقت مقفولة ومش قابلة للتعديل. لو محتاج تصحيح مالي كلّم المدير العام.</div>}
@@ -374,46 +375,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
               <AlertTriangle size={13} style={{ verticalAlign: -2 }} /> {duplicateBlockedText(duplicatePlan)}
             </div>
           )}
-
-          <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>رسوم إضافية {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</div>
-            {/* شيلنا "غسيل" و"كافيتيريا" من هنا - مبقوش يُضافوا كرسوم على
-                الحجز من شاشة الحجوزات. لو حجز قديم كان عليه قيمة فيهم
-                فعلاً، القيمة تفضل محفوظة ومحسوبة في الإجمالي زي ما هي -
-                بس مفيش إضافة جديدة منها عن طريق الواجهة. */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(100px,1fr))", gap: 8 }}>
-              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" min="0" disabled={chargeLocked} value={form.extras.tours} onChange={(e) => setForm({ ...form, extras: { ...form.extras, tours: e.target.value } })} /></div>
-              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" min="0" disabled={chargeLocked} value={form.extras.pickup} onChange={(e) => setForm({ ...form, extras: { ...form.extras, pickup: e.target.value } })} /></div>
-            </div>
-          </div>
-
-          <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, marginBottom: form.earlyCheckin?.applied ? 8 : 0 }}>
-              <input type="checkbox" disabled={earlyLocked} checked={!!form.earlyCheckin?.applied} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, applied: e.target.checked } })} /> دخول مبكر قبل معاد الحجز الأصلي {earlyLocked && <Lock size={10} />}
-            </label>
-            {form.earlyCheckin?.applied && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رسم الدخول المبكر</label><input className="cx-input" type="number" min="0" disabled={earlyLocked} value={form.earlyCheckin.fee} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, fee: e.target.value } })} /></div>
-                <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر</label><input className="cx-input" disabled={earlyLocked} value={form.earlyCheckin.note} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, note: e.target.value } })} /></div>
-              </div>
-            )}
-          </div>
-
-          <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700 }}>
-              <input type="checkbox" disabled={chargeLocked} checked={!!form.paymentDetails.onlinePaid} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, onlinePaid: e.target.checked } })} /> الحجز مدفوع أونلاين (Booking.com أو أي منصة حجز) {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}
-            </label>
-            {form.paymentDetails.onlinePaid && (
-              <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>إجمالي الحجز الأونلاين</label><div style={{ fontWeight: 700, padding: "6px 0" }}>{fmt(grandTotal)} {form.currency}</div></div>
-                {/* الحجز ده مدفوع من خلال منصة حجز (زي Booking.com) مش تحويل
-                    مباشر من النزيل - فمفيش "اسم مرسل" أو "رقم محفظة" أصلًا.
-                    اسم المنصة نفسها متسجل في "جهة الحجز" فوق، وده بس ملاحظة/
-                    كود تأكيد اختياري يخص حجز المنصة. */}
-                <div style={{ gridColumn: "1 / -1" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رقم تأكيد الحجز على المنصة / ملاحظة (اختياري)</label><input className="cx-input" placeholder="مثلاً: رقم حجز Booking.com" disabled={chargeLocked} value={form.paymentDetails.ref} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, ref: e.target.value } })} /></div>
-              </div>
-            )}
-          </div>
 
           {ONLINE_METHODS.includes(form.paymentMethod) && !form.paymentDetails.onlinePaid && (
             <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
@@ -454,7 +415,56 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
             </div>
           )}
 
-          <div style={{ marginTop: 8 }}><label style={{ fontSize: 11, color: "var(--muted)" }}>ملاحظات</label><input className="cx-input" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+
+          <details data-testid="form-more" open={!!((Number(form.extras?.tours) || 0) || (Number(form.extras?.pickup) || 0) || form.earlyCheckin?.applied || form.paymentDetails?.onlinePaid || form.notes || (form.source && form.source !== "مباشر") || (form.status && form.status !== "مؤكد"))} style={{ marginTop: 10 }}>
+            <summary style={{ cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: "var(--teal)" }}>خيارات إضافية (رسوم، دخول مبكر، حجز أونلاين، جهة الحجز، ملاحظات)</summary>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 8, marginTop: 8 }}>
+              <div><label style={{ fontSize: 11, color: "var(--muted)" }}>جهة الحجز</label><select className="cx-select" value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })}>{sourceOptionsFor(form.source).map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
+              {perms.editBookings && <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الحالة</label><select className="cx-select" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{BOOKING_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>}
+            </div>
+          <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>رسوم إضافية {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</div>
+            {/* شيلنا "غسيل" و"كافيتيريا" من هنا - مبقوش يُضافوا كرسوم على
+                الحجز من شاشة الحجوزات. لو حجز قديم كان عليه قيمة فيهم
+                فعلاً، القيمة تفضل محفوظة ومحسوبة في الإجمالي زي ما هي -
+                بس مفيش إضافة جديدة منها عن طريق الواجهة. */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(100px,1fr))", gap: 8 }}>
+              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" min="0" disabled={chargeLocked} value={form.extras.tours} onChange={(e) => setForm({ ...form, extras: { ...form.extras, tours: e.target.value } })} /></div>
+              <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" min="0" disabled={chargeLocked} value={form.extras.pickup} onChange={(e) => setForm({ ...form, extras: { ...form.extras, pickup: e.target.value } })} /></div>
+            </div>
+          </div>
+
+          <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, marginBottom: form.earlyCheckin?.applied ? 8 : 0 }}>
+              <input type="checkbox" disabled={earlyLocked} checked={!!form.earlyCheckin?.applied} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, applied: e.target.checked } })} /> دخول مبكر قبل معاد الحجز الأصلي {earlyLocked && <Lock size={10} />}
+            </label>
+            {form.earlyCheckin?.applied && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
+                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رسم الدخول المبكر</label><input className="cx-input" type="number" min="0" disabled={earlyLocked} value={form.earlyCheckin.fee} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, fee: e.target.value } })} /></div>
+                <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر</label><input className="cx-input" disabled={earlyLocked} value={form.earlyCheckin.note} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, note: e.target.value } })} /></div>
+              </div>
+            )}
+          </div>
+
+          <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700 }}>
+              <input type="checkbox" disabled={chargeLocked} checked={!!form.paymentDetails.onlinePaid} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, onlinePaid: e.target.checked } })} /> الحجز مدفوع أونلاين (Booking.com أو أي منصة حجز) {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}
+            </label>
+            {form.paymentDetails.onlinePaid && (
+              <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
+                <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>إجمالي الحجز الأونلاين</label><div style={{ fontWeight: 700, padding: "6px 0" }}>{fmt(grandTotal)} {form.currency}</div></div>
+                {/* الحجز ده مدفوع من خلال منصة حجز (زي Booking.com) مش تحويل
+                    مباشر من النزيل - فمفيش "اسم مرسل" أو "رقم محفظة" أصلًا.
+                    اسم المنصة نفسها متسجل في "جهة الحجز" فوق، وده بس ملاحظة/
+                    كود تأكيد اختياري يخص حجز المنصة. */}
+                <div style={{ gridColumn: "1 / -1" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رقم تأكيد الحجز على المنصة / ملاحظة (اختياري)</label><input className="cx-input" placeholder="مثلاً: رقم حجز Booking.com" disabled={chargeLocked} value={form.paymentDetails.ref} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, ref: e.target.value } })} /></div>
+              </div>
+            )}
+          </div>
+
+            <div style={{ marginTop: 8 }}><label style={{ fontSize: 11, color: "var(--muted)" }}>ملاحظات</label><input className="cx-input" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+          </details>
+
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
             <button className="cx-btn cx-btn-gold" onClick={saveBooking}><Check size={14} /> {conflict && duplicatePlan?.ok ? "حفظ الحجز + خروج مبكر للنزيل القديم" : "حفظ الحجز"}</button>
             <button className="cx-btn cx-btn-outline" onClick={() => setForm(null)}>إلغاء</button>
@@ -470,26 +480,35 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {list.length === 0 && <div style={{ color: "var(--muted)", fontSize: 13, padding: 20, textAlign: "center" }}>لا يوجد حجوزات مطابقة</div>}
-        {list.map((b) => { const gt = bookingGrandTotal(b); const due = bookingAmountDue(b); const cancelled = b.status === "ملغي"; const rs = refundStatusOf(b); return (
-          <div key={b.id} data-testid={cancelled ? "booking-cancelled" : "booking-card"} className="cx-card" style={{ padding: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, ...(cancelled ? { background: "#FBF3F1", borderRight: "4px solid var(--rust)" } : {}) }}>
-            <div>
-              <div style={{ fontWeight: 800 }}><span style={cancelled ? { textDecoration: "line-through", opacity: 0.7 } : undefined}>{roomLabel(rooms, b.room)} · {b.guestName}</span> {b.code && <span dir="ltr" data-testid="booking-code-chip" style={{ fontFamily: "monospace", fontSize: 11.5, color: "var(--muted)", marginInlineStart: 6 }}>{b.code}</span>} {cancelled && <span className="cx-pill" style={{ background: "var(--rust)", color: "#fff", marginRight: 6 }}>حجز ملغي</span>} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginRight: 6 }}>مدفوع أونلاين</span>} {b.leftEarly && <span className="cx-pill" style={{ background: "#FBE9DA", color: "var(--rust)", marginRight: 6 }}>غادر مبكرًا</span>} {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginRight: 6 }}>تسكين مكرر</span>} {b.settled && <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)", marginRight: 6 }}>متحصّل بالكامل</span>} {b.refundDecision === "refunded" && b.refundedAmount > 0 && <span className="cx-pill" style={{ background: "#EFEEEC", color: "#6B6357", marginRight: 6 }}>اترد {fmt(b.refundedAmount)} {b.currency}</span>}</div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.checkin} → {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {b.pax} أفراد {b.code && `· كود الحجز ${b.code}`}</div>
-              <GuestCodeChips codes={guestCodeEntries(b)} />
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.source}{b.paymentDetails?.onlinePaid ? "" : ` · ${b.paymentMethod}`}{b.paymentDetails?.senderName ? ` (${b.paymentDetails.senderName} · ${b.paymentDetails.senderNumber})` : ""} · الإجمالي {fmt(gt)} {b.currency} {due > 0 && b.status !== "ملغي" && <span style={{ color: "var(--rust)" }}>· متبقي {fmt(due)}{b.paymentDetails?.onlinePaid ? " (خدمات/دخول مبكر)" : ""}</span>}</div>
+        {list.map((b) => { const cancelled = b.status === "ملغي"; return (
+          <div key={b.id} data-testid={cancelled ? "booking-cancelled" : "booking-card"} className="cx-card" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8, ...(cancelled ? { background: "#FBF3F1", borderRightColor: "var(--rust)", borderRightWidth: 4 } : {}) }}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 800 }}>
+                  <span style={cancelled ? { textDecoration: "line-through", opacity: 0.7 } : undefined}>{roomLabel(rooms, b.room)} · {b.guestName}</span>
+                  {cancelled && <span className="cx-pill" style={{ background: "var(--rust)", color: "#fff", marginInlineStart: 6 }}>حجز ملغي</span>}
+                  {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginInlineStart: 6 }}>مدفوع أونلاين</span>}
+                  {b.leftEarly && <span className="cx-pill" style={{ background: "#FBE9DA", color: "var(--rust)", marginInlineStart: 6 }}>غادر مبكرًا</span>}
+                  {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6 }}>تسكين مكرر</span>}
+                  {b.code && <span dir="ltr" data-testid="booking-code-chip" style={{ fontFamily: "monospace", fontSize: 11.5, color: "var(--muted)", marginInlineStart: 8 }}>{b.code}</span>}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>{b.checkin} → {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {b.pax} فرد{b.paymentDetails?.onlinePaid ? "" : ` · ${b.paymentMethod}`} · {b.source}</div>
+                <GuestCodeChips codes={guestCodeEntries(b)} />
+              </div>
+              <div className="cx-no-print" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {b.status === "تم تسجيل الخروج" && <span className="cx-pill" style={{ background: "#00000010", color: "var(--teal)" }}>{b.status}</span>}
+                {perms.editBookings && (<>
+                  <button className="cx-btn cx-btn-outline" title="تعديل" onClick={() => startEdit(b)}><Pencil size={13} /></button>
+                  {b.status !== "ملغي" && (
+                    <span data-testid="cancel-booking"><TwoStepButton label="إلغاء الحجز" confirmLabel={`تأكيد الإلغاء؟ ${(Number(b.amountPaid) || 0) > 0 ? `(عليه ${fmt(b.amountPaid)} ${b.currency} متحصّل - هيتفتح طلب رد فلوس لمدير الحجوزات)` : "(مفيش فلوس متحصّلة - مفيش رد)"}`} icon={<Ban size={13} />} onConfirm={() => cancelBooking(b)} /></span>
+                  )}
+                </>)}
+              </div>
+              <div className="cx-print-only">
+                <span className="cx-pill" style={{ background: "#00000010", color: cancelled ? "var(--rust)" : "var(--teal)" }}>{b.status}</span>
+              </div>
             </div>
-            <div className="cx-no-print" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span className="cx-pill" style={{ background: "#00000010", color: b.status === "ملغي" ? "var(--rust)" : "var(--teal)" }}>{b.status}</span>
-              {perms.editBookings && (<>
-                <button className="cx-btn cx-btn-outline" onClick={() => startEdit(b)}><Pencil size={13} /></button>
-                {b.status !== "ملغي" && (
-                  <span data-testid="cancel-booking"><TwoStepButton label="إلغاء الحجز" confirmLabel={`تأكيد الإلغاء؟ ${(Number(b.amountPaid) || 0) > 0 ? `(عليه ${fmt(b.amountPaid)} ${b.currency} متحصّل - هيتفتح طلب رد فلوس لمدير الحجوزات)` : "(مفيش فلوس متحصّلة - مفيش رد)"}`} icon={<Ban size={13} />} onConfirm={() => cancelBooking(b)} /></span>
-                )}
-              </>)}
-            </div>
-            <div className="cx-print-only">
-              <span className="cx-pill" style={{ background: "#00000010", color: b.status === "ملغي" ? "var(--rust)" : "var(--teal)" }}>{b.status}</span>
-            </div>
+            <MoneyBox b={b} />
             <RefundBox b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
           </div>
         ); })}

@@ -1,6 +1,6 @@
 // فورم الحجز بتفاصيله (تحقق، رسوم، أونلاين، تنضيف، بحث...) فوق قاعدة بيانات حقيقية.
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, openRoom } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, openRoom, openMore } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -57,6 +57,7 @@ test.describe("التحقق من المدخلات", () => {
     await field(page, "الهاتف").fill("0".repeat(100));
     await field(page, "عدد الأفراد").fill("2.7");
     await priceInput(page).fill("40");
+    await openMore(page);
     await page.locator("xpath=//label[contains(.,'ملاحظات')]/following-sibling::input").fill("n".repeat(1500));
     await save(page);
     await expect(toast(page)).toContainText("تم الحفظ");
@@ -72,7 +73,7 @@ test.describe("التحقق من المدخلات", () => {
     await field(page, "عدد الأفراد").fill("0");
     await priceInput(page).fill("10");
     await save(page);
-    await expect(toast(page)).toContainText("تم الحفظ");
+    await expect(form2).toHaveCount(0);            // الفورم بيتقفل بعد نجاح الحفظ (التوست ممكن يكون لسه من الحفظة اللي قبلها)
     expect((await bk(env, "Zero Pax")).pax).toBe(1);
   });
 });
@@ -85,6 +86,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     await field(page, "اسم النزيل").fill("Early Bird");
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await priceInput(page).fill("100");
+    await openMore(page);
     await page.getByRole("checkbox", { name: /دخول مبكر قبل معاد الحجز الأصلي/ }).check();
     await field(page, "رسم الدخول المبكر").fill("30");
     await field(page, "ملاحظة الدخول المبكر").fill("وصل الفجر");
@@ -110,6 +112,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     await field(page, "اسم النزيل").fill("Booking Guest");
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await priceInput(page).fill("100");
+    await openMore(page);
     await page.locator("xpath=//label[contains(.,'جهة الحجز')]/following-sibling::select").selectOption("Booking.com");
     await page.getByRole("checkbox", { name: /الحجز مدفوع أونلاين/ }).check();
     await expect(page.locator("xpath=//label[contains(.,'طريقة الدفع')]")).toHaveCount(0);       // وسيلة الدفع اتشالت

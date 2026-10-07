@@ -249,11 +249,14 @@ export default function App() {
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={perms.decideRefund ? { bookings: pendingRefunds.length } : {}} />
       {pendingRefunds.length > 0 && perms.tabs.includes("bookings") && activeTab !== "bookings" && (
         <div className="cx-no-print" data-testid="refund-banner" style={{ background: "#F4E7E2", padding: "8px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ color: "var(--rust)", fontSize: 12.5, fontWeight: 700 }}>🔔 طلبات رد فلوس منتظرة ({pendingRefunds.length}){perms.decideRefund ? " - موافقة بضغطة واحدة" : " - مدير الحجوزات هو اللي بيوافق"}</div>
-          {pendingRefunds.map((b) => (
+          <div style={{ color: "var(--rust)", fontSize: 12.5, fontWeight: 700 }}>
+            🔔 طلبات رد فلوس منتظرة ({pendingRefunds.length}){perms.decideRefund ? "" : " - مدير الحجوزات هو اللي بيوافق"}
+            {!perms.decideRefund && <span style={{ fontWeight: 400, marginInlineStart: 8 }}>{pendingRefunds.map((b) => `${roomLabel(rooms, b.room)} ${b.guestName}`).join(" · ")}</span>}
+          </div>
+          {perms.decideRefund && pendingRefunds.map((b) => (
             <div key={b.id} data-testid="refund-inbox-item" style={{ fontSize: 12.5 }}>
               <div style={{ fontWeight: 700, marginBottom: 2 }}>{roomLabel(rooms, b.room)} · {b.guestName}</div>
-              <RefundBox b={b} canDecide={!!perms.decideRefund} onDecide={runRefund} />
+              <RefundBox b={b} canDecide onDecide={runRefund} />
             </div>
           ))}
         </div>

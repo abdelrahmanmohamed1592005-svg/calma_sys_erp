@@ -293,14 +293,14 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
 
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>التحصيل حسب طريقة الدفع والعملة</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>كل تحصيل أو رد فلوس بيتسجّل في يومية الشيفت تلقائيًا (كاش وباقي الطرق). المبالغ القديمة المسجّلة على حجز من غير يومية بس هي اللي بتتضاف من الحجز نفسه.</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>كل تحصيل أو رد فلوس بيتسجّل من اليومية تلقائيًا.</div>
             <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 12 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{allMethods.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
           </div>
 
           {allMethods.some((m) => currencyKeysOf(m === "كاش" ? agg.cashOpening : agg.methodOpening?.[m], m === "كاش" ? agg.cashCollections : agg.byMethodCurrency?.[m]).length > 0) && (
             <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>متابعة العهدة والتحصيل حسب وسيلة الدفع والعملة</div>
-              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>مبنية على العهدة المسجَّلة في أول شيفت بالفترة وتحصيل/مصاريف اليومية فقط (بكل عملة اتكتبت فيها) - مطابقة لرصيد الدرج وقراءة الجهاز خطوة بخطوة. الكاش بس عليه مصاريف لأن المصاريف بتُدفع منه.</div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>العهدة + التحصيل - المصاريف لكل وسيلة دفع (مطابقة لرصيد الدرج).</div>
               <div style={{ overflowX: "auto" }}>
                 <table className="cx-table" style={{ fontSize: 12 }}>
                   <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">مصاريف الفترة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
@@ -335,7 +335,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
 
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>الحجوزات الأونلاين ({bAgg.count} حجز مدفوع أونلاين من إجمالي {bAgg.totalCount} حجز في الفترة)</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>القسم ده بيشمل بس الحجوزات اللي اتحددت يدويًا كـ"مدفوعة أونلاين" وقت إنشاء أو تعديل الحجز، وبيحسب كل حجز مرة واحدة بس في تقرير يوم تسجيل الدخول بتاعه (مش في كل يوم من أيام إقامته) - عشان مجموع تقارير أيام متتالية يفضل مطابق لتقرير الفترة كلها من غير تكرار.</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>الحجوزات المدفوعة أونلاين (سعر الغرفة بس - الخدمات بتتحصّل في الفندق وبتدخل في التحصيل فوق).</div>
             <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 12 }}>
               <div><div style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي الحجوزات الأونلاين</div><div style={{ fontWeight: 800 }}>{moneyLine(bAgg.grossRevenue)}</div></div>
             </div>
@@ -381,7 +381,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
           {bAgg.refundsPending.length > 0 && (
             <div className="cx-card" style={{ padding: 12, marginBottom: 14, borderColor: "var(--rust)" }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2, color: "var(--rust)" }}>طلبات رد فلوس منتظرة قرار مدير الحجوزات ({bAgg.refundsPending.length})</div>
-              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>مدير الحجوزات بيقرر من شاشة الحجوزات: لو رد، المبلغ بيتشال من التحصيل ورصيد الخزينة في اليومية والتقرير (والحجز الملغي بيفضل ظاهر)، ولو رفض الفلوس بتفضل متحصّلة.</div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>مدير الحجوزات بيوافق أو يرفض من شاشة الحجوزات أو الشريط اللي فوق.</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {bAgg.refundsPending.map((b) => (
                   <div key={b.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}>

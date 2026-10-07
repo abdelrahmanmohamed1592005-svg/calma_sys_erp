@@ -1,7 +1,7 @@
 // اليومية والشيفتات: حجز الشيفت، نقل العهدة، التعديل، الأرصدة، القفل، إعادة الفتح،
 // وظهور ده كله في لوحة الغرف والتقارير - فوق قاعدة بيانات حقيقية.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, claimShift, toast, boardTile, digits, shiftDay, myShiftKey, cairoDate, SHIFT_LABEL, refresh } from "../ui";
+import { login, logout, goTab, claimShift, toast, boardTile, digits, shiftDay, myShiftKey, cairoDate, SHIFT_LABEL, refresh, showAllRooms } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -24,7 +24,7 @@ test.describe("حجز الشيفت", () => {
     await users(env);
     await page.goto("/");
     await login(page, "ahmed");
-    await goTab(page, "اليومية");
+    await goTab(page, "اليومية"); await showAllRooms(page);
     const mine = myShiftKey();
     for (const k of ORDER.filter((x) => x !== mine)) await expect(page.getByRole("button", { name: new RegExp(SHIFT_LABEL[k]) })).toBeDisabled();
     await page.getByRole("button", { name: new RegExp(SHIFT_LABEL[mine]) }).click();
@@ -37,7 +37,7 @@ test.describe("حجز الشيفت", () => {
     await logout(page);
 
     await login(page, "sara");
-    await goTab(page, "اليومية");
+    await goTab(page, "اليومية"); await showAllRooms(page);
     await expect(page.getByRole("button", { name: new RegExp(SHIFT_LABEL[mine]) })).toBeDisabled();
     await expect(page.getByText("اتاخد بواسطة أحمد")).toBeVisible();
   });
@@ -48,7 +48,7 @@ test.describe("حجز الشيفت", () => {
     await env.seedShift("sara", { day: p.day, key: p.key, closed: true, closingCash: { EGP: 777, USD: 5 }, methodClosing: { "فيزا": { EGP: 90 } } });
     await page.goto("/");
     await login(page, "ahmed");
-    await claimShift(page);
+    await claimShift(page); await showAllRooms(page);
     const rec = await ledger(env);
     expect(rec.handover).toEqual({ EGP: 777, USD: 5 });
     expect(rec.method_handover).toEqual({ "فيزا": { EGP: 90 } });
@@ -62,7 +62,7 @@ test.describe("حجز الشيفت", () => {
     await env.q("update shift_records set handover = $1::jsonb where staff_username = 'sara'", [JSON.stringify({ EGP: 50 })]);
     await page.goto("/");
     await login(page, "ahmed");
-    await claimShift(page);
+    await claimShift(page); await showAllRooms(page);
     const prev = (await env.q("select * from shift_records where staff_username = 'sara'"))[0];
     expect(prev.closed).toBe(true);
     expect(prev.closed_by).toContain("إقفال تلقائي");
@@ -76,7 +76,7 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     await users(env);
     await page.goto("/");
     await login(page, "ahmed");
-    await claimShift(page);
+    await claimShift(page); await showAllRooms(page);
 
     // مصروف ٥٠ جنيه (نظافة) + تحصيل كاش ٣٠٠ دولار على غرفة 601 + تحصيل كافيتيريا ٢٠ جنيه
     const r601 = roomRow(page, 601);
@@ -147,7 +147,7 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     expect(grid).toContain("50ج");
     await expect(page.getByText(/العد ناقص ١٠ جنيه/)).toBeVisible();
     expect(digits(await page.locator("table.cx-table tr", { hasText: "نظافة" }).first().innerText())).toContain("50");
-    await goTab(page, "اليومية");
+    await goTab(page, "اليومية"); await showAllRooms(page);
     await page.locator('input[type="date"]').fill(shiftDay());
     await page.getByRole("button", { name: SHIFT_LABEL[myShiftKey()] }).click();
     await expect(page.getByText(/مقفول بواسطة/)).toBeVisible();
@@ -158,7 +158,7 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
 
     // الموظف يكمّل تاني بعد إعادة الفتح، وبيقفل من جديد بالأرقام الجديدة
     await login(page, "ahmed");
-    await goTab(page, "اليومية");
+    await goTab(page, "اليومية"); await showAllRooms(page);
     await roomRow(page, 602).getByPlaceholder("المبلغ").nth(0).fill("10");
     await waitSaved(page);
     await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
@@ -172,7 +172,7 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     await users(env);
     await page.goto("/");
     await login(page, "ahmed");
-    await claimShift(page);
+    await claimShift(page); await showAllRooms(page);
     await page.getByRole("button", { name: /متابعة عهدة/ }).click();            // فيزا / EGP (الافتراضي)
     await block(page, "فيزا (EGP)").locator('input[type="number"]').first().fill("500");
     const r603 = roomRow(page, 603);

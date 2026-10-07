@@ -1,7 +1,7 @@
 // الميزات الجديدة: أكواد الأفراد، الحجز الأونلاين (من غير وسيلة دفع ولا عمولة)، ظهور التسكين المكرر
 // وتحصيله المنفصل، مصاريف وإيرادات الفندق في اليومية، سعر الليلة على بلوك الغرفة، وحالة الحجز الملغي.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, SHIFT_LABEL, openRoom } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, SHIFT_LABEL, openRoom, openMore } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -21,6 +21,7 @@ test.describe("الحجز المدفوع أونلاين", () => {
     await page.getByRole("button", { name: /حجز جديد/ }).click();
     const methodSelect = page.locator("xpath=//label[contains(.,'طريقة الدفع')]/following-sibling::select");
     await expect(methodSelect).toBeVisible();
+    await openMore(page);
     await page.getByRole("checkbox", { name: /الحجز مدفوع أونلاين/ }).check();
     await expect(page.locator("xpath=//label[contains(.,'طريقة الدفع')]")).toHaveCount(0);
     await expect(page.getByText(/عمولة/)).toHaveCount(0);
@@ -28,6 +29,7 @@ test.describe("الحجز المدفوع أونلاين", () => {
     await page.getByRole("checkbox", { name: /الحجز مدفوع أونلاين/ }).uncheck();
     await expect(methodSelect).toBeVisible();
     // وحجز أونلاين فعلي: مفيش وسيلة دفع ظاهرة في القائمة ولا البطاقة
+    await openMore(page);
     await page.getByRole("checkbox", { name: /الحجز مدفوع أونلاين/ }).check();
     await page.locator(".cx-card[data-calma-editing] select.cx-select").first().selectOption("605");
     await field(page, "اسم النزيل").fill("Platform Guest");
@@ -257,6 +259,7 @@ test.describe("الحجز الملغي وحالة الفلوس", () => {
   async function cancelViaUi(page, name) {
     await goTab(page, "الحجوزات");
     await guestCard(page, name).locator("button").first().click();
+    await openMore(page);
     await page.locator("xpath=//label[contains(.,'الحالة')]/following-sibling::select").selectOption("ملغي");
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(page.locator(".cx-card[data-calma-editing]")).toHaveCount(0);

@@ -1,7 +1,7 @@
 // دورة حياة الفلوس من الشاشات فوق قاعدة بيانات حقيقية: تحصيل، رسوم إضافية، تمديد،
 // إلغاء، طلب رد الفلوس وقراره - ومتابعة الأثر على الحجز واليومية ولوحة الغرف والتقرير.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom, openMore } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -138,6 +138,7 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     // إلغاء الحجز من شاشة التعديل
     await goTab(page, "الحجوزات");
     await page.locator(".cx-card", { hasText: "Refund Guest" }).last().locator("button").first().click();
+    await openMore(page);
     await page.locator("xpath=//label[contains(.,'الحالة')]/following-sibling::select").selectOption("ملغي");
     await expect(page.getByText(/متحصّل - بعد الإلغاء هيتفتح طلب رد فلوس/)).toBeVisible();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
@@ -195,6 +196,7 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     await login(page, "rawan");
     await goTab(page, "الحجوزات");
     await page.locator(".cx-card", { hasText: "Keep Guest" }).last().locator("button").first().click();
+    await openMore(page);
     await page.locator("xpath=//label[contains(.,'الحالة')]/following-sibling::select").selectOption("ملغي");
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("طلب رد فلوس");
