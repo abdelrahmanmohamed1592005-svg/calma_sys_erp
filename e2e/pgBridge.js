@@ -22,7 +22,7 @@ const TABLES = Object.keys(PK);
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 
 export function makeJwt(sub) {
-  return `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ sub, role: "authenticated", aud: "authenticated", exp: Math.floor(Date.now() / 1000) + 3600 })}.sig`;
+  return `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ sub, role: "authenticated", aud: "authenticated", exp: Math.floor(Date.now() / 1000) + 864000 })}.sig`;
 }
 const subOf = (headers) => {
   const m = (headers["authorization"] || "").match(/^Bearer (.+)$/);
@@ -49,7 +49,7 @@ export function makeBridge(pool, { log } = {}) {
     } finally { c.release(); }
   }
   const sessionFor = (id, username) => ({
-    access_token: makeJwt(id), token_type: "bearer", expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: "r-" + id,
+    access_token: makeJwt(id), token_type: "bearer", expires_in: 864000, expires_at: Math.floor(Date.now() / 1000) + 864000, refresh_token: "r-" + id,
     user: { id, aud: "authenticated", role: "authenticated", email: `${username}@calma.internal`, app_metadata: {}, user_metadata: {}, created_at: new Date().toISOString() },
   });
   const pgError = (e) => {

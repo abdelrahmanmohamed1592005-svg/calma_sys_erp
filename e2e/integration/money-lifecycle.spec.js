@@ -144,7 +144,8 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     await expect(toast(page)).toContainText("طلب رد فلوس");
     let [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ status: "ملغي", refund_pending: true, amount_paid: 300 });
-    await expect(page.getByTestId("refund-banner")).toContainText("1 طلب رد فلوس");
+    await goTab(page, "لوحة الغرف");          // الشريط بيظهر في كل التابات ماعدا الحجوزات (القايمة نفسها فيها الطلب)
+    await expect(page.getByTestId("refund-banner")).toContainText("طلبات رد فلوس منتظرة (1)");
     await expect(tabBadge(page)).toContainText("1");
 
     // لوحة الغرف: الغرفة رجعت متاحة
@@ -160,7 +161,7 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     // الموظف: بيشوف الطلب من غير أزرار قرار
     await login(page, "ahmed");
     await goTab(page, "الحجوزات");
-    await expect(page.getByTestId("refund-request")).toContainText("في انتظار قرار مدير الحجوزات");
+    await expect(page.getByTestId("refund-request")).toContainText("في انتظار موافقة مدير الحجوزات");
     await expect(page.getByRole("button", { name: "رد الفلوس" })).toHaveCount(0);
     await logout(page);
 

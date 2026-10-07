@@ -49,7 +49,7 @@ test.describe("تسكين مكرر", () => {
 
     // مدير الحجوزات يرد الزيادة: ٢٠٠ فقط
     await login(page, "rawan");
-    await expect(page.getByTestId("refund-banner")).toContainText("1 طلب رد فلوس");
+    await expect(page.getByTestId("refund-banner")).toContainText("طلبات رد فلوس منتظرة (1)");
     await goTab(page, "الحجوزات");
     const req = page.getByTestId("refund-request");
     expect(digits(await req.innerText())).toContain("200USD");

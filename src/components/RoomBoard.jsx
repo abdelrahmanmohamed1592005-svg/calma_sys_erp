@@ -443,7 +443,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
           )}
 
           {/* الحالة اليدوية: صيانة / تنظيف بس، وبس لما مفيش نزيل ساكن (النزيل الساكن مابيتخباش بأي حالة) */}
-          {!occupiedNow && (perms.editRoomStatus ? (
+          {!perms.editRoomStatus ? (<div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Eye size={13} /> عرض فقط لدورك الحالي</div>) : !occupiedNow && (
             offShift ? (
               <div style={{ marginTop: 12, fontSize: 12, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 10, display: "flex", alignItems: "center", gap: 4 }}>
                 <AlertTriangle size={13} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعدّل حالة الغرف." : "مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه."}
@@ -454,7 +454,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{MANUAL_STATUS_OPTIONS.map((o) => <button key={o.key} className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => saveOverride(o.key)}>{o.label}</button>)}</div>
               </div>
             )
-          ) : (<div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Eye size={13} /> عرض فقط لدورك الحالي</div>))}
+          )}
         </div>
         );
       })()}

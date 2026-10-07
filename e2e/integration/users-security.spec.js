@@ -213,7 +213,7 @@ test.describe("هجمات مباشرة على الـ API (من غير الواج
     await users(env);
     const id = await env.seedBooking({ room: 601, guest: "Target", nights: 2, price: 100, paid: 200, settled: true });
     await env.seedShift("sara");           // يومية موظف تاني
-    await env.seedShift("ahmed", { key: myShiftKey() === "morning" ? "evening" : "morning" });
+    await env.seedShift("ahmed", { key: "morning", day: cairoDate(-3) });      // شيفت بعيد (مش اللي بعد شيفت sara مباشرة - ده مسموح له بحكم التسليم)
     const A = (m, p, b) => env.api("ahmed", m, p, b);
     expect(denied(await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { price_night: 1 }))).toBe(true);
     expect(denied(await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { total_room: 1, settled: false }))).toBe(true);

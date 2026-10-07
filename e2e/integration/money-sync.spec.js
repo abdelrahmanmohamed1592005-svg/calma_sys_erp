@@ -1,7 +1,7 @@
 // أكواد الأفراد اللي المستخدم بيكتبها، إلغاء الحجز (بدل المسح) وحالة رد الفلوس، الدخول المبكر
 // (عادي وأونلاين) والمغادرة المبكرة وطلب الرد، وإن أي تحصيل بيتسمع في الحجز واليومية والتقرير بنفس الرقم.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh, openRoom } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh, openRoom, openSec } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -86,6 +86,7 @@ test.describe("أكواد الأفراد بيكتبها المستخدم", () =>
     await expect(hit).toHaveCount(1);
     await hit.getByRole("button", { name: "افتح الغرفة" }).click();
     await expect(roomCard(page)).toContainText("Family Three");
+    await openSec(page, "sec-codes");
     await page.getByTestId("board-code-input-3").fill("A-3");
     await page.getByTestId("board-code-input-1").fill("ZED-1");
     await page.getByTestId("board-codes-save").click();
@@ -94,7 +95,7 @@ test.describe("أكواد الأفراد بيكتبها المستخدم", () =>
     expect((await env.q("select code from booking_guests where booking_id = $1 order by seq", [b.id])).map((r) => r.code)).toEqual(["ZED-1", "A-2", "A-3"]);
 
     // نزيل راجع: نفس الكود في حجز تاني على غرفة تانية => البحث يطلّع الغرفتين
-    const r2 = await env.seedBooking({ room: 610, guest: "Returning", start: 10, nights: 1 });
+    const r2 = await env.seedBooking({ room: 610, guest: "Returning", start: 40, nights: 1 });
     await env.q("update bookings set guest_codes = '[\"zed-1\"]'::jsonb where id = $1", [r2]);
     await refresh(page);
     await page.getByTestId("board-code-search").fill("ZED-1");
@@ -176,7 +177,7 @@ test.describe("الدخول المبكر", () => {
     expect(await get(env, "Early Bird")).toMatchObject({ amount_paid: 50, settled: false, early_checkin: { applied: true, fee: 50, note: "وصل ٧ الصبح" } });
     await expectSync(env, { USD: 50 });
     // الإجمالي ٢٥٠ والمتبقي ٢٠٠
-    expect(digits(await roomCard(page).getByTestId("board-due").innerText())).toContain("200");
+    expect(digits(await roomCard(page).getByTestId("money-box").innerText())).toContain("200");
     await expect(page.getByTestId("early-checkin-panel")).toHaveCount(0);      // اتسجّل مرة واحدة بس
     // تحصيل الباقي
     await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
@@ -249,7 +250,7 @@ test.describe("الدخول المبكر", () => {
     await roomCard(page).getByRole("button", { name: /حفظ الرسوم/ }).click();
     await expect(toast(page)).toContainText("تم حفظ الرسوم الإضافية");
     await expect(page.getByText(/مشغولة - متبقي فلوس 1/)).toBeVisible();
-    expect(digits(await roomCard(page).getByTestId("board-due").innerText())).toContain("30");
+    expect(digits(await roomCard(page).getByTestId("money-box").innerText())).toContain("30");
     await roomCard(page).getByTestId("collect-extras").click();
     await expect(toast(page)).toContainText("تم تسجيل تحصيل الخدمات");
     expect(await get(env, "Booking Dot Com")).toMatchObject({ amount_paid: 70 });

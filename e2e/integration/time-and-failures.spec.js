@@ -163,7 +163,7 @@ test.describe("أعطال الشبكة والسيرفر", () => {
     await goTab(page, "الحجوزات");
     await page.getByRole("button", { name: /حجز جديد/ }).click();
     await page.locator(".cx-card[data-calma-editing] select.cx-select").first().selectOption("601");
-    await expect(page.getByText(/محجوزة بالفعل في تواريخ متداخلة/)).toBeVisible();   // التعارض لسه بيتكشف
+    await expect(page.getByTestId("duplicate-plan")).toBeVisible();   // التعارض لسه بيتكشف
   });
 });
 
