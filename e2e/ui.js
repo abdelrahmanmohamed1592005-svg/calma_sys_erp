@@ -110,3 +110,16 @@ export async function openRoom(page, room) {
   await boardTile(page, room).click();
   await page.evaluate(() => document.querySelectorAll('[data-testid="booking-card"] details').forEach((d) => { d.open = true; }));
 }
+
+// "خيارات إضافية" في فورم الحجز مطوية: بنفتحها قبل التعامل مع الرسوم/الدخول المبكر/الأونلاين/جهة الحجز/الحالة/الملاحظات
+export async function openMore(page) {
+  const d = page.getByTestId("form-more");
+  if (!(await d.evaluate((el) => el.open))) await d.locator("summary").click();
+}
+
+// اليومية بتخفي صفوف الغرف الفاضية: بنعرض كل الغرف قبل ما نكتب في غرفة لسه ماعليهاش حركة
+export async function showAllRooms(page) {
+  await page.locator("table.cx-table").first().waitFor({ timeout: 5000 }).catch(() => {});
+  const b = page.getByTestId("ledger-show-all");
+  if (await b.count()) { if ((await b.innerText()).includes("عرض كل")) await b.click(); }
+}

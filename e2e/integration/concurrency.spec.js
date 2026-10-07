@@ -1,7 +1,7 @@
 // تزامن بين جهازين/مستخدمين على نفس البيانات (فوق قاعدة حقيقية): لازم ماحدش يكتب فوق
 // تعديل التاني بصمت، وماحدش ياخد الفلوس مرتين، ومحدش يحجز نفس الغرفة مرتين.
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, claimShift, cairoDate, refresh, digits, shiftDay, myShiftKey, SHIFT_LABEL, openRoom } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, claimShift, cairoDate, refresh, digits, shiftDay, myShiftKey, SHIFT_LABEL, openRoom, showAllRooms } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -49,7 +49,7 @@ test("موظفين يختاروا نفس الشيفت في نفس اللحظة: 
   const other = await env.newSession();
   await other.goto("/");
   await login(other, "sara");
-  await goTab(page, "اليومية");
+  await goTab(page, "اليومية"); await showAllRooms(page);
   await goTab(other, "اليومية");
   const btn = (p) => p.getByRole("button", { name: new RegExp(SHIFT_LABEL[myShiftKey()]) });
   await btn(page).click();
@@ -108,7 +108,7 @@ test("الموظف بيكتب في اليومية ورد فلوس بينزل ع�
   await env.seedShift("ahmed", { collections: [{ room: 604, amount: 100, bookingId: id }] });
   await page.goto("/");
   await login(page, "ahmed");
-  await goTab(page, "اليومية");
+  await goTab(page, "اليومية"); await showAllRooms(page);
   await expect(page.locator("table.cx-table tbody tr", { hasText: "604" }).first()).toBeVisible();
   // مدير الحجوزات يرد الفلوس دلوقتي (اليومية اتغيّرت من وراء الموظف)
   const r = await env.api("rawan", "POST", "/rest/v1/rpc/decide_booking_refund", { p_booking: id, p_decision: "refund", p_expected: null, p_method: null });

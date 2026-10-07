@@ -1,6 +1,6 @@
 // الوقت (الأوفر تايم، منتصف الليل، الشيفت الليلي) وأعطال الشبكة/السيرفر وسط العمليات.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, setCairoTime, SHIFT_LABEL, refresh, openRoom } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, setCairoTime, SHIFT_LABEL, refresh, openRoom, showAllRooms } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -22,7 +22,7 @@ test.describe("الأوفر تايم", () => {
     await setCairoTime(page, 17, 30);
     await page.goto("/");
     await login(page, "ahmed");
-    await goTab(page, "اليومية");
+    await goTab(page, "اليومية"); await showAllRooms(page);
     await page.locator("table.cx-table tbody tr", { hasText: "602" }).first().getByPlaceholder("المبلغ").nth(0).fill("15");
     await page.waitForTimeout(1300);
     expect(Number((await rec(env, "ahmed")).rows.find((r) => r.room === 602).expenseAmt)).toBe(15);
@@ -35,7 +35,7 @@ test.describe("الأوفر تايم", () => {
     // ١٨:٣٠: الأوفر تايم خلص
     await setCairoTime(page, 18, 30);
     await page.reload();
-    await goTab(page, "اليومية");
+    await goTab(page, "اليومية"); await showAllRooms(page);
     await expect(page.getByText(/مقفول|أُقفل بواسطة/).first()).toBeVisible();
     const r = await rec(env, "ahmed");
     expect(r.closed).toBe(true);
@@ -79,7 +79,7 @@ test.describe("تبديل الشيفتات والشيفت الليلي", () => {
     await setCairoTime(page, 17, 0);
     await page.goto("/");
     await login(page, "ahmed");
-    await goTab(page, "اليومية");
+    await goTab(page, "اليومية"); await showAllRooms(page);
     await expect(page.getByRole("button", { name: new RegExp(SHIFT_LABEL.morning) })).toBeDisabled();
     await page.getByRole("button", { name: new RegExp(SHIFT_LABEL.evening) }).click();
     await expect(page.getByText("شيفتك الوحيد المتاح ليك النهارده")).toBeVisible();
@@ -94,7 +94,7 @@ test.describe("تبديل الشيفتات والشيفت الليلي", () => {
     await setCairoTime(page, 2, 0);
     await page.goto("/");
     await login(page, "ahmed");
-    await goTab(page, "اليومية");
+    await goTab(page, "اليومية"); await showAllRooms(page);
     await page.getByRole("button", { name: new RegExp(SHIFT_LABEL.night) }).click();
     await expect(page.getByText("شيفتك الوحيد المتاح ليك النهارده")).toBeVisible();
     expect(await env.q("select date, shift_key from shift_claims")).toEqual([{ date: yesterday(), shift_key: "night" }]);
