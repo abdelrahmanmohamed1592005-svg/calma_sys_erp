@@ -44,7 +44,7 @@ test.describe("تسكين مكرر", () => {
     await openRoom(page, 611);
     await expect(roomCard(page)).toContainText("New Guest");
     await expect(roomCard(page)).toContainText("تسكين مكرر");
-    await expect(page.getByText(/Old Guest - غادر النهارده/)).toContainText("طلب رد فلوس");
+    await expect(page.getByTestId("departed-card")).toContainText("طلب رد فلوس");
     await logout(page);
 
     // مدير الحجوزات يرد الزيادة: ٢٠٠ فقط
