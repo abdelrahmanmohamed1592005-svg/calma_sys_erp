@@ -2,17 +2,27 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
 import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingHotelTotal, bookingAmountDue, refundDueAmount, refundStatusOf, ONLINE_METHODS, PAYMENT_METHODS, methodOptionsFor } from "../domain/money";
 import { todayStr, shiftDayNow, nightsBetween, addDays, uid } from "../domain/dates";
-import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, STAFF_ALLOWED_ON_ACTIVE_BOOKING, roomLabel } from "../domain/constants";
+import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, appendBookingCollection } from "../data/shifts";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { GuestCodeChips, GuestCodeHits, TwoStepButton } from "./shared";
+import { GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy } from "../lib/busy";
 
 const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#F5EFD6", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
-export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOverride, onToggleSettled, onUpdateBooking, onEditBooking, onLog, showToast, dataVersion }) {
+/* قسم مطوي في بطاقة الغرفة (برّه الـ component عشان الحقول اللي جواه ماتتفقدش الفوكس وقت الكتابة) */
+function Sec({ id, title, children, badge }) {
+  return (
+    <details data-testid={id} style={{ marginTop: 8, background: "#fff", borderRadius: 8, padding: "6px 10px" }}>
+      <summary style={{ cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>{title}{badge ? <span className="cx-pill" style={{ background: "var(--paper2)", marginInlineStart: 6, fontSize: 10.5 }}>{badge}</span> : null}</summary>
+      <div style={{ marginTop: 8 }}>{children}</div>
+    </details>
+  );
+}
+
+export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOverride, onToggleSettled, onUpdateBooking, onEditBooking, onDecideRefund, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [extrasDraft, setExtrasDraft] = useState(null);
@@ -60,10 +70,6 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   // بشيفت أصلًا (roomStatusRestricted: false) فمش بيأثر عليهم.
   const { offShift, shiftClosed, myActiveShiftKey, myActiveShiftDate } = useShiftGate(profile, perms, dataVersion);
 
-  const bookingActiveOnRoom = selected ? bookings.some((b) => b.room === selected && b.status !== "ملغي" && b.checkin <= date && date < b.checkout) : false;
-  const statusEditLocked = perms.roomStatusRestricted && bookingActiveOnRoom;
-  // في حجز شغال في الغرفة: "غادر مبكرًا" بيتم من زرار تقصير الإقامة (بيحسب الليالي والرد) مش كحالة يدوية بس
-  const occupiedBooking = !!status && (status.key === "occupied_paid" || status.key === "occupied_unpaid");
 
   async function saveOverride(statusKey) {
     if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني الأول" : "مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه"); return; }
@@ -163,7 +169,6 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     const stayed = Math.max(1, nightsBetween(booking.checkin, date));
     const plannedNights = nightsBetween(booking.checkin, booking.checkout);
     onLog(`غادر مبكرًا - ${roomLabel(rooms, booking.room)} - ${booking.guestName} - قعد ${stayed} من ${plannedNights} ليلة`);
-    await onSaveOverride(selected, "early_checkout");
     const owed = refundDueAmount(saved);
     const left = bookingAmountDue(saved);
     let msg = `النزيل غادر مبكرًا: اتحاسب على ${stayed} ليلة من ${plannedNights} (الحد الأدنى ليلة) - الإجمالي بقى ${fmt(bookingGrandTotal(saved))} ${booking.currency}`;
@@ -285,122 +290,62 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
         ); })}
       </div>
 
-      {room && status && (
+      {room && status && (() => {
+        const b = status.booking;
+        const departedList = bookings.filter((bk) => bk.room === selected && bk.leftEarly && bk.status !== "ملغي" && (bk.checkout === date || bk.checkin === date) && bk.id !== b?.id);
+        const occupiedNow = status.key === "occupied_paid" || status.key === "occupied_unpaid";
+        const canAct = (perms.editBookings || perms.markPaymentReceived) && !offShift;
+        const online = !!b?.paymentDetails?.onlinePaid;
+        const due = b ? bookingAmountDue(b) : 0;
+        const extrasList = b ? [
+          b.extras?.laundry > 0 && ["غسيل", b.extras.laundry],
+          b.extras?.cafeteria > 0 && ["كافيتيريا", b.extras.cafeteria],
+          b.extras?.tours > 0 && ["جولات", b.extras.tours],
+          b.extras?.pickup > 0 && ["بيك أب", b.extras.pickup],
+          b.earlyCheckin?.applied && ["دخول مبكر", b.earlyCheckin.fee || 0],
+        ].filter(Boolean) : [];
+        const codes = b ? guestCodeEntries(b) : [];
+        return (
         <div className="cx-card" style={{ marginTop: 16, padding: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>{roomLabel(rooms, room.number)}</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{roomLabel(rooms, room.number)} <span className="cx-pill" style={{ background: STATUS_TINTS[status.key], color: STATUS_COLORS[status.key], fontSize: 11.5, marginInlineStart: 6 }}>{status.label}</span></div>
             <button className="cx-btn cx-btn-outline" onClick={() => setSelected(null)}><X size={14} /></button>
           </div>
 
-          {/* لو فيه حجز تاني في الغرفة دي اختصر النهارده ("غادر مبكرًا") عشان
-              يفسح للحجز الجديد الحالي (تسكين مكرر) - نعرض بطاقة صغيرة بتاريخ
-              مغادرته الفعلي، عشان الصورة الكاملة تبقى واضحة لموظف الشيفت. */}
-          {(() => { const departed = bookings.find((bk) => bk.room === selected && bk.leftEarly && (bk.checkout === date || bk.checkin === date) && bk.id !== status.booking?.id); return departed ? (
-            <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "#FBE9DA" }}>
-              <span className="cx-pill" style={{ background: "#fff", color: "var(--rust)", fontSize: 11, marginRight: 6 }}>غادر مبكرًا</span>
-              <span style={{ fontSize: 12.5 }}>{departed.guestName} - غادر النهارده ({departed.checkin} → {departed.checkout}){departed.checkin === departed.checkout ? " - دخل وخرج في نفس اليوم" : ""}{bookings.some((bk) => bk.room === selected && bk.duplicatePlacement && bk.id !== departed.id && bk.checkin <= date && date < bk.checkout) ? " عشان حجز تسكين مكرر" : ""}{departed.refundPending && refundDueAmount(departed) > 0 ? ` · طلب رد فلوس ${fmt(refundDueAmount(departed))} ${departed.currency} منتظر قرار مدير الحجوزات` : ""}</span>
+          {/* نزيل غادر مبكرًا النهارده: بياناته وحسابه وحالة رد الفلوس بنفس الشكل في كل مكان */}
+          {departedList.map((d) => (
+            <div key={d.id} data-testid="departed-card" className="cx-card" style={{ marginTop: 10, padding: 10, background: "#FBE9DA", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 13 }}>
+                <span className="cx-pill" style={{ background: "#fff", color: "var(--rust)", fontSize: 11, marginInlineEnd: 6 }}>غادر مبكرًا</span>
+                <b>{d.guestName}</b> - غادر النهارده ({d.checkin} → {d.checkout}){d.checkin === d.checkout ? " - دخل وخرج في نفس اليوم" : ""}{bookings.some((bk) => bk.room === selected && bk.duplicatePlacement && bk.id !== d.id && bk.checkin <= date && date < bk.checkout) ? " وحل مكانه نزيل جديد" : ""}
+              </div>
+              <MoneyBox b={d} />
+              <RefundBox b={d} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
             </div>
-          ) : null; })()}
+          ))}
 
-          {status.booking && (() => { const b = status.booking; const gt = bookingGrandTotal(b); const paid = Number(b.amountPaid) || 0; const due = bookingAmountDue(b); const online = !!b.paymentDetails?.onlinePaid; const occupiedNow = status.key === "occupied_paid" || status.key === "occupied_unpaid"; const canAct = (perms.editBookings || perms.markPaymentReceived) && !offShift; const extrasList = [
-              b.extras?.laundry > 0 && ["غسيل", b.extras.laundry],
-              b.extras?.cafeteria > 0 && ["كافيتيريا", b.extras.cafeteria],
-              b.extras?.tours > 0 && ["جولات", b.extras.tours],
-              b.extras?.pickup > 0 && ["بيك أب", b.extras.pickup],
-              b.earlyCheckin?.applied && ["دخول مبكر", b.earlyCheckin.fee || 0],
-            ].filter(Boolean); return (
-            <div className="cx-card" style={{ marginTop: 10, padding: 12, background: "var(--paper2)" }}>
-              <div style={{ fontWeight: 800, marginBottom: 6 }}>بطاقة الحجز الحالي {b.code && <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 12 }}>· كود {b.code}</span>} {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginRight: 6, fontSize: 11 }}>مدفوع أونلاين</span>} {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginRight: 6, fontSize: 11 }}>تسكين مكرر</span>} {b.settled && <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)", marginRight: 6, fontSize: 11 }}>متحصّل بالكامل - مقفول</span>}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 8, fontSize: 12.5 }}>
-                <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>النزيل</div><div style={{ fontWeight: 700 }}>{b.guestName}</div></div>
-                <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>عدد الأفراد</div><div style={{ fontWeight: 700 }}>{b.pax || 1}</div></div>
-                <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>مصدر الحجز</div><div style={{ fontWeight: 700 }}>{b.source}</div></div>
-                <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>تشيك إن</div><div style={{ fontWeight: 700 }}>{b.checkin}</div></div>
-                <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>تشيك أوت</div><div style={{ fontWeight: 700 }}>{b.checkout}</div></div>
-                <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>عدد الليالي</div><div style={{ fontWeight: 700 }}>{nightsBetween(b.checkin, b.checkout)}</div></div>
-                <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>سعر الليلة × المدة</div><div style={{ fontWeight: 700 }}>{fmt(b.priceNight)} × {nightsBetween(b.checkin, b.checkout)} = {fmt(b.totalRoom)} {b.currency}</div></div>
-                {!b.paymentDetails?.onlinePaid && <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>طريقة الدفع</div><div style={{ fontWeight: 700 }}>{b.paymentMethod}</div></div>}
-                {/* حجز مدفوع من خلال منصة حجز (مش تحويل مباشر من النزيل) -
-                    مفيش اسم مرسل هنا أصلًا، بس ممكن يكون فيه رقم تأكيد/ملاحظة. */}
-                {b.paymentDetails?.onlinePaid && b.paymentDetails?.ref && (
-                  <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>ملاحظة حجز المنصة</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.ref}</div></div>
-                )}
-                {!b.paymentDetails?.onlinePaid && ONLINE_METHODS.includes(b.paymentMethod) && b.paymentDetails?.senderName && (
-                  <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>تفاصيل التحويل المباشر</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.senderName} · {b.paymentDetails.senderNumber} {b.paymentDetails.ref && `· ${b.paymentDetails.ref}`}</div></div>
-                )}
-                <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>الإجمالي الكلي</div><div style={{ fontWeight: 700 }}>{fmt(gt)} {b.currency}</div></div>
-                {(!online || bookingHotelTotal(b) > 0) && (<>
-                  <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>{online ? "المتحصّل في الفندق (خدمات/دخول مبكر)" : "المدفوع"}</div><div style={{ fontWeight: 700 }}>{fmt(paid)} {b.currency}</div></div>
-                  <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>المتبقي{online ? " (خدمات/دخول مبكر)" : ""}</div><div data-testid="board-due" style={{ fontWeight: 800, color: due > 0 ? "var(--rust)" : "var(--sage)" }}>{fmt(due)} {b.currency}</div></div>
-                </>)}
+          {b && (
+            <div className="cx-card" data-testid="booking-card" style={{ marginTop: 10, padding: 12, background: "var(--paper2)", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>
+                  {b.guestName}
+                  {online && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 11 }}>مدفوع أونلاين</span>}
+                  {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 11 }}>تسكين مكرر</span>}
+                  {b.settled && <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)", marginInlineStart: 6, fontSize: 11 }}>متحصّل بالكامل - مقفول</span>}
+                </div>
+                <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>
+                  {b.checkin} ← {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {fmt(b.priceNight)} {b.currency} / ليلة · {b.pax || 1} فرد
+                  {b.code && <span dir="ltr" data-testid="card-booking-code" style={{ fontFamily: "monospace", marginInlineStart: 8 }}>{b.code}</span>}
+                </div>
               </div>
 
-              <GuestCodeChips codes={guestCodeEntries(b)} />
-              {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift && !b.settled ? (
-                <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (تقدر تضيفها هنا على طول من غير ما تفتح الحجز كامل)</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
-                    {/* مدير الحجوزات بس اللي ملوش دعوة بغسيل/كافيتيريا هنا -
-                        موظف الشيفت (markPaymentReceived) لسه يقدر يضيفهم
-                        زي ما كان، لأنه هو اللي فعليًا بيستقبل طلبات النزيل
-                        دي وقت الشيفت. */}
-                    {profile?.role !== "reservations" && (<>
-                      <div><label style={{ fontSize: 10, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" min="0" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
-                      <div><label style={{ fontSize: 10, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" min="0" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
-                    </>)}
-                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" min="0" value={extrasDraft.tours} onChange={(e) => setExtrasDraft({ ...extrasDraft, tours: e.target.value })} /></div>
-                    <div><label style={{ fontSize: 10, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" min="0" value={extrasDraft.pickup} onChange={(e) => setExtrasDraft({ ...extrasDraft, pickup: e.target.value })} /></div>
-                  </div>
-                  <button className="cx-btn cx-btn-gold" style={{ marginTop: 8, fontSize: 12 }} onClick={() => saveExtras(b)}><Check size={13} /> حفظ الرسوم</button>
-                </div>
-              ) : extrasList.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 10.5, color: "var(--muted)", marginBottom: 4 }}>خدمات إضافية أُخذت{b.settled && !offShift && (perms.editBookings || perms.markPaymentReceived) ? " (مقفولة - الحجز متحصّل بالكامل، لازم تلغي التحصيل الأول لو عايز تعدّل)" : ""}</div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{extrasList.map(([label, amt]) => <span key={label} className="cx-pill" style={{ background: "#fff" }}>{label}: {fmt(amt)}</span>)}</div>
-                </div>
-              )}
-              {b.earlyCheckin?.applied && b.earlyCheckin.note && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر: {b.earlyCheckin.note}</div>}
+              <MoneyBox b={b} />
+              <RefundBox b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
 
-              {/* دخول مبكر: رسم بيتضاف على الحجز، وممكن يتحصّل فورًا فيدخل اليومية والتقرير والتوتال */}
-              {occupiedNow && !b.earlyCheckin?.applied && canAct && (
-                <div data-testid="early-checkin-panel" style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>النزيل دخل بدري قبل معاد الحجز؟ سجّل رسم الدخول المبكر هنا - بيزوّد إجمالي الحجز{perms.markPaymentReceived ? "، ولو حصّلته دلوقتي بيتسجّل في اليومية والتقرير" : ""}</div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    <input className="cx-input" data-testid="early-fee" type="number" min="0" placeholder="الرسم" value={ecFee} onChange={(e) => setEcFee(e.target.value)} style={{ width: 90 }} />
-                    <input className="cx-input" data-testid="early-note" placeholder="ملاحظة (اختياري)" value={ecNote} onChange={(e) => setEcNote(e.target.value)} style={{ width: 160 }} />
-                    {perms.markPaymentReceived && (<>
-                      <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}><input type="checkbox" data-testid="early-collect" checked={ecCollect} onChange={(e) => setEcCollect(e.target.checked)} /> حصّلته دلوقتي</label>
-                      {ecCollect && <select className="cx-select" style={{ fontSize: 12, width: 110 }} value={collectMethod} onChange={(e) => setCollectMethod(e.target.value)}>{methodOptionsFor(collectMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>}
-                    </>)}
-                    <button className="cx-btn cx-btn-gold" data-testid="early-apply" style={{ fontSize: 12 }} onClick={() => applyEarlyCheckin(b)}><Check size={13} /> تسجيل الدخول المبكر</button>
-                  </div>
-                </div>
-              )}
+              {offShift && (perms.markPaymentReceived || perms.editBookings) && <div style={{ fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعمل أي حاجة هنا." : "مش شيفتك دلوقتي - التحصيل والتعديل مش متاحين غير وقت شيفتك اللي حاجزه."}</div>}
 
-              {/* أكواد الأفراد (كود لكل فرد - بتكتبه بنفسك) */}
-              {canAct && (
-                <div data-testid="guest-codes-editor" style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>أكواد الأفراد (كود لكل فرد في الحجز - اكتبه بنفسك، بيربط النزيل بالغرفة وتقدر تبحث بيه)</div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                    {codesDraft.slice(0, 100).map((c, i) => <input key={i} className="cx-input" data-testid={`board-code-input-${i + 1}`} dir="ltr" maxLength={40} placeholder={`كود الفرد ${i + 1}`} value={c} onChange={(e) => setCodesDraft(codesDraft.map((x, j) => (j === i ? e.target.value : x)))} style={{ width: 130 }} />)}
-                    <button className="cx-btn cx-btn-outline" data-testid="board-codes-save" style={{ fontSize: 12 }} onClick={() => saveGuestCodes(b)}>حفظ الأكواد</button>
-                  </div>
-                </div>
-              )}
-
-              {(perms.editBookings || perms.markPaymentReceived) && !offShift && (
-                <div style={{ marginTop: 10, background: "#fff", borderRadius: 8, padding: 10 }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>النزيل طلب يمدد؟ حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي هيتحدثوا لوحدهم تلقائي (لو الغرفة محجوزة لحد تاني في التاريخ الجديد مش هيتسمحلك تمدد)</div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    <input className="cx-input" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
-                    <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
-                    <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => extendBooking(b)}>تمديد الحجز</button>
-                  </div>
-                </div>
-              )}
-
-              {offShift && (perms.markPaymentReceived || perms.editBookings) && <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعمل أي حاجة هنا." : "مش شيفتك دلوقتي - التحصيل والتعديل مش متاحين غير وقت شيفتك اللي حاجزه."}</div>}
-              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {/* الأفعال الأساسية: تحصيل / غادر مبكرًا */}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 {perms.markPaymentReceived && !offShift && online && due > 0 && (<>
                   <select className="cx-select" data-testid="collect-method" style={{ fontSize: 12, width: 120 }} value={collectMethod} onChange={(e) => setCollectMethod(e.target.value)}>{methodOptionsFor(collectMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
                   <button className="cx-btn cx-btn-gold" data-testid="collect-extras" style={{ fontSize: 12 }} onClick={() => collectFullPayment(b)}><Check size={13} /> تسجيل تحصيل الخدمات/الدخول المبكر</button>
@@ -415,36 +360,104 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                     <button className="cx-btn cx-btn-gold" style={{ fontSize: 12 }} onClick={() => collectFullPayment(b)}><Check size={13} /> تسجيل تحصيل كامل المبلغ</button>
                   </>)
                 )}
-                {perms.editBookings && onEditBooking && <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => onEditBooking(b.id)}><Pencil size={13} /> تعديل تفاصيل الحجز</button>}
                 {occupiedNow && perms.editRoomStatus && !offShift && (
                   <span data-testid="early-leave"><TwoStepButton label="غادر مبكرًا (تقصير الإقامة)" confirmLabel={`تأكيد المغادرة المبكرة؟ ${earlyLeavePreview(b)}`} onConfirm={() => earlyLeave(b)} /></span>
                 )}
+                {perms.editBookings && onEditBooking && <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => onEditBooking(b.id)}><Pencil size={13} /> تعديل الحجز</button>}
               </div>
-            </div>
-          ); })()}
 
-          {perms.editRoomStatus ? (
+              {/* باقي التفاصيل مطوية عشان الشاشة تفضل بسيطة */}
+              {(extrasList.length > 0 || (canAct && occupiedNow)) && (
+                <Sec id="sec-extras" title="خدمات إضافية ودخول مبكر" badge={extrasList.length ? extrasList.length : null}>
+                  {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift && !b.settled ? (
+                    <div>
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (بتتضاف على طول من غير ما تفتح الحجز كامل)</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
+                        {profile?.role !== "reservations" && (<>
+                          <div><label style={{ fontSize: 10, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" min="0" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
+                          <div><label style={{ fontSize: 10, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" min="0" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
+                        </>)}
+                        <div><label style={{ fontSize: 10, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" min="0" value={extrasDraft.tours} onChange={(e) => setExtrasDraft({ ...extrasDraft, tours: e.target.value })} /></div>
+                        <div><label style={{ fontSize: 10, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" min="0" value={extrasDraft.pickup} onChange={(e) => setExtrasDraft({ ...extrasDraft, pickup: e.target.value })} /></div>
+                      </div>
+                      <button className="cx-btn cx-btn-gold" style={{ marginTop: 8, fontSize: 12 }} onClick={() => saveExtras(b)}><Check size={13} /> حفظ الرسوم</button>
+                    </div>
+                  ) : extrasList.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{extrasList.map(([label, amt]) => <span key={label} className="cx-pill" style={{ background: "var(--paper2)" }}>{label}: {fmt(amt)}</span>)}{b.settled && canAct && <span style={{ fontSize: 11, color: "var(--muted)" }}>(مقفولة - الحجز متحصّل بالكامل)</span>}</div>
+                  )}
+                  {b.earlyCheckin?.applied && b.earlyCheckin.note && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر: {b.earlyCheckin.note}</div>}
+                  {occupiedNow && !b.earlyCheckin?.applied && canAct && (
+                    <div data-testid="early-checkin-panel" style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--hair)" }}>
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>النزيل دخل بدري قبل معاد الحجز؟ سجّل رسم الدخول المبكر - بيزوّد إجمالي الحجز{perms.markPaymentReceived ? "، ولو حصّلته دلوقتي بيتسجّل في اليومية والتقرير" : ""}</div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <input className="cx-input" data-testid="early-fee" type="number" min="0" placeholder="الرسم" value={ecFee} onChange={(e) => setEcFee(e.target.value)} style={{ width: 90 }} />
+                        <input className="cx-input" data-testid="early-note" placeholder="ملاحظة (اختياري)" value={ecNote} onChange={(e) => setEcNote(e.target.value)} style={{ width: 160 }} />
+                        {perms.markPaymentReceived && (<>
+                          <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}><input type="checkbox" data-testid="early-collect" checked={ecCollect} onChange={(e) => setEcCollect(e.target.checked)} /> حصّلته دلوقتي</label>
+                          {ecCollect && <select className="cx-select" style={{ fontSize: 12, width: 110 }} value={collectMethod} onChange={(e) => setCollectMethod(e.target.value)}>{methodOptionsFor(collectMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>}
+                        </>)}
+                        <button className="cx-btn cx-btn-gold" data-testid="early-apply" style={{ fontSize: 12 }} onClick={() => applyEarlyCheckin(b)}><Check size={13} /> تسجيل الدخول المبكر</button>
+                      </div>
+                    </div>
+                  )}
+                </Sec>
+              )}
+
+              {canAct && occupiedNow && (
+                <Sec id="sec-extend" title="تمديد الإقامة">
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي بيتحدثوا لوحدهم (لو الغرفة محجوزة لحد تاني في التاريخ الجديد مش هيتسمحلك)</div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <input className="cx-input" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
+                    <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
+                    <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => extendBooking(b)}>تمديد الحجز</button>
+                  </div>
+                </Sec>
+              )}
+
+              <Sec id="sec-codes" title="أكواد الأفراد" badge={codes.length ? codes.length : null}>
+                <GuestCodeChips codes={codes} />
+                {canAct && (
+                  <div data-testid="guest-codes-editor" style={{ marginTop: 6 }}>
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>كود لكل فرد (اكتبه بنفسك - فريد جوه الشهر)</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                      {codesDraft.slice(0, 100).map((c, i) => <input key={i} className="cx-input" data-testid={`board-code-input-${i + 1}`} dir="ltr" maxLength={40} placeholder={`كود الفرد ${i + 1}`} value={c} onChange={(e) => setCodesDraft(codesDraft.map((x, j) => (j === i ? e.target.value : x)))} style={{ width: 130 }} />)}
+                      <button className="cx-btn cx-btn-outline" data-testid="board-codes-save" style={{ fontSize: 12 }} onClick={() => saveGuestCodes(b)}>حفظ الأكواد</button>
+                    </div>
+                  </div>
+                )}
+              </Sec>
+
+              <Sec id="sec-info" title="بيانات الحجز">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, fontSize: 12.5 }}>
+                  <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>مصدر الحجز</div><div style={{ fontWeight: 700 }}>{b.source}</div></div>
+                  {!online && <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>طريقة الدفع</div><div style={{ fontWeight: 700 }}>{b.paymentMethod}</div></div>}
+                  <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>سعر الليلة × المدة</div><div style={{ fontWeight: 700 }}>{fmt(b.priceNight)} × {nightsBetween(b.checkin, b.checkout)} = {fmt(b.totalRoom)} {b.currency}</div></div>
+                  {online && b.paymentDetails?.ref && <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>ملاحظة حجز المنصة</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.ref}</div></div>}
+                  {!online && ONLINE_METHODS.includes(b.paymentMethod) && b.paymentDetails?.senderName && (
+                    <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>تفاصيل التحويل المباشر</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.senderName} · {b.paymentDetails.senderNumber} {b.paymentDetails.ref && `· ${b.paymentDetails.ref}`}</div></div>
+                  )}
+                  {b.notes && <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>ملاحظات</div><div>{b.notes}</div></div>}
+                </div>
+              </Sec>
+            </div>
+          )}
+
+          {/* الحالة اليدوية: صيانة / تنظيف بس، وبس لما مفيش نزيل ساكن (النزيل الساكن مابيتخباش بأي حالة) */}
+          {!perms.editRoomStatus ? (<div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Eye size={13} /> عرض فقط لدورك الحالي</div>) : !occupiedNow && (
             offShift ? (
               <div style={{ marginTop: 12, fontSize: 12, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 10, display: "flex", alignItems: "center", gap: 4 }}>
                 <AlertTriangle size={13} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعدّل حالة الغرف." : "مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه."}
               </div>
-            ) : statusEditLocked ? (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 10, marginBottom: 8 }}><AlertTriangle size={13} style={{ verticalAlign: -2 }} /> الغرفة عليها حجز نشط - تغيير حالتها بشكل عام يتم من مدير الحجوزات فقط، عشان نتجنب أي دبل بوكينج.</div>
-                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>لو النزيل غادر قبل معاده</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {MANUAL_STATUS_OPTIONS.filter((o) => STAFF_ALLOWED_ON_ACTIVE_BOOKING.includes(o.key) && !(o.key === "early_checkout" && occupiedBooking)).map((o) => <button key={o.key} className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => saveOverride(o.key)}>{o.label}</button>)}
-                </div>
-              </div>
             ) : (
               <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>تغيير الحالة يدويًا</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{MANUAL_STATUS_OPTIONS.filter((o) => !(o.key === "early_checkout" && occupiedBooking)).map((o) => <button key={o.key} className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => saveOverride(o.key)}>{o.label}</button>)}</div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>حالة الغرفة</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{MANUAL_STATUS_OPTIONS.map((o) => <button key={o.key} className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => saveOverride(o.key)}>{o.label}</button>)}</div>
               </div>
             )
-          ) : (<div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Eye size={13} /> عرض فقط لدورك الحالي</div>)}
+          )}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

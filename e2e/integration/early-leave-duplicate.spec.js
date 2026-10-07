@@ -1,6 +1,6 @@
 // الخروج المبكر والتسكين المكرر من شاشة الحجوزات (موظف الشيفت) فوق قاعدة حقيقية.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -25,15 +25,10 @@ test.describe("تسكين مكرر", () => {
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']").fill("120");
 
-    // تحذير التعارض + من غير تأكيد مفيش حفظ
-    await expect(page.getByText(/محجوزة بالفعل في تواريخ متداخلة/)).toBeVisible();
-    await page.getByRole("button", { name: /حفظ الحجز/ }).click();
-    await expect(toast(page)).toContainText("الغرفة متعارضة مع حجز موجود");
-    expect(await env.q("select 1 from bookings")).toHaveLength(1);
-
-    // تأكيد التسكين المكرر: الخطة بتظهر قبل الحفظ
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
-    await expect(page.getByText(/اللي هيحصل عند الحفظ/)).toContainText("غادر مبكرًا");
+    // الفورم بيشرح اللي هيحصل قبل الحفظ (من غير خانة تأكيد) وزرار الحفظ بيوضّح إنه هيسجّل خروج مبكر للقديم
+    await expect(page.getByTestId("duplicate-plan")).toContainText("الغرفة دي عليها نزيل");
+    await expect(page.getByTestId("duplicate-plan")).toContainText("غادر مبكرًا");
+    await expect(page.getByRole("button", { name: /خروج مبكر للنزيل القديم/ })).toBeVisible();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
     await expect(toast(page)).toContainText("طلب رد فلوس");
@@ -46,20 +41,19 @@ test.describe("تسكين مكرر", () => {
 
     // لوحة الغرف: الغرفة مشغولة بالنزيل الجديد (متبقي فلوس) + بطاقة "غادر مبكرًا" للقديم
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 611).click();
+    await openRoom(page, 611);
     await expect(roomCard(page)).toContainText("New Guest");
     await expect(roomCard(page)).toContainText("تسكين مكرر");
-    await expect(page.getByText(/Old Guest - غادر النهارده/)).toContainText("طلب رد فلوس");
+    await expect(page.getByTestId("departed-card")).toContainText("طلب رد فلوس");
     await logout(page);
 
     // مدير الحجوزات يرد الزيادة: ٢٠٠ فقط
     await login(page, "rawan");
-    await expect(page.getByTestId("refund-banner")).toContainText("1 طلب رد فلوس");
+    await expect(page.getByTestId("refund-banner")).toContainText("طلبات رد فلوس منتظرة (1)");
     await goTab(page, "الحجوزات");
     const req = page.getByTestId("refund-request");
     expect(digits(await req.innerText())).toContain("200USD");
     await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await req.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     const after = await get(env, "Old Guest");
     expect(after).toMatchObject({ amount_paid: 200, refund_pending: false, refund_decision: "refunded", refunded_amount: 200, settled: true });
@@ -78,8 +72,7 @@ test.describe("تسكين مكرر", () => {
     await field(page, "اسم النزيل").fill("Replacement");
     await field(page, "تاريخ الخروج").fill(cairoDate(1));
     await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']").fill("100");
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
-    await expect(page.getByText(/دخل .* وخرج في نفس اليوم/)).toBeVisible();
+    await expect(page.getByTestId("duplicate-plan")).toContainText("دخل وخرج في نفس اليوم");
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
     const old = await get(env, "Same Day");
@@ -99,8 +92,7 @@ test.describe("تسكين مكرر", () => {
     await field(page, "اسم النزيل").fill("Intruder");
     await field(page, "تاريخ الدخول").fill(cairoDate(2));
     await field(page, "تاريخ الخروج").fill(cairoDate(3));
-    await expect(page.getByText(/لسه ماجاش معاده/)).toBeVisible();
-    await expect(page.getByRole("checkbox", { name: /تسكين مكرر/ })).toBeDisabled();
+    await expect(page.getByTestId("duplicate-blocked")).toContainText("لسه ماجاش معاده");
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     expect(await env.q("select 1 from bookings")).toHaveLength(1);
   });
@@ -117,8 +109,7 @@ test.describe("تسكين مكرر", () => {
     await field(page, "اسم النزيل").fill("Early Bird");
     await field(page, "تاريخ الدخول").fill(cairoDate(1));
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
-    await expect(page.getByText(/نزيله لسه في الغرفة/)).toBeVisible();
-    await expect(page.getByRole("checkbox", { name: /تسكين مكرر/ })).toBeDisabled();
+    await expect(page.getByTestId("duplicate-blocked")).toContainText("نزيله لسه في الغرفة");
   });
 
   test("مدير الحجوزات يعدّل خروج النزيل القديم الأول، وبعدها الحجز الجديد يتحفظ عادي من غير تسكين مكرر", async ({ page, env }) => {
@@ -154,7 +145,6 @@ test.describe("تسكين مكرر", () => {
     await field(page, "اسم النزيل").fill("Will Fail");
     await field(page, "تاريخ الخروج").fill(cairoDate(1));
     await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']").fill("100");
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("الحجز القديم رجع زي ما كان");
     const old = (await env.q("select * from bookings where id = $1", [oldId]))[0];
@@ -172,17 +162,18 @@ test.describe("خروج مبكر من لوحة الغرف", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 601).click();
-    await expect(page.getByText(/تغيير حالتها بشكل عام يتم من مدير الحجوزات فقط/)).toBeVisible();
+    await openRoom(page, 601);
+    // نزيل ساكن: مفيش أزرار حالة يدوية خالص (صيانة/تنظيف) - الأفعال الوحيدة تحصيل / غادر مبكرًا
     await expect(page.getByRole("button", { name: "صيانة" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "تحت التنظيف" })).toHaveCount(0);
     // "غادر مبكرًا" على غرفة عليها نزيل بقى بيقصّر الإقامة ويحسب الليالي (مش مجرد حالة)
     await expect(page.getByRole("button", { name: "غادر مبكرًا", exact: true })).toHaveCount(0);
     await page.getByTestId("early-leave").getByRole("button", { name: /غادر مبكرًا/ }).click();
     await page.getByRole("button", { name: "تأكيد المغادرة المبكرة؟" }).click();
     await expect(toast(page)).toContainText("اتحاسب على 1 ليلة من 2");
     expect(await env.q("select checkout, left_early, total_room from bookings where guest_name = 'Occupant'")).toEqual([{ checkout: cairoDate(0), left_early: true, total_room: 100 }]);
-    const [ov] = await env.q("select * from room_overrides where room_number = 601");
-    expect(ov).toMatchObject({ status: "early_checkout", updated_by: "ahmed" });
+    expect(await env.q("select * from room_overrides where room_number = 601")).toHaveLength(0);       // مفيش حالة يدوية: "غادر مبكرًا" بتتحسب من الحجز
     await expect(page.getByText(/غادر مبكرًا 1/)).toBeVisible();
+    await expect(page.getByTestId("departed-card")).toContainText("Occupant");
   });
 });

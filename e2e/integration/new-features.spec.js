@@ -1,7 +1,7 @@
 // الميزات الجديدة: أكواد الأفراد، الحجز الأونلاين (من غير وسيلة دفع ولا عمولة)، ظهور التسكين المكرر
 // وتحصيله المنفصل، مصاريف وإيرادات الفندق في اليومية، سعر الليلة على بلوك الغرفة، وحالة الحجز الملغي.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, SHIFT_LABEL } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, SHIFT_LABEL, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -42,24 +42,20 @@ test.describe("الحجز المدفوع أونلاين", () => {
     await expect(card).toContainText("مدفوع أونلاين");
     expect(digits(await card.innerText())).not.toMatch(/Booking\.com·كاش|مباشر·كاش/);
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 605).click();
+    await openRoom(page, 605);
     await expect(roomCard(page)).toContainText("مدفوع أونلاين");
     await expect(roomCard(page).getByText("طريقة الدفع")).toHaveCount(0);
   });
 });
 
 test.describe("التسكين المكرر في لوحة الغرف واليومية", () => {
-  test("بعد 'غادر مبكرًا' يدوي: النزيل الجديد (تسكين مكرر) بيظهر في بلوك الغرفة بتفاصيله وسعر ليلته، والحالة اليدوية بتتشال", async ({ page, env }) => {
+  test("تسكين مكرر: النزيل الجديد بيظهر في بلوك الغرفة بتفاصيله وسعر ليلته، والقديم بيتسجّل غادر مبكرًا", async ({ page, env }) => {
     await users(env);
     const oldId = await env.seedBooking({ room: 611, guest: "Old Guest", start: -2, nights: 4, price: 100, paid: 400, settled: true });
     await env.seedShift("ahmed", { collections: [{ room: 611, amount: 400, bookingId: oldId }] });
     await page.goto("/");
     await login(page, "ahmed");
-    // حالة "غادر مبكرًا" يدوية قديمة على الغرفة (من قبل ما الزرار يبقى بيقصّر الإقامة) والنزيل القديم لسه مسجّل
-    await env.q("insert into room_overrides(room_number, status, updated_by) values (611, 'early_checkout', 'ahmed') on conflict (room_number) do update set status = excluded.status, updated_at = now()");
-    await page.reload();
     await goTab(page, "لوحة الغرف");
-    await expect(page.getByText(/غادر مبكرًا 1/)).toBeVisible();
     // وبعدين يسكّن النزيل الجديد (تسكين مكرر)
     await goTab(page, "الحجوزات");
     await page.getByRole("button", { name: /حجز جديد/ }).click();
@@ -68,14 +64,10 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await field(page, "عدد الأفراد").fill("2");
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await priceInput(page).fill("150");
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
 
     await goTab(page, "لوحة الغرف");
-    // الحالة اليدوية اتشالت من قاعدة البيانات، والغرفة مش "غادر مبكرًا" تاني
-    await expect.poll(async () => (await env.q("select status from room_overrides where room_number = 611"))[0]?.status).toBe("auto");
-    await expect(page.getByText(/غادر مبكرًا 0/)).toBeVisible();
     // بلوك الغرفة من بره: اسم النزيل الجديد + سعر الليلة + علامة التسكين المكرر
     const tile = boardTile(page, 611);
     await expect(tile).toContainText("New Guest");
@@ -85,7 +77,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await tile.click();
     await expect(roomCard(page)).toContainText("New Guest");
     await expect(roomCard(page)).toContainText("تسكين مكرر");
-    await expect(page.getByText(/Old Guest - غادر النهارده/)).toBeVisible();
+    await expect(page.getByTestId("departed-card")).toContainText("Old Guest");
   });
 
   test("حتى لو الحالة اليدوية 'غادر مبكرًا' لسه موجودة (حجز اتسكّن بعدها من جهاز تاني)، النزيل الجديد هو اللي بيبان", async ({ page, env }) => {
@@ -97,7 +89,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await page.goto("/");
     await login(page, "rawan");
     await expect(boardTile(page, 612)).toContainText("Newcomer");
-    await boardTile(page, 612).click();
+    await openRoom(page, 612);
     await expect(roomCard(page)).toContainText("Newcomer");
   });
 
@@ -115,7 +107,6 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await priceInput(page).fill("100");
     await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill("50");
-    await page.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
     const nw = await get(env, "Replacement Guest");
@@ -135,7 +126,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
 
     // تحصيل باقي المبلغ من لوحة الغرف بيروح لنفس صف الحجز الجديد
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 613).click();
+    await openRoom(page, 613);
     await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
     await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
     [rec] = await env.q("select rows from shift_records");
@@ -151,7 +142,6 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await goTab(page, "الحجوزات");
     const req = guestCard(page, "Previous Guest").getByTestId("refund-request");
     await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await req.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     [rec] = await env.q("select rows from shift_records");
     rows = rec.rows.filter((r) => r.room === 613);
@@ -311,7 +301,6 @@ test.describe("الحجز الملغي وحالة الفلوس", () => {
     // رد
     const r1 = guestCard(page, "Will Refund").getByTestId("refund-request");
     await r1.getByRole("button", { name: "رد الفلوس" }).click();
-    await r1.getByRole("button", { name: "تأكيد الرد؟" }).click();
     await expect(toast(page)).toContainText("تم رد");
     const s1 = guestCard(page, "Will Refund").getByTestId("refund-status");
     await expect(s1).toContainText("اترد للنزيل");
@@ -321,7 +310,6 @@ test.describe("الحجز الملغي وحالة الفلوس", () => {
     // رفض
     const r2 = guestCard(page, "Will Keep").getByTestId("refund-request");
     await r2.getByRole("button", { name: /رفض الرد/ }).click();
-    await r2.getByRole("button", { name: "تأكيد الرفض؟" }).click();
     await expect(toast(page)).toContainText("تم رفض الرد");
     const s2 = guestCard(page, "Will Keep").getByTestId("refund-status");
     await expect(s2).toContainText("رُفض الرد");

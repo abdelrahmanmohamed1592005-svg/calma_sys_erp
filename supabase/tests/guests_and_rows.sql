@@ -21,8 +21,13 @@ select t.eq('GU4 الكود اتغيّر', (select string_agg(code, ',' order by
 select t.pass('GU4 إلغاء الحجز', t.dml('res1', $q$update bookings set status = 'ملغي' where guest_name = 'GU1'$q$));
 select t.eqn('GU4 الأكواد بتفضل بعد الإلغاء (البحث بيطلّع الحجز الملغي كمان)', (select count(*) from booking_guests where booking_id = t.gid('GU1')), 2);
 
-select t.pass('GU5 نزيل راجع: نفس الكود في حجز تاني مسموح', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (604, 'GU5', hotel_today() + 110, hotel_today() + 111, 50, 50, 1, 'USD', 'مباشر', '["NEW-1"]'::jsonb)$q$));
-select t.eqn('GU5 الكود ظاهر في حجزين (غرفتين)', (select count(distinct room) from booking_guests where upper(code) = 'NEW-1'), 2);
+select t.reject('GU5 نفس الكود في نفس الشهر لنزيل تاني مرفوض (حتى لو الأول اتلغى)', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (604, 'GU5x', hotel_today() + 100, hotel_today() + 101, 50, 50, 1, 'USD', 'مباشر', '["new-1"]'::jsonb)$q$), 'مستخدم الشهر ده');
+select t.eqn('GU5 والحجز المرفوض ما اتسجّلش', (select count(*) from bookings where guest_name = 'GU5x'), 0);
+select t.pass('GU5 نفس الكود في شهر مختلف مسموح (العداد بيبدأ من الأول)', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (604, 'GU5', hotel_today() + 140, hotel_today() + 141, 50, 50, 1, 'USD', 'مباشر', '["NEW-1"]'::jsonb)$q$));
+select t.eqn('GU5 البحث بالكود بيجيب الاتنين (غرفتين / شهرين)', (select count(distinct room) from booking_guests where upper(code) = 'NEW-1'), 2);
+select t.chk('GU5 الشهر متسجّل مع الكود', (select count(distinct ym) = 2 from booking_guests where upper(code) = 'NEW-1'));
+select t.pass('GU5 تعديل حجز بنفس كوده مايتعارضش مع نفسه', t.dml('st1', $q$update bookings set guest_codes = '["NEW-1"]'::jsonb where guest_name = 'GU5'$q$));
+select t.reject('GU5 نقل الحجز لنفس شهر الكود التاني بيترفض', t.dml('res1', $q$update bookings set checkin = hotel_today() + 100, checkout = hotel_today() + 101 where guest_name = 'GU5'$q$), 'مستخدم الشهر ده');
 select t.reject('GU5 لكن مايتكررش جوه نفس الحجز (حتى باختلاف حالة الحروف)', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (605, 'GU5b', hotel_today() + 110, hotel_today() + 111, 50, 50, 2, 'USD', 'مباشر', '["X1","x1"]'::jsonb)$q$), 'مكرر جوه نفس الحجز');
 select t.eqn('GU5 والحجز المرفوض ما اتسجّلش', (select count(*) from bookings where guest_name = 'GU5b'), 0);
 select t.reject('GU5 كود أطول من ٤٠ حرف', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (605, 'GU5c', hotel_today() + 110, hotel_today() + 111, 50, 50, 1, 'USD', 'مباشر', to_jsonb(array[repeat('x', 41)]))$q$), 'أطول من');
@@ -84,3 +89,16 @@ select t.pass('EC2 حجز تاني متحصّل بالكامل', t.ins('st1', 'E
 select t.reject('EC2 تسجيل دخول مبكر على حجز متحصّل بالكامل من غير ما العلامة تتشال مرفوض', t.upd('st1', 'EC2', $u$early_checkin = '{"applied":true,"fee":50,"note":""}'::jsonb$u$), 'متحصّل بالكامل');
 select t.pass('EC2 لكن لو العلامة اتشالت في نفس التحديث (والمدفوع لسه أقل من الإجمالي الجديد) بيعدّي', t.upd('st1', 'EC2', $u$early_checkin = '{"applied":true,"fee":50,"note":""}'::jsonb, settled = false$u$));
 select t.pass('EC2 وبعد تحصيل الرسم يرجع متحصّل بالكامل', t.upd('st1', 'EC2', 'amount_paid = 250, settled = true'));
+
+-- ======================================================================
+-- كود الحجز تلقائي (B + سنة/شهر + رقم متسلسل)
+-- ======================================================================
+select t.pass('AC1 حجزين متتاليين', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, code) values (612, 'AC1', hotel_today() + 300, hotel_today() + 301, 50, 50, 1, 'USD', 'مباشر', 'MY-OWN-CODE'), (613, 'AC2', hotel_today() + 300, hotel_today() + 301, 50, 50, 1, 'USD', 'مباشر', null)$q$));
+select t.chk('AC1 الكود تلقائي بالصيغة والكود اللي المستخدم كتبه اتجاهل', (select bool_and(code ~ '^B[0-9]{4}-[0-9]{4}$') from bookings where guest_name in ('AC1', 'AC2')));
+select t.chk('AC1 الرقم متسلسل ومختلف', (select count(distinct code) = 2 from bookings where guest_name in ('AC1', 'AC2')));
+select t.chk('AC1 العداد بيمشي: التاني أكبر من الأول', (select (select split_part(code, '-', 2)::int from bookings where guest_name = 'AC2') = (select split_part(code, '-', 2)::int from bookings where guest_name = 'AC1') + 1));
+select t.pass('AC2 المدير يحاول يغيّر الكود', t.dml('res1', $q$update bookings set code = 'HACK', notes = 'x' where guest_name = 'AC1'$q$));
+select t.chk('AC2 الكود ما اتغيّرش', (select code ~ '^B[0-9]{4}-[0-9]{4}$' from bookings where guest_name = 'AC1'));
+select t.reject('AC3 مفيش وصول مباشر لجدول العدادات', t.dml('st1', $q$select * from booking_code_counters$q$), 'permission denied');
+select t.reject('AC3 ولا تنفيذ دالة التوليد', t.dml('st1', $q$select next_booking_code()$q$), 'permission denied');
+select t.chk('AC4 كل الحجوزات ليها كود', (select bool_and(coalesce(code, '') <> '') from bookings));

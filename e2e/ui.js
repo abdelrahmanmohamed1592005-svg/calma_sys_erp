@@ -70,7 +70,6 @@ export async function addBooking(page, o) {
   if (currency) await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//select").selectOption(currency);
   if (method) await page.locator("xpath=//label[contains(.,'طريقة الدفع')]/following-sibling::select").selectOption(method);
   if (paid != null) await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill(String(paid));
-  if (dup) await form.getByRole("checkbox", { name: /تسكين مكرر/ }).check();
   await form.getByRole("button", { name: /حفظ الحجز/ }).click();
   if (expectSaved) {
     // الفورم بيتقفل بس بعد نجاح الحفظ (رسالة "تم الحفظ" ممكن تكون لسه ظاهرة من حفظة قبلها)
@@ -80,7 +79,7 @@ export async function addBooking(page, o) {
 }
 
 export const boardTile = (page, room) => page.locator(".cx-tile", { hasText: String(room) });
-export const roomCard = (page) => page.locator(".cx-card", { hasText: "بطاقة الحجز الحالي" }).last();
+export const roomCard = (page) => page.getByTestId("booking-card");
 
 /* بيثبّت ساعة المتصفح على النهارده (بتاريخ القاهرة الفعلي) الساعة hh:mm بتوقيت القاهرة - عشان نختبر
    الأوفر تايم وعبور منتصف الليل والشيفت الليلي. تاريخ قاعدة البيانات (hotel_today) بيفضل الحقيقي،
@@ -97,4 +96,17 @@ export async function setCairoTime(page, hour, minute = 0) {
   }
   await page.clock.setFixedTime(new Date(t));
   return new Date(t);
+}
+
+// أقسام بطاقة الغرفة مطوية (خدمات/دخول مبكر، تمديد، أكواد، بيانات): بنفتح القسم قبل التعامل مع اللي جواه
+export async function openSec(page, id) {
+  const d = page.getByTestId(id);
+  if (!(await d.evaluate((el) => el.open))) await d.locator("summary").click();
+  return d;
+}
+
+// فتح بطاقة الغرفة (من اللوحة) مع فتح كل أقسامها المطوية
+export async function openRoom(page, room) {
+  await boardTile(page, room).click();
+  await page.evaluate(() => document.querySelectorAll('[data-testid="booking-card"] details').forEach((d) => { d.open = true; }));
 }

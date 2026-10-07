@@ -9,7 +9,7 @@
   وفي الآخر التقرير ولوحة الغرف بيطابقوا القاعدة.
 */
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom } from "../ui";
 
 const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const ROOMS = [601, 602, 603, 604];
@@ -72,12 +72,9 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         const conflict = overlaps(bookings, room, cairoDate(start), cairoDate(start + nights));
         log.push(`add ${guest} r${room} +${start}x${nights} paid ${Math.min(paid, total)}${conflict ? " (conflict)" : ""}`);
         await addBooking(staff, { room, guest, price: 50, nights, startOffset: start, paid: Math.min(paid, total) || undefined, expectSaved: false });
-        if (conflict) {
-          await expect(toast(staff)).toContainText("الغرفة متعارضة");
-          await staff.getByRole("button", { name: "إلغاء", exact: true }).click();
-        } else {
-          await expect(toast(staff)).toContainText("تم الحفظ");
-        }
+        // التعارض: لو القديم دخل فعلاً بيتسجّل خروجه المبكر والجديد بيتسكّن، وغير كده (مزدوج حقيقي) مرفوض بسبب واضح
+        await expect(toast(staff)).toContainText(conflict ? /تم الحفظ|لسه ماجاش معاده|نزيله لسه في الغرفة|قبل دخول/ : "تم الحفظ");
+        await staff.locator(".cx-card[data-calma-editing]").getByRole("button", { name: "إلغاء", exact: true }).click({ timeout: 1500 }).catch(() => {});      // لو الفورم لسه مفتوح (مرفوض) نقفله
       },
       async collect() {
         const { bookings } = await snapshot(env);
@@ -85,7 +82,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         if (!c.length) return false;
         const b = pick(c);
         log.push(`collect ${b.guest_name}`);
-        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
         if (isOnline(b)) {
           await roomCard(staff).getByTestId("collect-extras").click();
@@ -102,7 +99,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         const b = pick(c);
         const fee = pick([20, 40]), now = rnd() < 0.6;
         log.push(`early ${b.guest_name} ${fee} ${now ? "collect" : "later"}`);
-        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
         await staff.getByTestId("early-fee").fill(String(fee));
         if (!now) await staff.getByTestId("early-collect").uncheck();
@@ -115,7 +112,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         if (!c.length) return false;
         const b = pick(c);
         log.push(`leave ${b.guest_name}`);
-        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
         await roomCard(staff).getByTestId("early-leave").getByRole("button", { name: /غادر مبكرًا/ }).click();
         await roomCard(staff).getByRole("button", { name: "تأكيد المغادرة المبكرة؟" }).click();
@@ -136,7 +133,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         const b = pick(c);
         const blocked = overlaps(bookings, b.room, b.checkout, cairoDate(nightsBetween(today, b.checkout) + 1), b.id);
         log.push(`extend ${b.guest_name}${blocked ? " (blocked)" : ""}`);
-        await goTab(staff, "لوحة الغرف"); await boardTile(staff, b.room).click();
+        await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
         await roomCard(staff).getByRole("button", { name: /تمديد الحجز/ }).click();
         await expect(toast(staff)).toContainText(blocked ? /محجوزة لحد تاني|مدير الحجوزات ضايف/ : "تم تمديد الحجز");
@@ -164,7 +161,6 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         await goTab(res, "الحجوزات");
         const req = res.locator(".cx-card", { hasText: b.guest_name }).last().getByTestId("refund-request");
         await req.getByRole("button", { name: refund ? "رد الفلوس" : /رفض الرد/ }).click();
-        await req.getByRole("button", { name: refund ? "تأكيد الرد؟" : "تأكيد الرفض؟" }).click();
         await expect(toast(res)).toContainText(refund ? "تم رد" : "تم رفض الرد");
       },
       async shorten() {
@@ -206,8 +202,8 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
     const unpaid = [...rooms].filter((r) => { const b = live.find((x) => x.room === r); return !(Number(b.amount_paid) >= hotelTotal(b) - 0.005); }).length;
     await expect(res.getByText(new RegExp(`مشغولة - متبقي فلوس ${unpaid}\\b`))).toBeVisible();
     await expect(res.getByText(new RegExp(`مشغولة - متحصّلة ${rooms.size - unpaid}\\b`))).toBeVisible();
-    // غرف اتعلّمت "غادر مبكرًا" النهارده (من زرار المغادرة المبكرة) ومفيش عليها نزيل نشط دلوقتي
-    const ovRooms = new Set((await env.q("select room_number from room_overrides where status = 'early_checkout'")).map((o) => o.room_number).filter((r) => !rooms.has(r)));
+    // غرف نزيلها غادر مبكرًا النهارده (متحسبة من الحجز نفسه) ومفيش عليها نزيل ساكن دلوقتي
+    const ovRooms = new Set(bookings.filter((b) => b.left_early && b.status !== "ملغي" && b.checkout === today && !rooms.has(b.room)).map((b) => b.room));
     const soon = new Set(bookings.filter((b) => b.status !== "ملغي" && b.checkin > today && b.checkin <= cairoDate(2) && !rooms.has(b.room) && !ovRooms.has(b.room)).map((b) => b.room));
     await expect(res.getByText(new RegExp(`قادمة قريبًا ${soon.size}\\b`))).toBeVisible();
     await expect(res.getByText(new RegExp(`غادر مبكرًا ${ovRooms.size}\\b`))).toBeVisible();

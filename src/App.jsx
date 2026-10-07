@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { GlobalStyle, LoadingScreen, ConfigWarningBanner } from "./components/shared";
+import { GlobalStyle, LoadingScreen, ConfigWarningBanner, RefundBox } from "./components/shared";
 import { Header, TabBar } from "./components/Header";
 import { SetupScreen, LoginScreen, LogoutReportScreen } from "./components/AuthScreens";
 import { RoomBoard } from "./components/RoomBoard";
@@ -16,9 +16,10 @@ import { getRooms, getRoomOverrides, setRoomOverride } from "./data/rooms";
 import { getBookings, insertBooking, updateBookingIfUnchanged, decideBookingRefund } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
 
-import { PERMISSIONS, ROOMS_DEFAULT } from "./domain/constants";
+import { PERMISSIONS, ROOMS_DEFAULT, roomLabel } from "./domain/constants";
 import { todayStr, isSameDay, uid } from "./domain/dates";
-import { refundDueAmount } from "./domain/money";
+import { refundDueAmount, fmt } from "./domain/money";
+import { withBusy } from "./lib/busy";
 
 export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -194,6 +195,22 @@ export default function App() {
     return res;
   }
 
+  // قرار طلب رد الفلوس (من أي شاشة): "refund" = رد فعلي بيتخصم من اليومية، "keep" = رفض والفلوس تفضل متحصّلة
+  async function runRefund(b, decision, method) {
+    return withBusy(async () => {
+      const amount = refundDueAmount(b);
+      const res = await handleDecideRefund(b, decision, method);
+      if (res?.error) { showToast(res.error); return; }
+      if (decision === "keep") {
+        logActivity(`رفض رد فلوس - ${roomLabel(rooms, b.room)} - ${b.guestName} - ${fmt(amount)} ${b.currency} (الفلوس فضلت متحصّلة)`);
+        showToast("تم رفض الرد - الفلوس فضلت متحصّلة على الحجز");
+        return;
+      }
+      logActivity(`رد فلوس - ${roomLabel(rooms, b.room)} - ${b.guestName} - ${fmt(amount)} ${b.currency} (${method})`);
+      showToast(`تم رد ${fmt(res?.data?.amount ?? amount)} ${b.currency} - اتشالت من التحصيل واليومية`);
+    });
+  }
+
   async function handleSetup({ name, username, pw }) {
     const res = await signUpUser({ username, password: pw, name, role: "gm" });
     if (res.error) return { error: res.error };
@@ -230,17 +247,22 @@ export default function App() {
       <GlobalStyle />
       <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} />
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={perms.decideRefund ? { bookings: pendingRefunds.length } : {}} />
-      {perms.decideRefund && pendingRefunds.length > 0 && (
-        <div className="cx-no-print" data-testid="refund-banner" style={{ background: "#F4E7E2", color: "var(--rust)", padding: "8px 14px", fontSize: 12.5, fontWeight: 700, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <span>🔔 فيه {pendingRefunds.length} طلب رد فلوس منتظر قرارك (رد أو رفض)</span>
-          {activeTab !== "bookings" && <button className="cx-btn cx-btn-outline" style={{ padding: "3px 10px" }} onClick={() => setTab("bookings")}>افتح الحجوزات</button>}
+      {pendingRefunds.length > 0 && perms.tabs.includes("bookings") && activeTab !== "bookings" && (
+        <div className="cx-no-print" data-testid="refund-banner" style={{ background: "#F4E7E2", padding: "8px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ color: "var(--rust)", fontSize: 12.5, fontWeight: 700 }}>🔔 طلبات رد فلوس منتظرة ({pendingRefunds.length}){perms.decideRefund ? " - موافقة بضغطة واحدة" : " - مدير الحجوزات هو اللي بيوافق"}</div>
+          {pendingRefunds.map((b) => (
+            <div key={b.id} data-testid="refund-inbox-item" style={{ fontSize: 12.5 }}>
+              <div style={{ fontWeight: 700, marginBottom: 2 }}>{roomLabel(rooms, b.room)} · {b.guestName}</div>
+              <RefundBox b={b} canDecide={!!perms.decideRefund} onDecide={runRefund} />
+            </div>
+          ))}
         </div>
       )}
       {loadingData ? <LoadingScreen /> : (
         <>
-          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "ledger" && <DailyLedger rooms={rooms} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} overrides={overrides} onSaveOverride={handleSaveOverride} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDecideRefund={handleDecideRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
+          {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
           {activeTab === "activity" && <ActivityPanel activity={activity} />}
           {activeTab === "users" && <UsersPanel users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}

@@ -1,6 +1,6 @@
 // فورم الحجز بتفاصيله (تحقق، رسوم، أونلاين، تنضيف، بحث...) فوق قاعدة بيانات حقيقية.
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, openRoom } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -93,7 +93,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     await expect(toast(page)).toContainText("تم الحفظ");
     expect(await bk(env, "Early Bird")).toMatchObject({ total_room: 200, early_checkin: { applied: true, fee: 30, note: "وصل الفجر" } });
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 604).click();
+    await openRoom(page, 604);
     expect(digits(await roomCard(page).innerText())).toMatch(/المتبقي230USD/);
     await expect(roomCard(page)).toContainText("ملاحظة الدخول المبكر: وصل الفجر");
     await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
@@ -124,7 +124,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     expect(b.payment_details).not.toHaveProperty("commissionPct");
     await goTab(page, "لوحة الغرف");
     await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();
-    await boardTile(page, 605).click();
+    await openRoom(page, 605);
     await expect(roomCard(page)).toContainText("مدفوع أونلاين");
     expect(digits(await roomCard(page).innerText())).not.toMatch(/المتبقي\d/);
     await goTab(page, "التقارير");
@@ -181,9 +181,9 @@ test.describe("الرسوم وطرق الدفع", () => {
     expect(await bk(env, "Euro Guest")).toMatchObject({ currency: "EUR", total_room: 160 });
     expect(await bk(env, "Pound Guest")).toMatchObject({ currency: "EGP", total_room: 900 });
     await goTab(page, "لوحة الغرف");
-    await boardTile(page, 608).click();
+    await openRoom(page, 608);
     expect(digits(await roomCard(page).innerText())).toContain("160EUR");
-    await boardTile(page, 609).click();
+    await openRoom(page, 609);
     expect(digits(await roomCard(page).innerText())).toContain("900EGP");
     // تحصيل بعملة الحجز: الصف في اليومية بعملة الحجز
     await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
@@ -199,7 +199,7 @@ test.describe("البحث والتصفية في قائمة الحجوزات", ()
     await env.seedBooking({ room: 601, guest: "Ali Hassan", start: 0, nights: 2 });
     await env.seedBooking({ room: 602, guest: "Mona Salem", start: 10, nights: 2 });
     await env.seedBooking({ room: 603, guest: "Omar Fathy", start: -20, nights: 2 });
-    await env.q("update bookings set code = 'ABC-123' where guest_name = 'Omar Fathy'");
+    await env.qRaw("update bookings set code = 'ABC-123' where guest_name = 'Omar Fathy'");
     await page.goto("/");
     await login(page, "rawan");
     await goTab(page, "الحجوزات");

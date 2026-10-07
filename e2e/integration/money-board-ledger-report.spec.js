@@ -1,5 +1,5 @@
 import { test, expect } from "../fixtures";
-import { login, logout, claimShift, addBooking, goTab, boardTile, roomCard, toast, refresh, digits, shiftDay, myShiftKey, cairoDate } from "../ui";
+import { login, logout, claimShift, addBooking, goTab, boardTile, roomCard, toast, refresh, digits, shiftDay, myShiftKey, cairoDate, openRoom } from "../ui";
 
 async function seed(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -21,7 +21,7 @@ test("تحصيل كامل من لوحة الغرف: الحجز + اليومية 
   // لوحة الغرف: الغرفة حمراء (متبقي فلوس)
   await goTab(page, "لوحة الغرف");
   await expect(page.getByText(/مشغولة - متبقي فلوس 1/)).toBeVisible();
-  await boardTile(page, 601).click();
+  await openRoom(page, 601);
   const card = roomCard(page);
   await expect(card).toContainText("Guest One");
   await card.getByTestId("collect-method").selectOption("فيزا");

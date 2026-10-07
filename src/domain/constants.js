@@ -52,12 +52,12 @@ export const BOOKING_STATUSES = ["مؤكد", "تم تسجيل الدخول", "ت
    "متاحة" تلقائيًا لوحدها من حساب الحجوزات لحظة ما معندهاش حجز نشط أو قادم،
    فمكنش له أي استخدام حقيقي يفرق عن الوضع التلقائي. */
 export const MANUAL_STATUS_OPTIONS = [
-  { key: "auto", label: "تلقائي حسب الحجوزات" },
-  { key: "early_checkout", label: "غادر مبكرًا" },
+  { key: "auto", label: "رجّع الحالة التلقائية" },
   { key: "maintenance", label: "صيانة" },
   { key: "cleaning", label: "تحت التنظيف" },
 ];
-export const STAFF_ALLOWED_ON_ACTIVE_BOOKING = ["early_checkout"];
+// "غادر مبكرًا" مابقتش حالة يدوية: بتتحسب لوحدها من الحجز (زرار "غادر مبكرًا" في بطاقة الغرفة بيقصّر الإقامة).
+export const STATUS_LABELS = { auto: "تلقائي", maintenance: "صيانة", cleaning: "تحت التنظيف", early_checkout: "غادر مبكرًا" };
 
 /* لون "مشغولة - متبقي فلوس" لازم يكون واضح وبارز ومختلف تمامًا عن باقي
    الألوان (دي أهم حالة تحتاج متابعة فورية - فيه فلوس متأخرة على نزيل).
