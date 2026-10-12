@@ -520,8 +520,12 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
     if (res.error) { showToast(res.error); return; }
     setHistRecord(res.data);
     onLog(`إعادة فتح شيفت ${SHIFTS.find((s) => s.key === histShift)?.label} ليوم ${histDate} (كان مقفول بواسطة ${histRecord.closedBy || "—"})`);
-    showToast("تم إعادة فتح الشيفت - الموظف يقدر يكمل فيه تاني");
+    showToast(staffCanContinue(histDate, histShift)
+      ? "تم إعادة فتح الشيفت - الموظف يقدر يكمل فيه تاني"
+      : "تم إعادة فتح الشيفت، لكن وقته (وهامش الأوفر تايم) انتهى - هيتقفل تاني تلقائيًا أول ما الموظف يفتح اليومية. لتصحيح الأرقام: المدير العام أو الحسابات يعدّلوا اليومية المقفولة مباشرة");
   }
+  // الموظف يقدر يكمل في شيفت اتفتح تاني بس لو الشيفت لسه في وقته (أو في هامش الأوفر تايم)؛ غير كده بيتقفل تلقائيًا عند فتح اليومية
+  function staffCanContinue(date, shiftKey) { return date === shiftDayNow() && isShiftActiveNow(shiftKey); }
 
   // سجل الشيفت اللي هيظهر فعليًا في ترويسة الطباعة - شيفتي النهارده في وضع
   // "live"، أو الشيفت المحدد في وضع "history".
@@ -599,7 +603,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
                       <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={reopenHistoryShift}><LockOpen size={13} /> إعادة فتح الشيفت</button>
                     </>
                   ) : (
-                    <span style={{ fontSize: 12, color: "var(--sage)" }}><Unlock size={12} style={{ verticalAlign: -1 }} /> الشيفت ده مفتوح لسه (أو اتفتح تاني) - الموظف يقدر يكمل فيه</span>
+                    <span style={{ fontSize: 12, color: "var(--sage)" }}><Unlock size={12} style={{ verticalAlign: -1 }} /> {staffCanContinue(histDate, histShift) ? "الشيفت ده مفتوح لسه (أو اتفتح تاني) - الموظف يقدر يكمل فيه" : "الشيفت ده مفتوح لكن وقته انتهى - هيتقفل تلقائيًا أول ما الموظف يفتح اليومية"}</span>
                   )}
                 </div>
               )}
