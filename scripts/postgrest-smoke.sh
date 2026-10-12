@@ -48,3 +48,7 @@ node "$W/gw.mjs" & GW_PID=$!
 trap 'kill $PG_PID $GW_PID 2>/dev/null || true; psql "$E2E_PG_ADMIN_URL" -qc "drop database if exists $DB with (force)" || true' EXIT
 for i in $(seq 1 30); do curl -s localhost:3000/ >/dev/null 2>&1 && break; sleep 1; done
 node scripts/postgrest-smoke.mjs
+# فحص التطابق بعد السيناريو: لازم مفيش ولا صف "خطأ" (supabase/ops/reconcile.sql)
+BAD="$(psql "$U" -At -f supabase/ops/reconcile.sql | grep '^خطأ' || true)"
+if [ -n "$BAD" ]; then echo "FAIL reconcile:"; echo "$BAD"; exit 1; fi
+echo "PASS reconcile: الفلوس متطابقة بعد السيناريو"
