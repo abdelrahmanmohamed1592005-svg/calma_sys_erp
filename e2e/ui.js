@@ -112,7 +112,11 @@ export async function openSec(page, id) {
 // فتح بطاقة الغرفة (من اللوحة) مع فتح كل أقسامها المطوية
 export async function openRoom(page, room) {
   await boardTile(page, room).click();
-  await page.evaluate(() => document.querySelectorAll('[data-testid="booking-card"] details').forEach((d) => { d.open = true; }));
+  // الأقسام ممكن تظهر متأخر شوية (بوابة الشيفت بتتحمّل بعد فتح الغرفة) فبنفتحها كذا مرة قصيرة
+  for (let i = 0; i < 5; i++) {
+    await page.evaluate(() => document.querySelectorAll('[data-testid="booking-card"] details').forEach((d) => { d.open = true; }));
+    await page.waitForTimeout(120);
+  }
 }
 
 // "خيارات إضافية" في فورم الحجز مطوية: بنفتحها قبل التعامل مع الرسوم/الدخول المبكر/الأونلاين/جهة الحجز/الحالة/الملاحظات

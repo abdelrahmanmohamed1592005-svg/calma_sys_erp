@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
+import { fetchAll } from "./page";
 import { uid } from "../domain/dates";
 
 /* كافيتيريا الاستاف: استهلاك موظفين (مشروبات/أكل) من الكافيتيريا، مين دفع ومين
@@ -17,7 +18,7 @@ export const staffOwed = (e) => Math.max(0, (Number(e.amount) || 0) - (Number(e.
 
 /* كل استهلاك الاستاف (الأحدث أولاً). بترجّع null لو القراءة فشلت (مش قايمة فاضية مضلّلة). */
 export async function listStaffCafeteria() {
-  const { data, error } = await supabase.from("staff_cafeteria").select("*").order("created_at", { ascending: false });
+  const { data, error } = await fetchAll(() => supabase.from("staff_cafeteria").select("*", { count: "exact" }).order("created_at", { ascending: false }).order("id"));
   if (error || !data) return null;
   return data.map(fromRow);
 }

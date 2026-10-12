@@ -29,3 +29,4 @@ yarn-error.log*
 # ناتج اختبارات المتصفح
 test-results
 playwright-report
+video-out/

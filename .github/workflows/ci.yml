@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/calma_test
+      E2E_PG_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: http://fake-supabase.test
+          VITE_SUPABASE_ANON_KEY: fake-anon-key
+      - name: Database tests (real Postgres)
+        run: |
+          createdb -h localhost -U postgres calma_test
+          npm run test:db
+      - name: Randomized simulation + concurrency + permission matrix (real Postgres)
+        run: npm run test:sim
+        env:
+          SIM_SEEDS: "12"
+          SIM_OPS: "150"
+      - name: Real API path (supabase-js -> PostgREST -> Postgres, real JWT)
+        run: npm run test:api
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Browser + real-database integration tests
+        run: npx playwright test --workers=2
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results
+          retention-days: 7

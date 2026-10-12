@@ -13,7 +13,8 @@ async function users(env) {
 const ORDER = ["morning", "evening", "night"];
 const prevOf = (day, key) => { const i = ORDER.indexOf(key); if (i > 0) return { day, key: ORDER[i - 1] }; const d = new Date(day + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - 1); return { day: d.toISOString().slice(0, 10), key: "night" }; };
 const roomRow = (page, num) => page.locator("table.cx-table tbody tr", { hasText: String(num) }).first();
-const cafeRow = (page) => page.locator("table.cx-table tbody tr", { hasText: "كافيتيريا" }).last();
+// مبيعات/مصاريف الكافيتيريا المباشرة بقت في قسم الكافيتيريا (مش صف في جدول الغرف)
+const cafeRow = (page) => page.getByTestId("cafeteria-direct");
 const ledger = async (env) => (await env.q("select * from shift_records where staff_username = 'ahmed'"))[0];
 const waitSaved = async (page) => { await page.waitForFunction(() => !window.__calmaPendingWrites && !window.__calmaBusyCount, null, { timeout: 15000 }); await page.waitForTimeout(150); };   // استنى الكتابة المعلّقة تتبعت (مش وقت ثابت)
 // بلوك العملة/الوسيلة في ملخص اليومية (أعمق div فيه العنوان بالظبط)

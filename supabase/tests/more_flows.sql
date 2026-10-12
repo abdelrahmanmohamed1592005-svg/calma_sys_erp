@@ -15,7 +15,7 @@ select t.pass('C13 تقصير نص المدة (الإجمالي ١٨٠ بمتو�
 select t.reject('C13 بسعر الليلة الاسمي (٢٠٠) بعد التقصير مرفوض (موظف الشيفت مايغيّرش إجمالي الغرفة بقيمة تانية)', t.upd('st1', 'C13', 'total_room = 200'), 'تعديل بيانات الحجز الأساسية');
 select t.pass('D3 حجز جديد', t.ins('st1', 'D3', 608, 5, 6, 100, 100, 0, false));
 select t.pass('D3 رسوم إضافية جولات ٢٠', t.upd('st1', 'D3', 'extras = ''{"laundry":0,"cafeteria":0,"tours":20,"pickup":0}''::jsonb'));
-select t.pass('D3 تحصيل الإجمالي كله ١٢٠', t.upd('st1', 'D3', 'amount_paid = 120, settled = true'));
+select t.pass('D3 تحصيل الإجمالي كله ١٢٠', t.maint('D3', 'amount_paid = 120'));
 select t.pass('D3 يتلغي', t.upd('res1', 'D3', 'status = ''ملغي'''));
 select t.pass('D3 رد كل المدفوع', t.decide('res1', 'D3', 'refund'));
 select t.eqn('D3 المردود ١٢٠ (غرفة + رسوم)', (current_setting('t.last_decision')::jsonb ->> 'amount')::numeric, 120);

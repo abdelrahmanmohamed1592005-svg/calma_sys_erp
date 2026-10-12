@@ -9,7 +9,7 @@
   وفي الآخر التقرير ولوحة الغرف بيطابقوا القاعدة.
 */
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom, payOnBoard } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom, payOnBoard, waitIdle } from "../ui";
 
 const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const ROOMS = [601, 602, 603, 604];
@@ -24,12 +24,18 @@ async function snapshot(env) {
   const recs = await env.q("select rows, cafeteria_rows from shift_records");
   const sumUsd = (list) => list.reduce((a, x) => a + (x.collectionCurrency === "USD" ? Number(x.collectionAmt) || 0 : 0), 0);
   const ledger = recs.reduce((s, r) => s + sumUsd(r.rows) + sumUsd(r.cafeteria_rows || []), 0);
-  return { bookings, ledger };
+  // كافيتيريا الاستاف (بالجنيه): اللي اتسدّد فعلاً لازم يساوي اللي دخل اليومية (صفوف الكافيتيريا kind=staff)
+  const staffRows = await env.q("select amount, paid_amount from staff_cafeteria");
+  const staffPaid = staffRows.reduce((a, x) => a + Number(x.paid_amount), 0);
+  const staffLedger = recs.reduce((s, r) => s + (r.cafeteria_rows || []).filter((x) => x.kind === "staff" && x.collectionCurrency === "EGP").reduce((a, x) => a + Number(x.collectionAmt || 0), 0), 0);
+  return { bookings, ledger, staffRows, staffPaid, staffLedger };
 }
 async function checkInvariants(env, label) {
-  const { bookings, ledger } = await snapshot(env);
+  const { bookings, ledger, staffRows, staffPaid, staffLedger } = await snapshot(env);
   const paidSum = bookings.reduce((s, b) => s + Number(b.amount_paid), 0);
   expect(ledger, `${label}: صافي اليومية = مجموع المدفوع`).toBeCloseTo(paidSum, 2);
+  expect(staffLedger, `${label}: سداد الاستاف في اليومية = المدفوع على استهلاكهم`).toBeCloseTo(staffPaid, 2);
+  for (const e of staffRows) expect(Number(e.paid_amount), `${label}: مدفوع الاستاف مايزيدش عن المبلغ`).toBeLessThanOrEqual(Number(e.amount) + 0.005);
   for (const b of bookings) {
     expect(Number(b.amount_paid), `${label}: مدفوع غير سالب (${b.guest_name})`).toBeGreaterThanOrEqual(0);
     if (b.settled && !isOnline(b)) expect(Number(b.amount_paid), `${label}: متحصّل لازم يكون مغطّى (${b.guest_name})`).toBeGreaterThanOrEqual(grand(b) - 0.005);
@@ -137,6 +143,31 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         await roomCard(staff).getByRole("button", { name: /تمديد الحجز/ }).click();
         await expect(toast(staff)).toContainText(blocked ? /محجوزة لحد تاني|مدير الحجوزات ضايف/ : "تم تمديد الحجز");
       },
+      async staffAdd() {
+        const mode = pick(["later", "كاش", "فيزا", "later"]);
+        log.push(`staffAdd ${mode}`);
+        await goTab(staff, "اليومية");
+        await staff.getByTestId("staff-cafe-who").selectOption(pick(["ahmed", "rawan", "boss"]));
+        await staff.getByTestId("staff-cafe-amount").fill(String(pick([10, 25, 40])));
+        if (mode !== "later") await staff.getByTestId("staff-cafe-paymode").selectOption(mode);
+        if (mode === "فيزا") await staff.getByTestId("staff-cafe-last4").fill("4242");
+        await staff.getByTestId("staff-cafe-add").click();
+        await waitIdle(staff);
+        await expect(toast(staff)).toContainText("تم تسجيل الاستهلاك");
+      },
+      async staffSettle() {
+        const n = await staff.getByTestId("staff-cafe-balance").count();
+        if (!n) return false;
+        log.push("staffSettle");
+        await goTab(staff, "اليومية");
+        await staff.getByTestId("staff-cafe-balance").first().getByTestId("staff-cafe-settle-open").click();
+        const m = pick(["كاش", "فيزا"]);
+        await staff.getByTestId("staff-cafe-pay-method").selectOption(m);
+        if (m === "فيزا") await staff.getByTestId("staff-cafe-pay-last4").fill("1717");
+        if (rnd() < 0.5) await staff.getByTestId("staff-cafe-pay-amount").fill("7");
+        await staff.getByTestId("staff-cafe-pay-go").click();
+        await waitIdle(staff);
+      },
       async cancel() {
         const { bookings } = await snapshot(env);
         const c = bookings.filter((b) => b.status !== "ملغي");
@@ -179,7 +210,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
 
     // البداية: كام حجز عشان العمليات تلاقي حاجة تشتغل عليها
     for (let i = 0; i < 3; i++) { await ops.add(); await sync(); await checkInvariants(env, `بداية ${i}`); }
-    const weights = [["add", 3], ["collect", 3], ["extend", 2], ["cancel", 1], ["decide", 3], ["shorten", 2], ["earlyCheckin", 2], ["earlyLeave", 2], ["addOnline", 1]];
+    const weights = [["add", 3], ["collect", 3], ["extend", 2], ["cancel", 1], ["decide", 3], ["shorten", 2], ["earlyCheckin", 2], ["earlyLeave", 2], ["addOnline", 1], ["staffAdd", 2], ["staffSettle", 2]];
     const bag = weights.flatMap(([k, w]) => Array(w).fill(k));
     for (let step = 0; step < 20; step++) {
       const op = pick(bag);
@@ -190,11 +221,15 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
     }
 
     // ---- النهاية: التقرير ولوحة الغرف بيطابقوا قاعدة البيانات ----
-    const { bookings, ledger } = await snapshot(env);
+    const { bookings, ledger, staffLedger } = await snapshot(env);
     await goTab(res, "التقارير");
     const card = res.locator(".cx-report-grid .cx-card", { hasText: "إجمالي التحصيل" }).first();
     const shown = digits(await card.innerText()).replace("إجماليالتحصيل", "");
-    expect(shown, `التقرير (${log.join(" | ")})`).toBe(ledger === 0 ? "0" : `${ledger}$`);
+    // التقرير بيجمع كل العملات: الجنيه (سداد الاستاف) الأول ثم الدولار (الحجوزات)
+    const parts = [];
+    if (staffLedger !== 0) parts.push(`${staffLedger}ج`);
+    if (ledger !== 0) parts.push(`${ledger}$`);
+    expect(shown, `التقرير (${log.join(" | ")})`).toBe(parts.length ? parts.join("+") : "0");
     await goTab(res, "لوحة الغرف");
     const live = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout);
     const rooms = new Set(live.map((b) => b.room));

@@ -42,6 +42,30 @@ test("مدير الحجوزات بيعدّل حجز والموظف حصّله ف
   expect(b).toMatchObject({ guest_name: "Renamed By Manager", amount_paid: 200, settled: true });
 });
 
+test("مدير الحجوزات بيعدّل الاسم وحد تاني مدّد الحجز في نفس اللحظة: الاتنين بيفضلوا (الحفظة التانية ما بترجّعش التمديد)", async ({ page, env }) => {
+  await users(env);
+  const id = await env.seedBooking({ room: 601, guest: "Extend Guest", nights: 2, price: 100 });
+  await page.goto("/");
+  await login(page, "rawan");
+  await goTab(page, "الحجوزات");
+  await page.locator(".cx-card", { hasText: "Extend Guest" }).last().locator("button").first().click();
+  await field(page, "اسم النزيل").fill("Renamed While Extended");
+  const [orig] = await env.q("select checkout::text c from bookings where id = $1", [id]);
+  // حد تاني مدّد الحجز يومين (الخروج + إجمالي الغرفة) من غير ما الفورم يعرف
+  await env.q("update bookings set checkout = checkout + 2, total_room = total_room + 200 where id = $1", [id]);
+  await page.getByRole("button", { name: /حفظ الحجز/ }).click();
+  await expect(toast(page)).toContainText(/اتحدّث/);
+  let [b] = await env.q("select guest_name, checkout::text c, total_room::float t from bookings where id = $1", [id]);
+  expect(b).toMatchObject({ guest_name: "Extend Guest", t: 400 });          // الحفظة الأولى ما كتبتش حاجة
+  const save = page.getByRole("button", { name: /حفظ الحجز/ });
+  for (let i = 0; i < 4 && (await save.isVisible().catch(() => false)); i++) { await save.click(); await page.waitForTimeout(500); }
+  await expect(toast(page)).toContainText("تم الحفظ");
+  [b] = await env.q("select guest_name, checkout::text c, total_room::float t from bookings where id = $1", [id]);
+  expect(b.guest_name).toBe("Renamed While Extended");
+  expect(b.t).toBe(400);                         // التمديد فضل
+  expect(b.c).not.toBe(orig.c);
+});
+
 test("موظفين يختاروا نفس الشيفت في نفس اللحظة: واحد بس ياخده والتاني بيتنبّه", async ({ page, env }) => {
   await users(env);
   await page.goto("/");

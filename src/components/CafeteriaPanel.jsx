@@ -1,10 +1,10 @@
 import React, { useState } from "react";
 import { Plus, Check } from "lucide-react";
 import { PaymentDetailsInline } from "./shared";
-import { COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstanding, fmt } from "../domain/money";
+import { COMMON_CURRENCIES, PAYMENT_METHODS, EXPENSE_CATEGORIES, methodOptionsFor, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstanding, fmt } from "../domain/money";
 import { roomLabel } from "../domain/constants";
-import { insertStaffCafeteria, payStaffCafeteria, staffOwed } from "../data/staffCafeteria";
-import { appendStaffCafeteriaCollection } from "../data/shifts";
+import { staffOwed } from "../data/staffCafeteria";
+import { recordStaffCafeteria, settleStaffCafeteria } from "../data/payments";
 import { sanitizeText } from "../domain/security";
 import { guarded } from "../lib/busy";
 
@@ -13,7 +13,7 @@ const keyOf = (name, username) => (username || String(name || "").trim().toLower
 
 /* تحصيل الكافيتيريا التلقائي (خدمات نزلاء اتحصّلت + سداد استاف) + خدمات
    النزلاء اللي لسه عليهم فلوس + كافيتيريا الاستاف (مين أخد ومين دفع ومين عليه فلوس). */
-export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, profile, profiles, staffEntries, onReload, flushNow, onRecordUpdated, onLog, showToast }) {
+export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, locked, readOnly, profile, profiles, staffEntries, onReload, flushNow, reloadRecord, onLog, showToast }) {
   const rows = (record.cafeteriaRows || []).filter((r) => (Number(r.collectionAmt) || 0) !== 0);
   const guestOutstanding = (bookings || []).filter((b) => b.status !== "ملغي" && cafeteriaOutstanding(b) > 0);
   const entries = staffEntries || [];
@@ -37,16 +37,6 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
     const p = staffList.find((x) => x.username === who);
     return p ? { name: p.name || p.username, username: p.username } : { name: "", username: null };
   }
-  // السداد بيتسجّل في صف الكافيتيريا في يومية الشيفت (بوسيلته وتفاصيلها)
-  async function ledgerFor(consumer, amountPaid, cur, m, det) {
-    await flushNow();
-    const res = await appendStaffCafeteriaCollection(record.date, record.shiftKey, profile, rooms, {
-      consumerKey: keyOf(consumer.consumerName, consumer.consumerUsername), who: consumer.consumerName, amount: amountPaid, currency: cur, method: m, details: det, note: "كافيتيريا استاف",
-    });
-    if (res.error) { showToast("⚠ السداد اتسجّل على الاستاف لكن تعذر تسجيله في اليومية: " + res.error); return; }
-    onRecordUpdated(res.data);
-  }
-
   async function addConsumption() {
     return guarded("staff-cafe-add", async () => {
       const c = resolveConsumer();
@@ -55,15 +45,16 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
       if (!(amt > 0)) { showToast("اكتب مبلغ الاستهلاك (أكبر من صفر)"); return; }
       if (payMode === "pay") { const err = validatePaymentDetailsFor(method, details); if (err) { showToast(err); return; } }
       const det = cleanPaymentDetailsFor(method, details);
-      const res = await insertStaffCafeteria({
-        day: record.date, shiftKey: record.shiftKey, consumerUsername: c.username, consumerName: c.name, description: sanitizeText(desc, 300), amount: amt, currency,
-        paid: payMode === "pay" ? { amount: amt, method, details: det, day: record.date, shiftKey: record.shiftKey } : null,
+      await flushNow();
+      const res = await recordStaffCafeteria({
+        name: c.name, username: c.username, description: sanitizeText(desc, 300), amount: amt, currency,
+        method: payMode === "pay" ? method : null, details: payMode === "pay" ? det : null,
       });
       if (res.error) { showToast(res.error); return; }
       onLog(`كافيتيريا استاف - ${c.name}: ${fmt(amt)} ${currency}${payMode === "pay" ? ` (دفع ${method})` : " (آجل - عليه فلوس)"}`);
       const wasPay = payMode === "pay";
       setDesc(""); setAmount(""); setDetails(emptyPaymentDetails()); setPayMode("later"); setMethod("كاش");
-      if (wasPay) await ledgerFor({ consumerName: c.name, consumerUsername: c.username }, amt, currency, method, det);
+      await reloadRecord();
       await onReload();
       showToast(wasPay ? "تم تسجيل الاستهلاك والسداد" : `تم تسجيل الاستهلاك - ${c.name} عليه ${fmt(amt)} ${currency}`);
     });
@@ -86,25 +77,21 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
       if (amt > owed) { showToast(`المبلغ أكبر من المديونية (${fmt(owed)} ${g.currency})`); return; }
       const err = validatePaymentDetailsFor(payMethod, payDetails); if (err) { showToast(err); return; }
       const det = cleanPaymentDetailsFor(payMethod, payDetails);
-      let left = amt;
-      const oldestFirst = [...g.entries].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-      for (const e of oldestFirst) {
-        if (left <= 0) break;
-        const part = Math.min(left, staffOwed(e));
-        const r = await payStaffCafeteria(e, { amount: part, method: payMethod, details: det, day: record.date, shiftKey: record.shiftKey });
-        if (r.error || r.conflict) { showToast(r.error || "السجل اتعدّل من مكان تاني - حدّث وجرّب تاني"); await onReload(); return; }
-        left -= part;
-      }
+      await flushNow();
+      const r = await settleStaffCafeteria({ name: g.name, username: g.username, currency: g.currency, amount: amt, method: payMethod, details: det });
+      if (r.error) { showToast(r.error); await onReload(); return; }
       onLog(`سداد كافيتيريا استاف - ${g.name}: ${fmt(amt)} ${g.currency} (${payMethod})`);
       const usedMethod = payMethod;
       setPayFor(null); setPayAmt(""); setPayMethod("كاش"); setPayDetails(emptyPaymentDetails());
-      await ledgerFor({ consumerName: g.name, consumerUsername: g.username }, amt, g.currency, usedMethod, det);
+      await reloadRecord();
       await onReload();
       showToast(`تم تسجيل سداد ${fmt(amt)} ${g.currency} من ${g.name}${amt < owed ? ` - لسه عليه ${fmt(owed - amt)}` : " - مفيش عليه حاجة"}`);
     });
   }
 
-  const hasAnything = rows.length > 0 || guestOutstanding.length > 0 || open.length > 0 || thisShift.length > 0 || canWrite;
+  const dc = record.cafeteria || {};
+  const directHasData = (Number(dc.expenseAmt) || 0) !== 0 || (Number(dc.collectionAmt) || 0) !== 0 || !!dc.expenseDesc || !!dc.collectionDesc || !!dc.notes;
+  const hasAnything = directHasData || rows.length > 0 || guestOutstanding.length > 0 || open.length > 0 || thisShift.length > 0 || canWrite;
   if (!hasAnything) return null;
 
   return (
@@ -112,6 +99,35 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
       <div style={{ fontWeight: 800, marginBottom: 2 }}>الكافيتيريا</div>
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>خدمات الكافيتيريا اللي بتتحصّل من النزلاء وسداد الاستاف بيتسجّلوا هنا لوحدهم بوسيلة الدفع وتفاصيلها، وبيدخلوا إجمالي اليومية وعهدة الفيزا والتقرير.</div>
 
+
+      {(canWrite || directHasData) && (
+        <div data-testid="cafeteria-direct" style={{ marginBottom: 12, paddingBottom: 10, borderBottom: "1px dashed var(--hair)" }}>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>مبيعات ومصاريف الكافيتيريا المباشرة</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>اللي بيتباع في الكافيتيريا لنزيل خارجي أو بيتصرف عليها (خامات...) - مش المرتبط بحجز ولا باستاف.</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>مصروف</div>
+              <select className="cx-select" style={{ fontSize: 11 }} disabled={!canWrite} value={dc.expenseCategory || "أخرى"} onChange={(e) => onUpdateCafeteria({ expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              <input className="cx-input" placeholder="البيان" disabled={!canWrite} value={dc.expenseDesc || ""} onChange={(e) => onUpdateCafeteria({ expenseDesc: e.target.value })} />
+              <div style={{ display: "flex", gap: 3 }}>
+                <input className="cx-input" type="number" placeholder="المبلغ" disabled={!canWrite} value={dc.expenseAmt ?? ""} onChange={(e) => onUpdateCafeteria({ expenseAmt: e.target.value })} style={{ flex: 1 }} />
+                <select className="cx-select" disabled={!canWrite} value={dc.expenseCurrency || "EGP"} onChange={(e) => onUpdateCafeteria({ expenseCurrency: e.target.value })} style={{ width: 72, fontSize: 12 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>تحصيل (مبيعات)</div>
+              <select className="cx-select" disabled={!canWrite} value={dc.collectionMethod || "كاش"} onChange={(e) => onUpdateCafeteria({ collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(dc.collectionMethod || "كاش").map((m) => <option key={m} value={m}>{m}</option>)}</select>
+              <input className="cx-input" placeholder="بيان التحصيل" disabled={!canWrite} value={dc.collectionDesc || ""} onChange={(e) => onUpdateCafeteria({ collectionDesc: e.target.value })} />
+              <div style={{ display: "flex", gap: 3 }}>
+                <input className="cx-input" type="number" placeholder="المبلغ" disabled={!canWrite} value={dc.collectionAmt ?? ""} onChange={(e) => onUpdateCafeteria({ collectionAmt: e.target.value })} style={{ flex: 1 }} />
+                <select className="cx-select" disabled={!canWrite} value={dc.collectionCurrency || "EGP"} onChange={(e) => onUpdateCafeteria({ collectionCurrency: e.target.value })} style={{ width: 72, fontSize: 12 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              </div>
+              <PaymentDetailsInline compact={false} testid="cafe-direct" method={dc.collectionMethod || "كاش"} details={dc.paymentDetails} disabled={!canWrite} onChange={(d) => onUpdateCafeteria({ paymentDetails: d })} />
+            </div>
+          </div>
+          <input className="cx-input" placeholder="ملاحظات الكافيتيريا" disabled={!canWrite} value={dc.notes || ""} onChange={(e) => onUpdateCafeteria({ notes: e.target.value })} style={{ marginTop: 6 }} />
+        </div>
+      )}
       {rows.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 10 }}>
           <table className="cx-table" data-testid="cafeteria-rows" style={{ fontSize: 12, minWidth: 620 }}>
@@ -140,7 +156,7 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
 
       <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>كافيتيريا الاستاف</div>
       {canWrite && (
-        <div data-testid="staff-cafe-form" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 }}>
+        <div data-testid="staff-cafe-form" className="cx-no-print" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 }}>
           <select className="cx-select" data-testid="staff-cafe-who" style={{ width: 150 }} value={who} onChange={(e) => setWho(e.target.value)}>
             <option value="">مين أخد؟</option>
             {staffList.map((p) => <option key={p.username} value={p.username}>{p.name || p.username}</option>)}
@@ -181,11 +197,11 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
                   <span><b>{g.name}</b> <span style={{ color: "var(--muted)", fontSize: 11 }}>({g.entries.length} استهلاك: {g.entries.map((e) => e.description || e.day).slice(0, 3).join("، ")})</span></span>
                   <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <b style={{ color: "var(--rust)" }}>{fmt(owed)} {g.currency}</b>
-                    {canWrite && <button className="cx-btn cx-btn-outline" data-testid="staff-cafe-settle-open" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => { setPayFor(payFor === k ? null : k); setPayAmt(""); }}>تسديد</button>}
+                    {canWrite && <button className="cx-btn cx-btn-outline cx-no-print" data-testid="staff-cafe-settle-open" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => { setPayFor(payFor === k ? null : k); setPayAmt(""); }}>تسديد</button>}
                   </span>
                 </div>
                 {payFor === k && canWrite && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start", marginTop: 6 }}>
+                  <div className="cx-no-print" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start", marginTop: 6 }}>
                     <input className="cx-input" data-testid="staff-cafe-pay-amount" type="number" min="0" style={{ width: 110 }} placeholder={`المبلغ (${fmt(owed)})`} value={payAmt} onChange={(e) => setPayAmt(e.target.value)} />
                     <select className="cx-select" data-testid="staff-cafe-pay-method" style={{ width: 140 }} value={payMethod} onChange={(e) => { setPayMethod(e.target.value); setPayDetails(emptyPaymentDetails()); }}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
                     <PaymentDetailsInline compact={false} testid="staff-cafe-pay" method={payMethod} details={payDetails} onChange={setPayDetails} />

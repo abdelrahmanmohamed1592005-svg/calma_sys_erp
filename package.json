@@ -10,7 +10,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:db": "bash supabase/tests/run.sh"
+    "test:db": "bash supabase/tests/run.sh",
+    "test:video": "playwright test -c playwright.video.config.js",
+    "test:api": "bash scripts/postgrest-smoke.sh",
+    "test:sim": "vitest run -c vitest.sim.config.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

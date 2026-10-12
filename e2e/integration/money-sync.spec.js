@@ -232,7 +232,7 @@ test.describe("الدخول المبكر", () => {
 
   test("حجز أونلاين: رسم الدخول المبكر والخدمات بيتحصّلوا في الفندق وبيدخلوا اليومية والتقرير (مش بيضيعوا)، وسعر الغرفة مش بيتعدّ مرتين", async ({ page, env }) => {
     await users(env);
-    await env.seedBooking({ room: 607, guest: "Booking Dot Com", nights: 2, price: 100, payment_details: { senderName: "", senderNumber: "", ref: "BK-1", onlinePaid: true } });
+    await env.seedBooking({ anchor: "shift", room: 607, guest: "Booking Dot Com", nights: 2, price: 100, payment_details: { senderName: "", senderNumber: "", ref: "BK-1", onlinePaid: true } });
     await env.seedShift("ahmed");
     await page.goto("/");
     await login(page, "ahmed");

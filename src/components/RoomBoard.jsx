@@ -4,9 +4,10 @@ import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGran
 import { todayStr, shiftDayNow, nightsBetween, addDays, uid } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
-import { getShiftRecord, appendBookingCollection } from "../data/shifts";
+import { getShiftRecord, getBookingPayments } from "../data/shifts";
+import { recordBookingPayment } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline } from "./shared";
+import { GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
@@ -22,7 +23,7 @@ function Sec({ id, title, children, badge }) {
   );
 }
 
-export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOverride, onUpdateBooking, onEditBooking, onDecideRefund, onLog, showToast, dataVersion }) {
+export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOverride, onUpdateBooking, onRefresh, onEditBooking, onDecideRefund, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [extrasDraft, setExtrasDraft] = useState(null);
@@ -38,6 +39,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   const [ecNote, setEcNote] = useState("");
   const [ecCollect, setEcCollect] = useState(true);
   const [codesDraft, setCodesDraft] = useState([]);
+  const [payBreakdown, setPayBreakdown] = useState(null);
   const date = todayStr();
   const room = rooms.find((r) => r.number === selected);
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date) : null;
@@ -46,6 +48,16 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   useEffect(() => { setPay({ amount: "", method: "كاش", details: emptyPaymentDetails() }); }, [selected, status?.booking?.id]);
   useEffect(() => { setExtendNights(1); setEcFee(""); setEcNote(""); setEcCollect(true); setEpay({ method: "كاش", details: emptyPaymentDetails() }); }, [selected, status?.booking?.id]);
   useEffect(() => { if (status?.booking) setCodesDraft(normalizeGuestCodes(status.booking.guestCodes, status.booking.pax)); else setCodesDraft([]); }, [selected, status?.booking?.id, status?.booking?.pax, JSON.stringify(status?.booking?.guestCodes || [])]);
+
+  // المدفوع على الحجز مقسّم بالوسيلة (من اليومية) - بيتحدّث مع أي تحصيل/رد
+  useEffect(() => {
+    const bk = status?.booking;
+    if (!bk) { setPayBreakdown(null); return undefined; }
+    let cancelled = false;
+    (async () => { const r = await getBookingPayments(bk); if (!cancelled) setPayBreakdown(r); })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.booking?.id, status?.booking?.amountPaid, dataVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,25 +109,22 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     const detailsErr = validatePaymentDetailsFor(pay.method, pay.details);
     if (detailsErr) { showToast(detailsErr); return; }
     if (!myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - التحصيل لازم يتسجّل في يومية شيفتك"); return; }
-    const details = cleanPaymentDetailsFor(pay.method, pay.details);
     const method = pay.method;
+    const rawDetails = pay.details;
     // الخانات بتتصفّر فورًا (القيم اتحفظت فوق) عشان اللي بيتكتب بعد كده مايضيعش وقت الحفظ
     setPay({ amount: "", method: "كاش", details: emptyPaymentDetails() });
-    const split = splitPaymentForCafeteria(booking, amount);
-    const extras = split.cafeteria > 0 ? { ...(booking.extras || {}), cafeteriaPaid: (Number(booking.extras?.cafeteriaPaid) || 0) + split.cafeteria } : booking.extras;
-    const res = await onUpdateBooking(booking.id, { ...booking, extras, paymentMethod: method, amountPaid: (Number(booking.amountPaid) || 0) + amount });
-    if (res?.error) { showToast(res.error); return; }
+    // عملية واحدة ذرية في القاعدة: المدفوع على الحجز + صف الوسيلة في اليومية + (لو عليه كافيتيريا) صف الكافيتيريا
+    const res = await recordBookingPayment({ bookingId: booking.id, amount, method, details: rawDetails, note: "تحصيل" });
+    if (res?.error) { showToast(res.error); setPay({ amount: String(amount), method, details: rawDetails }); return; }
+    const out = res.data || {};
+    const details = out.details || cleanPaymentDetailsFor(method, rawDetails);
     const detailsText = describePaymentDetails(method, details) ? "\u2066" + describePaymentDetails(method, details) + "\u2069" : "";
     onLog(`تحصيل ${fmt(amount)} ${booking.currency} (${method}${detailsText ? " " + detailsText : ""}) - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
-    let ledgerWarning = "";
-    const ledgerRes = await appendBookingCollection(myActiveShiftDate || shiftDayNow(), myActiveShiftKey, profile, rooms, {
-      id: uid(), bookingId: booking.id, room: booking.room, guestName: booking.guestName,
-      amount, currency: booking.currency, method, details, cafeteriaPart: split.cafeteria,
-      note: "تحصيل", at: Date.now(),
-    });
-    if (ledgerRes?.error) ledgerWarning = " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
+    if (onRefresh) await onRefresh();
+    getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); });     // تفصيل المدفوع بالوسيلة بعد ما اليومية اتحدّثت
+    const cafe = Number(out.cafeteria) || 0;
     const left = Math.max(0, due - amount);
-    showToast(`تم تسجيل ${fmt(amount)} ${booking.currency} (${method}${detailsText ? " " + detailsText : ""})${split.cafeteria > 0 ? ` - منها ${fmt(split.cafeteria)} كافيتيريا` : ""} - ${left > 0 ? `المتبقي ${fmt(left)} ${booking.currency}` : "الحجز مدفوع بالكامل"}` + ledgerWarning);
+    showToast(`تم تسجيل ${fmt(amount)} ${booking.currency} (${method}${detailsText ? " " + detailsText : ""})${cafe > 0 ? ` - منها ${fmt(cafe)} كافيتيريا` : ""} - ${left > 0 ? `المتبقي ${fmt(left)} ${booking.currency}` : "الحجز مدفوع بالكامل"}`);
   }
   // دخول مبكر: رسم بيتضاف على الحجز (بيزوّد الإجمالي)، وممكن يتحصّل في نفس اللحظة فيدخل اليومية والتقرير والتوتال.
   async function applyEarlyCheckin(booking) { return guarded("early:" + booking.id, () => applyEarlyCheckinInner(booking)); }
@@ -127,23 +136,18 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     if (collectNow) { const detailsErr = validatePaymentDetailsFor(epay.method, epay.details); if (detailsErr) { showToast(detailsErr); return; } }
     const details = cleanPaymentDetailsFor(epay.method, epay.details);
     const next = { ...booking, earlyCheckin: { applied: true, fee, note: sanitizeText(ecNote, 300) } };
-    if (collectNow) { next.amountPaid = (Number(booking.amountPaid) || 0) + fee; next.paymentMethod = epay.method; }
     const res = await onUpdateBooking(booking.id, next);
     if (res?.error) { showToast(res.error); return; }
-    let saved = res?.data || next;
     onLog(`دخول مبكر ${fee} ${booking.currency} - ${roomLabel(rooms, booking.room)} - ${booking.guestName}${collectNow ? ` (اتحصّل - ${epay.method})` : " (لسه ماتحصّلش)"}`);
     let warn = "";
     if (collectNow) {
-      if (myActiveShiftKey) {
-        const ledgerRes = await appendBookingCollection(myActiveShiftDate || shiftDayNow(), myActiveShiftKey, profile, rooms, {
-          id: uid(), bookingId: booking.id, room: booking.room, guestName: booking.guestName,
-          amount: fee, currency: booking.currency, method: epay.method, details, note: "رسم دخول مبكر", at: Date.now(),
-        });
-        if (ledgerRes?.error) warn = " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
-      } else warn = " — ⚠ مفيش شيفتك شغال فالمبلغ ماتسجّلش في اليومية تلقائيًا";
+      // الرسم اتسجّل على الحجز (زوّد المتبقي) فدلوقتي بنحصّله بعملية ذرية: الحجز + اليومية
+      const pr = await recordBookingPayment({ bookingId: booking.id, amount: fee, method: epay.method, details: epay.details, note: "رسم دخول مبكر" });
+      if (pr?.error) warn = " — لكن التحصيل ماتسجّلش: " + pr.error + " (الرسم لسه متبقي على النزيل - سجّله من خانة تسجيل دفعة)";
+      else { if (onRefresh) await onRefresh(); getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); }); }
     }
     setEcFee(""); setEcNote("");
-    showToast(`تم تسجيل الدخول المبكر (${fmt(fee)} ${booking.currency})${collectNow ? " واتحصّل" : " - لسه متبقي على النزيل، حصّله من زرار التحصيل"}` + warn);
+    showToast(`تم تسجيل الدخول المبكر (${fmt(fee)} ${booking.currency})${collectNow && !warn ? " واتحصّل" : " - لسه متبقي على النزيل، سجّله من خانة (تسجيل دفعة)"}` + warn);
   }
   // غادر مبكرًا: بيقصّر الإقامة لحد النهارده (الحد الأدنى ليلة)، والزيادة اللي كان النزيل دافعها عن ليالي
   // ماقعدهاش بتتحوّل لطلب رد فلوس لمدير الحجوزات (قاعدة البيانات هي اللي بتفتحه).
@@ -230,7 +234,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
       return;
     }
     const clamped = { laundry: Math.max(0, Number(extrasDraft.laundry) || 0), cafeteria: Math.max(0, Number(extrasDraft.cafeteria) || 0), tours: Math.max(0, Number(extrasDraft.tours) || 0), pickup: Math.max(0, Number(extrasDraft.pickup) || 0) };
-    const res = await onUpdateBooking(booking.id, { ...booking, extras: clamped });
+    const res = await onUpdateBooking(booking.id, { ...booking, extras: { ...(booking.extras || {}), ...clamped } });   // cafeteriaPaid بيفضل زي ما هو
     if (res?.error) { showToast(res.error); return; }
     setExtrasDraft(clamped); extrasBaseRef.current = normExtras(clamped);
     onLog(`تعديل الرسوم الإضافية - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
@@ -285,7 +289,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
         const due = b ? bookingAmountDue(b) : 0;
         const extrasList = b ? [
           b.extras?.laundry > 0 && ["غسيل", b.extras.laundry],
-          b.extras?.cafeteria > 0 && ["كافيتيريا", b.extras.cafeteria],
+          b.extras?.cafeteria > 0 && [Number(b.extras.cafeteriaPaid) > 0 ? `كافيتيريا (اتسدّد ${fmt(b.extras.cafeteriaPaid)})` : "كافيتيريا", b.extras.cafeteria],
           b.extras?.tours > 0 && ["جولات", b.extras.tours],
           b.extras?.pickup > 0 && ["بيك أب", b.extras.pickup],
           b.earlyCheckin?.applied && ["دخول مبكر", b.earlyCheckin.fee || 0],
@@ -325,6 +329,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
               </div>
 
               <MoneyBox b={b} />
+              <PayBreakdown payments={payBreakdown} currency={b.currency} />
               <RefundBox b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
 
               {offShift && (perms.markPaymentReceived || perms.editBookings) && <div style={{ fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعمل أي حاجة هنا." : "مش شيفتك دلوقتي - التحصيل والتعديل مش متاحين غير وقت شيفتك اللي حاجزه."}</div>}

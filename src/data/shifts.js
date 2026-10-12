@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
+import { fetchAll } from "./page";
 import { freshShiftRecord, applyCollectionToRows, applyCafeteriaCollection } from "../domain/money";
 import { prevShiftOf, shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
 import { SHIFTS } from "../domain/constants";
@@ -36,6 +37,14 @@ export async function getShiftRecord(date, shiftKey) {
   return shiftFromRow(data);
 }
 
+/* زي getShiftRecord بس بتفرّق بين "مفيش سجل" (data = null) و"القراءة فشلت" (error): قراءة فاشلة (نت وقع لحظة) ما تتعاملش كأن
+   اليومية مش موجودة - وإلا كان هيتعمل سجل جديد برصيد افتتاحي صفر وتتكتب فوق عهدة الشيفت اللي قبله. */
+export async function getShiftRecordStrict(date, shiftKey) {
+  const { data, error } = await supabase.from("shift_records").select("*").eq("date", date).eq("shift_key", shiftKey).maybeSingle();
+  if (error) return { error: error.message };
+  return { data: data ? shiftFromRow(data) : null };
+}
+
 export async function createShiftRecord(rec) {
   const { data, error } = await supabase.from("shift_records").insert(shiftToRow(rec)).select().maybeSingle();
   if (error) return { error: error.message };
@@ -60,8 +69,8 @@ export async function updateShiftRecordIfUnchanged(date, shiftKey, expectedUpdat
 /* كل سجلات اليومية في فترة (استعلام واحد بدل استعلام لكل شيفت في كل يوم -
    تقرير فترة سنة كان بيبعت أكتر من ١٠٠٠ طلب). بترجع null لو القراءة فشلت. */
 export async function getShiftRecordsInRange(fromDate, toDate) {
-  const { data, error } = await supabase.from("shift_records").select("*")
-    .gte("date", fromDate).lte("date", toDate).order("date", { ascending: true });
+  const { data, error } = await fetchAll(() => supabase.from("shift_records").select("*", { count: "exact" })
+    .gte("date", fromDate).lte("date", toDate).order("date", { ascending: true }).order("shift_key"));
   if (error || !data) return null;
   const order = { morning: 0, evening: 1, night: 2 };
   return data.map(shiftFromRow).sort((a, b) => (a.date === b.date ? order[a.shiftKey] - order[b.shiftKey] : a.date < b.date ? -1 : 1));
@@ -187,11 +196,50 @@ export async function appendStaffCafeteriaCollection(date, shiftKey, profile, ro
   return { error: "تعارض متكرر على سجل اليومية - حاول تاني" };
 }
 
+/* المدفوع الفعلي على حجز مقسّم بالوسيلة (وبتفاصيلها: الكارت/المحفظة) من اليومية نفسها - صافي
+   التحصيل ناقص أي رد فلوس. بيتعرض في بطاقة الغرفة عشان واضح الفلوس اتدفعت إزاي من غير لخبطة. */
+function paymentsFromRecords(recs, bookings) {
+  const cur = new Map(bookings.map((b) => [b.id, b.currency]));
+  const per = new Map();
+  recs.forEach((r) => [...(r.rows || []), ...(r.cafeteriaRows || [])].forEach((x) => {
+    if (!x.bookingId || !cur.has(x.bookingId)) return;
+    const amt = Number(x.collectionAmt) || 0;
+    if (!amt || (x.collectionCurrency || "EGP") !== cur.get(x.bookingId)) return;
+    const d = x.paymentDetails || {};
+    const key = [x.collectionMethod, d.senderName || "", d.senderNumber || ""].join("|");
+    const m = per.get(x.bookingId) || new Map();
+    const e = m.get(key) || { method: x.collectionMethod, details: d, amount: 0 };
+    e.amount += amt; m.set(key, e); per.set(x.bookingId, m);
+  }));
+  const out = new Map();
+  per.forEach((m, id) => out.set(id, Array.from(m.values()).filter((p) => Math.abs(p.amount) > 0.004)));
+  return out;
+}
+const earliest = (d) => (d < "2000-01-01" ? "2000-01-01" : d);
+// أول يوم ممكن يكون فيه تحصيل على الحجز: أقدم من تاريخ الدخول وتاريخ إنشاء الحجز (عربون قبل الدخول بأيام كان بيطلع برا المدى)
+const firstPayDay = (b) => {
+  const created = b.createdAt ? new Date(b.createdAt).toISOString().slice(0, 10) : null;
+  return created && created < b.checkin ? created : b.checkin;
+};
+export async function getBookingPayments(booking) {
+  const recs = await getShiftRecordsInRange(earliest(addDays(firstPayDay(booking), -1)), addDays(shiftDayNow(), 1));
+  if (!recs) return null;
+  return paymentsFromRecords(recs, [booking]).get(booking.id) || [];
+}
+/* نفس الحساب لقايمة حجوزات كاملة باستعلام واحد: Map(bookingId -> [{method, details, amount}]) */
+export async function getPaymentsIndex(bookings) {
+  const list = (bookings || []).filter((b) => b.checkin);
+  if (!list.length) return new Map();
+  const from = list.reduce((m, b) => (firstPayDay(b) < m ? firstPayDay(b) : m), firstPayDay(list[0]));
+  const recs = await getShiftRecordsInRange(earliest(addDays(from, -1)), addDays(shiftDayNow(), 1));
+  return recs ? paymentsFromRecords(recs, list) : null;
+}
+
 /* كل أرقام الحجوزات اللي تحصيلها اتسجّل في أي يومية شيفت (أي تاريخ) - التقارير
    بتستخدمها عشان تحصيل نفس الحجز مايتحسبش مرتين: مرة من اليومية (في تاريخها)
    ومرة تاني من قيمة amountPaid على الحجز في تاريخ تاني. بترجع null لو القراءة فشلت. */
 export async function getJournaledBookingIds() {
-  const { data, error } = await supabase.from("shift_records").select("booking_collections");
+  const { data, error } = await fetchAll(() => supabase.from("shift_records").select("date,shift_key,booking_collections", { count: "exact" }).order("date").order("shift_key"));
   if (error || !data) return null;
   const set = new Set();
   data.forEach((r) => (r.booking_collections || []).forEach((e) => { if (e.bookingId) set.add(e.bookingId); }));

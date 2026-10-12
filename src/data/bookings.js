@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
+import { fetchAll } from "./page";
 
 function bookingFromRow(r) {
   return {
@@ -68,7 +69,7 @@ export function friendlyBookingError(error) {
 // بيانات سليمة بدل ما "تفضى" فجأة ويتعتبر مفيش حجوزات خالص (وده كان هيخلّي
 // فحص التعارض يعدّي غلط) - انظر App.jsx.
 export async function getBookings() {
-  const { data, error } = await supabase.from("bookings").select("*").order("checkin", { ascending: false });
+  const { data, error } = await fetchAll(() => supabase.from("bookings").select("*", { count: "exact" }).order("checkin", { ascending: false }).order("id"));
   if (error || !data) return null;
   return data.map(bookingFromRow);
 }

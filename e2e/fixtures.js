@@ -30,7 +30,7 @@ export const test = base.extend({
       await ctx.routeWebSocket(/fake-supabase\.test/, (ws) => { ws.close(); });
       await ctx.route("http://fake-supabase.test/**", async (route) => {
         const req = route.request();
-        const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" };
+        const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*", "access-control-expose-headers": "content-range" };
         if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
         let body = null;
         try { body = req.postData() ? JSON.parse(req.postData()) : null; } catch { body = null; }
@@ -72,11 +72,13 @@ export const test = base.extend({
     const emptyRow = (room) => ({ room, expenseDesc: "", expenseAmt: "", expenseCategory: "أخرى", expenseCurrency: "EGP", collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP", paymentDetails: { senderName: "", senderNumber: "", ref: "", onlinePaid: false, commissionPct: 15 }, notes: "" });
     /* حجز جاهز مباشرة في القاعدة (بصلاحيات المشرف) - للتجهيز بس. التواريخ بالفرق من النهارده. */
     const seedBooking = async (o) => {
-      const { room, guest, start = 0, nights = 1, price = 100, total = price * nights, paid = 0, settled = false, status = "مؤكد", method = "كاش", currency = "USD", source = "مباشر", extras, payment_details, by = "ahmed", role = "staff", leftEarly = false } = o;
+      const { room, guest, start = 0, nights = 1, price = 100, total = price * nights, paid = 0, settled = false, status = "مؤكد", method = "كاش", currency = "USD", source = "مباشر", extras, payment_details, by = "ahmed", role = "staff", leftEarly = false, anchor = "calendar" } = o;
+      // anchor="shift": التواريخ نسبةً ليوم الشيفت (قبل ٨ الصبح = امبارح) - زي ما التقارير بتفتح؛ الافتراضي تاريخ التقويم
+      const off = anchor === "shift" && shiftDay() !== cairoDate(0) ? -1 : 0;
       const [r] = await q(
         `insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, amount_paid, settled, status, payment_method, currency, source, extras, payment_details, created_by, created_by_role, left_early)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, coalesce($13::jsonb, '{"laundry":0,"cafeteria":0,"tours":0,"pickup":0}'::jsonb), coalesce($14::jsonb, '{"senderName":"","senderNumber":"","ref":""}'::jsonb), $15, $16, $17) returning id`,
-        [room, guest, cairoDate(start), cairoDate(start + nights), price, total, paid, settled, status, method, currency, source, extras ? JSON.stringify(extras) : null, payment_details ? JSON.stringify(payment_details) : null, by, role, leftEarly]);
+        [room, guest, cairoDate(start + off), cairoDate(start + off + nights), price, total, paid, settled, status, method, currency, source, extras ? JSON.stringify(extras) : null, payment_details ? JSON.stringify(payment_details) : null, by, role, leftEarly]);
       return r.id;
     };
     /* شيفت محجوز + يومية جاهزة لموظف (الشيفت الحالي بتوقيت القاهرة). collections: تحصيلات سابقة اتسجّلت في اليومية. */

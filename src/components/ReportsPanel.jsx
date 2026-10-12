@@ -150,11 +150,15 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     : effFrom > effTo ? "تاريخ البداية لازم يكون قبل تاريخ النهاية"
     : nightsBetween(effFrom, effTo) + 1 > MAX_RANGE_DAYS ? `أقصى فترة للتقرير ${MAX_RANGE_DAYS} يوم` : "";
 
+  const loadedKeyRef = React.useRef(null);
   useEffect(() => {
     if (rangeError) { setLoading(false); return undefined; }
     let cancelled = false;
+    // الشاشة بتتحدّث لوحدها (realtime كل ٦٠ ثانية): نفس التقرير مايتبدّلش بسبينر ويضيع مكان القراءة/الطباعة - السبينر لأول تحميل أو لتغيير اليوم/الفترة بس
+    const loadKey = `${rangeMode}|${date}|${effFrom}|${effTo}`;
+    const first = loadedKeyRef.current !== loadKey;
     (async () => {
-      setLoading(true);
+      if (first) setLoading(true);
       if (rangeMode === "day") {
         const out = {};
         for (const s of SHIFTS) out[s.key] = await getShiftRecord(date, s.key);
@@ -168,6 +172,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
       // فشل القراءة (null) مايتحولش لتقرير فاضي مضلّل - بنسيب آخر بيانات سليمة
       if (recs) setRecords(recs);
       if (gj) setGlobalJournaled(gj);
+      if (recs) loadedKeyRef.current = loadKey;
       setLoading(false);
     })();
     return () => { cancelled = true; };

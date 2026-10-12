@@ -88,7 +88,7 @@ select t.reject('EC1 ورسم سالب مرفوض', t.upd('res1', 'EC1', $u$earl
 select t.pass('EC2 حجز تاني متحصّل بالكامل', t.ins('st1', 'EC2', 611, 200, 202, 100, 200, 200, true));
 select t.pass('EC2 تسجيل دخول مبكر على حجز مدفوع بالكامل: مسموح والحالة بتتحوّل لمتبقي تلقائيًا', t.upd('st1', 'EC2', $u$early_checkin = '{"applied":true,"fee":50,"note":""}'::jsonb$u$));
 select t.eq('EC2 الحالة false (متبقي رسم الدخول المبكر)', t.f('EC2', 'settled'), 'false');
-select t.pass('EC2 وبعد تحصيل الرسم يرجع متحصّل بالكامل', t.upd('st1', 'EC2', 'amount_paid = 250, settled = true'));
+select t.pass('EC2 وبعد تحصيل الرسم يرجع متحصّل بالكامل', t.maint('EC2', 'amount_paid = 250'));
 
 -- ======================================================================
 -- كود الحجز تلقائي (B + سنة/شهر + رقم متسلسل)
