@@ -19,6 +19,7 @@ function emptyBooking() {
 
 export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onRefresh, onDecideRefund, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
   const [form, setForm] = useState(null);
+  const formBaseRef = React.useRef(null);   // نسخة الحجز اللي الفورم اتفتح عليها (لدمج تعديلاتي مع آخر نسخة لو اتغيّر من مكان تاني)
   const [filter, setFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -32,7 +33,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
   useEffect(() => {
     if (pendingEditId) {
       const b = bookings.find((x) => x.id === pendingEditId);
-      if (b) setForm(formFromBooking(b));
+      if (b) { const f = formFromBooking(b); formBaseRef.current = f; setForm(f); }
       onConsumeEditRequest();
     }
   }, [pendingEditId]);
@@ -46,7 +47,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
 
   function startNew() { setForm(emptyBooking()); }
   function formFromBooking(b) { return { ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails(), payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } }; }
-  function startEdit(b) { setForm(formFromBooking(b)); }
+  function startEdit(b) { const f = formFromBooking(b); formBaseRef.current = f; setForm(f); }
 
   const isExistingBooking = form ? bookings.some((b) => b.id === form.id) : false;
   const originalBooking = form && isExistingBooking ? bookings.find((b) => b.id === form.id) : null;
@@ -112,10 +113,20 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     // الفورم: نحدّث نسخته المرجعية ونطلب مراجعة، بدل ما كل حفظة بعد كده تفشل
     // بـ"تعارض" والفورم يفضل متعلّق على نسخة قديمة.
     if (isExistingBooking && originalBooking && form.updatedAt && originalBooking.updatedAt && form.updatedAt !== originalBooking.updatedAt) {
-      // نحمّل الحجز كله من جديد (مش المدفوع وتاريخ التحديث بس): الحجز ممكن يكون اتمدّد/اتغيّر خروجه أو رسومه من حد تاني،
-      // وحفظة تانية بقيم قديمة كانت هترجّعه. تعديلاتك اللي كتبتها هنا لازم تتكتب تاني على القيم الجديدة.
-      setForm(formFromBooking(originalBooking));
-      showToast("الحجز ده اتحدّث من مكان تاني وانت بتعدّل فيه - حمّلنا لك آخر نسخة، راجع القيم وأعد تعديلك واضغط حفظ");
+      // دمج ثلاثي: الحجز اتحدّث من مكان تاني (تمديد/تحصيل/رسوم)، فنحمّل آخر نسخة كاملة ونفضّل بس على الخانات اللي انت غيّرتها
+      // بنفسك (مقارنة بالنسخة اللي فتحت عليها) - الحفظة الجاية ما بترجّعش تغيير حد تاني ولا بتضيّع تعديلك.
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const fresh = formFromBooking(originalBooking), base = formBaseRef.current || {}, merged = { ...fresh };
+      Object.keys(form).forEach((k) => {
+        if (k === "updatedAt" || k === "amountPaid" || same(form[k], base[k])) return;
+        if (["extras", "earlyCheckin", "paymentDetails"].includes(k) && form[k] && base[k] && typeof form[k] === "object") {
+          merged[k] = { ...fresh[k] };
+          Object.keys(form[k]).forEach((kk) => { if (!same(form[k][kk], base[k][kk])) merged[k][kk] = form[k][kk]; });
+        } else merged[k] = form[k];
+      });
+      formBaseRef.current = fresh;
+      setForm(merged);
+      showToast("الحجز ده اتحدّث من مكان تاني وانت بتعدّل فيه - حمّلنا آخر نسخة وحافظنا على تعديلاتك، راجع القيم واضغط حفظ تاني");
       return;
     }
     // تاريخ الخروج لازم يكون بعد تاريخ الدخول - من غير الفحص ده هنوصل لقيد
