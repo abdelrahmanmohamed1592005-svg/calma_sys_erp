@@ -43,6 +43,8 @@ jobs:
         env:
           SIM_SEEDS: "12"
           SIM_OPS: "150"
+      - name: Real API path (supabase-js -> PostgREST -> Postgres, real JWT)
+        run: npm run test:api
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Browser + real-database integration tests
