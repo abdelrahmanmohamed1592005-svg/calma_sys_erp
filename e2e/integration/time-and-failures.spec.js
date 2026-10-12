@@ -113,7 +113,7 @@ test.describe("تبديل الشيفتات والشيفت الليلي", () => {
 });
 
 test.describe("أعطال الشبكة والسيرفر", () => {
-  test("تحصيل اتحفظ على الحجز لكن تسجيله في اليومية فشل: الموظف بيتنبّه يسجّله يدوي (مفيش فلوس بتتخبّى)", async ({ page, env }) => {
+  test("فشل تسجيل التحصيل في السيرفر: العملية ذرية - مفيش حاجة بتتسجّل لا على الحجز ولا في اليومية، ورسالة الخطأ ظاهرة", async ({ page, env }) => {
     await users(env);
     const id = await env.seedBooking({ room: 601, guest: "Partial Failure", nights: 1, price: 100 });
     await env.seedShift("ahmed");
@@ -121,14 +121,12 @@ test.describe("أعطال الشبكة والسيرفر", () => {
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 601);
-    await page.route(/fake-supabase\.test\/rest\/v1\/shift_records/, async (route) => {
-      if (route.request().method() === "PATCH") return route.fulfill({ status: 500, headers: { "access-control-allow-origin": "*", "content-type": "application/json" }, body: JSON.stringify({ message: "boom", code: "XX000" }) });
-      return route.fallback();
-    });
+    await page.route(/fake-supabase\.test\/rest\/v1\/rpc\/record_booking_payment/, async (route) =>
+      route.fulfill({ status: 500, headers: { "access-control-allow-origin": "*", "content-type": "application/json" }, body: JSON.stringify({ message: "boom", code: "XX000" }) }));
     await payOnBoard(page);
-    await expect(toast(page)).toContainText("تعذر تسجيله تلقائيًا في اليومية");
+    await expect(toast(page)).toContainText("boom");
     const [b] = await env.q("select amount_paid, settled from bookings where id = $1", [id]);
-    expect(b).toEqual({ amount_paid: 100, settled: true });
+    expect(b).toEqual({ amount_paid: 0, settled: false });
     expect((await rec(env, "ahmed")).booking_collections).toHaveLength(0);
   });
 
