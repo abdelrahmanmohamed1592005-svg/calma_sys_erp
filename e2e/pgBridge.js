@@ -169,7 +169,9 @@ export function makeBridge(pool, { log } = {}) {
         const order = url.searchParams.get("order");
         if (order) sql += " order by " + order.split(",").map((o) => { const [c, d] = o.split("."); return `${ident(c)} ${d === "desc" ? "desc" : "asc"}`; }).join(", ");
         // زي Supabase المستضاف: حد أقصى للصفوف في الرد (db-max-rows) من غير أي خطأ - E2E_MAX_ROWS لتصغيره في الاختبارات
-        const maxRows = Number(process.env.E2E_MAX_ROWS) || 1000;
+        // E2E_CAP_TABLES (مفصولة بفاصلة): الحد الصغير بيتطبّق على الجداول دي بس - الجداول اللي بتتقرا بصفحات (bookings/shift_records/staff_cafeteria)
+        const capTables = process.env.E2E_CAP_TABLES ? process.env.E2E_CAP_TABLES.split(",") : null;
+        const maxRows = (!capTables || capTables.includes(table)) ? (Number(process.env.E2E_MAX_ROWS) || 1000) : 1000;
         const lim = Math.min(Number(url.searchParams.get("limit")) > 0 ? Math.floor(Number(url.searchParams.get("limit"))) : maxRows, maxRows);
         const off = Math.max(0, Math.floor(Number(url.searchParams.get("offset")) || 0));
         let total = null;

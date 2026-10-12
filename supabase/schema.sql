@@ -2374,7 +2374,9 @@ begin
   cafe_out := greatest(0, calma_num(b.extras ->> 'cafeteria') - calma_num(b.extras ->> 'cafeteriaPaid'));
   cafe := least(amt, cafe_out);
   v_extras := case when cafe > 0 then jsonb_set(b.extras, '{cafeteriaPaid}', to_jsonb(calma_num(b.extras ->> 'cafeteriaPaid') + cafe)) else b.extras end;
+  perform set_config('calma.pay_rpc', '1', true);
   update bookings set amount_paid = coalesce(amount_paid, 0) + amt, payment_method = p_method, extras = v_extras where id = p_booking;
+  perform set_config('calma.pay_rpc', '', true);
   v_rows := calma_apply_room_collection(coalesce(sr.rows, '[]'::jsonb), b.room, b.id, p_method, b.currency, det, amt - cafe,
     note || coalesce(' - ' || nullif(b.guest_name, ''), '') || ' (+' || trim_scale(amt - cafe) || ' ' || b.currency || ')');
   v_caf := coalesce(sr.cafeteria_rows, '[]'::jsonb);
@@ -2519,3 +2521,22 @@ begin
   return old;
 end;
 $$;
+
+-- (و) extras.cafeteriaPaid (اللي اتحصّل من كافيتيريا النزيل) بيتغيّر من record_booking_payment بس: حفظ الرسوم من بطاقة الغرفة
+--     كان بيكتب extras من غيره فيمسحه، فالكافيتيريا تتحسب مرتين والدفعة الجاية تروح لصف الكافيتيريا تاني.
+create or replace function keep_cafeteria_paid()
+returns trigger language plpgsql as $$
+declare old_cp jsonb; new_cp jsonb;
+begin
+  if coalesce(current_setting('calma.pay_rpc', true), '') = '1' or auth.uid() is null then return new; end if;
+  old_cp := case when TG_OP = 'UPDATE' then old.extras -> 'cafeteriaPaid' else null end;
+  new_cp := new.extras -> 'cafeteriaPaid';
+  if new_cp is distinct from old_cp then
+    new.extras := case when old_cp is null then new.extras - 'cafeteriaPaid' else jsonb_set(new.extras, '{cafeteriaPaid}', old_cp) end;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists bookings_keep_cafeteria_paid on bookings;
+create trigger bookings_keep_cafeteria_paid before insert or update on bookings
+  for each row execute function keep_cafeteria_paid();

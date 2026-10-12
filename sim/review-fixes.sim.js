@@ -65,6 +65,24 @@ describe.skipIf(!enabled)("إصلاحات المراجعة الكاملة", () =
     await db.q("delete from shift_records"); await db.q("delete from shift_claims");
   });
 
+  it("حفظ الرسوم الإضافية من بطاقة الغرفة (extras من غير cafeteriaPaid) ما بيمسحش اللي اتحصّل من كافيتيريا النزيل", async () => {
+    await db.q("insert into shift_claims(date, shift_key, username, name) values ($1,'morning','st1','st1') on conflict do nothing", [today]);
+    await db.q("insert into shift_records(date, shift_key, staff_name, staff_username, rows) values ($1,'morning','st1','st1','[]'::jsonb) on conflict do nothing", [today]);
+    const id = (await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency, extras) values (606,'Cafe',$1,$2,100,200,'EGP','{\"laundry\":0,\"cafeteria\":100,\"tours\":0,\"pickup\":0}'::jsonb) returning id", [today, addDays(today, 2)]))[0].id;
+    const p = await db.tx("st1", (c) => c.query("select record_booking_payment($1, 150, 'كاش', '{}'::jsonb, null, 'تحصيل') r", [id]));
+    expect(p.ok, String(p.err?.message)).toBe(true);
+    const cp = async () => Number((await db.q("select extras ->> 'cafeteriaPaid' v from bookings where id = $1", [id]))[0].v);
+    expect(await cp()).toBe(100);
+    // نفس اللي كانت بتبعته الواجهة: extras بأربع خانات من غير cafeteriaPaid
+    await db.tx("st1", (c) => c.query("update bookings set extras = '{\"laundry\":0,\"cafeteria\":100,\"tours\":20,\"pickup\":0}'::jsonb where id = $1", [id]));
+    expect(await cp()).toBe(100);
+    expect((await db.q("select extras ->> 'tours' t from bookings where id = $1", [id]))[0].t).toBe("20");      // وباقي التعديل اتحفظ عادي
+    // محاولة تصفير/تزوير مباشرة
+    for (const v of [0, 5, 1000]) await db.tx("st1", (c) => c.query("update bookings set extras = jsonb_set(extras, '{cafeteriaPaid}', to_jsonb($2::numeric)) where id = $1", [id, v]));
+    expect(await cp()).toBe(100);
+    await db.q("delete from shift_records"); await db.q("delete from shift_claims");
+  });
+
   it("calma_num بيقرا .5 و 1e3 و 5. زي المتصفح (كانت صفر فبيتمسح تحصيل موجود)", async () => {
     const r = await db.q("select calma_num('.5')::float a, calma_num('1e3')::float b, calma_num('5.')::float c, calma_num('-2.50')::float d, calma_num('abc')::float e, calma_num('')::float f, calma_num(null)::float g");
     expect(r[0]).toEqual({ a: 0.5, b: 1000, c: 5, d: -2.5, e: 0, f: 0, g: 0 });

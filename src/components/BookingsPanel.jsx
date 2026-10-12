@@ -112,8 +112,10 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     // الفورم: نحدّث نسخته المرجعية ونطلب مراجعة، بدل ما كل حفظة بعد كده تفشل
     // بـ"تعارض" والفورم يفضل متعلّق على نسخة قديمة.
     if (isExistingBooking && originalBooking && form.updatedAt && originalBooking.updatedAt && form.updatedAt !== originalBooking.updatedAt) {
-      setForm((f) => ({ ...f, updatedAt: originalBooking.updatedAt, amountPaid: originalBooking.amountPaid }));
-      showToast("الحجز ده اتحدّث من مكان تاني وانت بتعدّل فيه (غالبًا تحصيل) - راجع القيم الجديدة واضغط حفظ تاني");
+      // نحمّل الحجز كله من جديد (مش المدفوع وتاريخ التحديث بس): الحجز ممكن يكون اتمدّد/اتغيّر خروجه أو رسومه من حد تاني،
+      // وحفظة تانية بقيم قديمة كانت هترجّعه. تعديلاتك اللي كتبتها هنا لازم تتكتب تاني على القيم الجديدة.
+      setForm(formFromBooking(originalBooking));
+      showToast("الحجز ده اتحدّث من مكان تاني وانت بتعدّل فيه - حمّلنا لك آخر نسخة، راجع القيم وأعد تعديلك واضغط حفظ");
       return;
     }
     // تاريخ الخروج لازم يكون بعد تاريخ الدخول - من غير الفحص ده هنوصل لقيد
@@ -128,7 +130,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     }
     // منع أي قيمة سالبة في الرسوم الإضافية/رسم الدخول المبكر من غير داعي
     // تضرب قيد قاعدة البيانات وتطلّع رسالة خطأ تقنية مش مفهومة.
-    const clampedExtras = { laundry: Math.max(0, Number(form.extras.laundry) || 0), cafeteria: Math.max(0, Number(form.extras.cafeteria) || 0), tours: Math.max(0, Number(form.extras.tours) || 0), pickup: Math.max(0, Number(form.extras.pickup) || 0) };
+    const clampedExtras = { laundry: Math.max(0, Number(form.extras.laundry) || 0), cafeteria: Math.max(0, Number(form.extras.cafeteria) || 0), tours: Math.max(0, Number(form.extras.tours) || 0), pickup: Math.max(0, Number(form.extras.pickup) || 0), ...(form.extras.cafeteriaPaid != null ? { cafeteriaPaid: form.extras.cafeteriaPaid } : {}) };
     const clampedEarlyCheckin = { ...form.earlyCheckin, fee: Math.max(0, Number(form.earlyCheckin?.fee) || 0) };
     // أرقام غلط (سالبة/كسور/نص) بتتصلّح هنا قبل الحفظ بدل ما توصل لقيود قاعدة
     // البيانات وتطلّع رسالة تقنية، ونصوص الحقول الحرة بتتنظّف وتتحدد بطول أقصى.

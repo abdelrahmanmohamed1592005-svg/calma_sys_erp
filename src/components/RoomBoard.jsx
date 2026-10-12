@@ -234,7 +234,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
       return;
     }
     const clamped = { laundry: Math.max(0, Number(extrasDraft.laundry) || 0), cafeteria: Math.max(0, Number(extrasDraft.cafeteria) || 0), tours: Math.max(0, Number(extrasDraft.tours) || 0), pickup: Math.max(0, Number(extrasDraft.pickup) || 0) };
-    const res = await onUpdateBooking(booking.id, { ...booking, extras: clamped });
+    const res = await onUpdateBooking(booking.id, { ...booking, extras: { ...(booking.extras || {}), ...clamped } });   // cafeteriaPaid بيفضل زي ما هو
     if (res?.error) { showToast(res.error); return; }
     setExtrasDraft(clamped); extrasBaseRef.current = normExtras(clamped);
     onLog(`تعديل الرسوم الإضافية - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);

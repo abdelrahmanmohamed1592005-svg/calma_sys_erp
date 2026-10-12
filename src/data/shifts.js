@@ -216,8 +216,13 @@ function paymentsFromRecords(recs, bookings) {
   return out;
 }
 const earliest = (d) => (d < "2000-01-01" ? "2000-01-01" : d);
+// أول يوم ممكن يكون فيه تحصيل على الحجز: أقدم من تاريخ الدخول وتاريخ إنشاء الحجز (عربون قبل الدخول بأيام كان بيطلع برا المدى)
+const firstPayDay = (b) => {
+  const created = b.createdAt ? new Date(b.createdAt).toISOString().slice(0, 10) : null;
+  return created && created < b.checkin ? created : b.checkin;
+};
 export async function getBookingPayments(booking) {
-  const recs = await getShiftRecordsInRange(earliest(addDays(booking.checkin, -1)), addDays(shiftDayNow(), 1));
+  const recs = await getShiftRecordsInRange(earliest(addDays(firstPayDay(booking), -1)), addDays(shiftDayNow(), 1));
   if (!recs) return null;
   return paymentsFromRecords(recs, [booking]).get(booking.id) || [];
 }
@@ -225,7 +230,7 @@ export async function getBookingPayments(booking) {
 export async function getPaymentsIndex(bookings) {
   const list = (bookings || []).filter((b) => b.checkin);
   if (!list.length) return new Map();
-  const from = list.reduce((m, b) => (b.checkin < m ? b.checkin : m), list[0].checkin);
+  const from = list.reduce((m, b) => (firstPayDay(b) < m ? firstPayDay(b) : m), firstPayDay(list[0]));
   const recs = await getShiftRecordsInRange(earliest(addDays(from, -1)), addDays(shiftDayNow(), 1));
   return recs ? paymentsFromRecords(recs, list) : null;
 }

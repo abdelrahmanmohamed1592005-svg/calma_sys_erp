@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen } from "lucide-react";
 import { Logo } from "./shared";
+import { guarded } from "../lib/busy";
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { listStaffCafeteria } from "../data/staffCafeteria";
-import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails } from "../domain/money";
+import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
@@ -64,7 +65,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
               </td>
               <td>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                  <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
                   <input className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={row.collectionDesc} onChange={(e) => updateRow(idx, { collectionDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
                     <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.collectionAmt} onChange={(e) => updateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
@@ -111,7 +112,7 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
                 </td>
                 <td>
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => onUpdateRow(idx, { collectionMethod: e.target.value })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                    <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => onUpdateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
                     <input className="cx-input" placeholder="بيان الإيراد" disabled={locked} value={row.collectionDesc} onChange={(e) => onUpdateRow(idx, { collectionDesc: e.target.value })} />
                     <div style={{ display: "flex", gap: 3 }}>
                       <input className="cx-input" type="number" placeholder="مبلغ الإيراد" disabled={locked} value={row.collectionAmt} onChange={(e) => onUpdateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
@@ -267,6 +268,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   const baseUpdatedAtRef = useRef(null);
   const baseRecordRef = useRef(null);
   const debounceTimer = useRef(null);
+  const retryRef = useRef(0);
 
   useEffect(() => {
     if (mode !== "live") return;
@@ -372,7 +374,8 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
     return { data: null };
   }
 
-  async function claimShift(shiftKey) {
+  async function claimShift(shiftKey) { return guarded("ledger-claimShift", () => claimShiftInner(shiftKey)); }
+  async function claimShiftInner(shiftKey) {
     if (shiftKey !== defaultShiftForNow()) { showToast("الشيفت ده لسه مش في ميعاده"); return; }
     const res = await claimShiftRow(today, shiftKey, profile.username, profile.name);
     if (res.conflict) { showToast("حد تاني اختار نفس الشيفت في نفس اللحظة بالظبط - اختار شيفت تاني"); setRefreshKey((k) => k + 1); return; }
@@ -412,10 +415,22 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
     // لسه معلّق فعلاً - ماينفعش نعتبر مفيش كتابات معلّقة (انظر main.jsx).
     window.__calmaPendingWrites = !!pendingRef.current;
     if (res.conflict) { showToast("⚠ فيه تعديل حصل من مكان تاني على نفس الشيفت - جاري تحديث البيانات"); setRefreshKey((k) => k + 1); return; }
-    if (res.error) { showToast(res.error); return; }
+    if (res.error) {
+      // فشل مؤقت (نت/سيرفر): الكتابة ماتتبخرش - بنرجّعها معلّقة ونعيد المحاولة كل ٥ ثواني لحد ما تتحفظ
+      if (!pendingRef.current) { pendingRef.current = toSave; baseUpdatedAtRef.current = expected; baseRecordRef.current = baseRec; }
+      window.__calmaPendingWrites = true;
+      retryRef.current += 1;
+      if (retryRef.current <= 6) {
+        showToast("⚠ تعذر حفظ اليومية (" + res.error + ") - بنعيد المحاولة تلقائيًا ومتقفلش الصفحة");
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        debounceTimer.current = setTimeout(flushPending, 5000);
+      } else showToast("⚠ اليومية لسه ماتحفظتش بعد كذا محاولة (" + res.error + ") - اتأكد من الاتصال واكتب أي خانة تاني عشان نحاول، وماتقفلش الصفحة");
+      return;
+    }
     // الموظف كتب حاجة جديدة وقت ما الحفظة دي كانت بتتبعت: ماينفعش نكتب نسخة السيرفر فوق اللي كتبه
     // (كانت بتخلّي الخانة تهيس وتضيع كتابته) - بنحدّث بس "نسخة الأساس" عشان الحفظة الجاية
     // ماتتعارضش مع اللي لسه اتحفظ.
+    retryRef.current = 0;
     if (pendingRef.current) {
       baseUpdatedAtRef.current = res.data.updatedAt;
       baseRecordRef.current = res.data;
@@ -464,7 +479,8 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // التانية هيتقفل تلقائيًا فعليًا عند أول تحميل للشاشة (انظر الإيفكت فوق).
   const locked = !record || record.closed || !perms.editLedger || (!!myShiftKey && !isShiftActiveNow(myShiftKey));
 
-  async function closeShift() {
+  async function closeShift() { return guarded("ledger-closeShift", () => closeShiftInner()); }
+  async function closeShiftInner() {
     // مفيش إقفال وفيه تحصيل فيزا من غير آخر ٤ أرقام (أو تحويل من غير رقم) - كل عملية لازم تتتبّع
     const missing = missingPaymentDetails(pendingRef.current || record);
     if (missing.length > 0) { showToast(`مينفعش تقفل الشيفت: ${missing.slice(0, 3).map((m) => `${m.where} (${m.method})`).join("، ")}${missing.length > 3 ? ` و${missing.length - 3} كمان` : ""} من غير ${missing[0].method === "فيزا" ? "آخر ٤ أرقام الكارت" : "رقم التليفون"} - اكتبها في عمود تفاصيل الدفع`); return; }
@@ -496,7 +512,8 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // إعادة فتح/إقفال شيفت من وضع "استعراض شيفتات سابقة" - صلاحية مدير
   // الحجوزات/المدير العام بس (perms.reopenShift)، لحالة شيفت قفله موظف
   // بالغلط أو احتاج تصحيح بعد الإقفال (انظر قسم ١٦ في schema.sql).
-  async function reopenHistoryShift() {
+  async function reopenHistoryShift() { return guarded("ledger-reopenHistoryShift", () => reopenHistoryShiftInner()); }
+  async function reopenHistoryShiftInner() {
     if (!histRecord) return;
     const res = await reopenShiftRecord(histDate, histShift, histRecord.updatedAt, histRecord);
     if (res.conflict) { showToast("⚠ فيه تعديل حصل من مكان تاني على نفس الشيفت - جاري تحديث البيانات"); setHistRecord(await getShiftRecord(histDate, histShift)); return; }
