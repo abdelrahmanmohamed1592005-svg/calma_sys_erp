@@ -2428,6 +2428,10 @@ begin
   if err is not null then raise exception '%', err; end if;
   det := calma_clean_details(p_method, coalesce(p_details, '{}'::jsonb));
   sr := calma_my_open_shift();
+  -- قفل صفوف المديونية الأول (موظفين مختلفين ممكن يسدّدوا نفس الشخص في نفس اللحظة)، وبعدين نحسب المتبقي من آخر نسخة
+  perform 1 from staff_cafeteria
+    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount
+    order by created_at, id for update;
   select coalesce(sum(amount - paid_amount), 0) into owed from staff_cafeteria
     where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount;
   if owed <= 0 then raise exception 'مفيش مديونية على الموظف ده'; end if;
@@ -2443,6 +2447,7 @@ begin
       where id = e.id;
     left_amt := left_amt - part;
   end loop;
+  if left_amt > 0 then raise exception 'المديونية اتغيّرت - حدّث وجرّب تاني'; end if;
   update shift_records set cafeteria_rows = calma_apply_cafe_collection(coalesce(cafeteria_rows, '[]'::jsonb), 'staff', k, nm, null, p_method, p_currency, det, amt,
     'كافيتيريا استاف - ' || nm || ' (+' || trim_scale(amt) || ' ' || p_currency || ')')
     where date = sr.date and shift_key = sr.shift_key;

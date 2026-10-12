@@ -106,6 +106,31 @@ describe.skipIf(!enabled)("تزامن حقيقي", () => {
     } finally { await db.close(); }
   });
 
+  it("RPC: موظفين بشيفتات مختلفة بيسدّدوا نفس مديونية الاستاف وبيحصّلوا على نفس الحجز في نفس اللحظة: اليومية = المدفوع دايمًا", async () => {
+    const { db, today } = await setup();
+    try {
+      await db.q("insert into shift_claims(date, shift_key, username, name) values ($1, 'evening', 'st2', 'st2')", [today]);
+      await db.q("insert into shift_records(date, shift_key, staff_name, staff_username, rows) values ($1, 'evening', 'st2', 'st2', $2::jsonb)", [today, JSON.stringify([601].map(emptyRow))]);
+      for (let d = 0; d < 12; d++) await db.q("insert into staff_cafeteria(consumer_name, amount, currency) values ($1, 100, 'EGP')", ["سارة" + d]);
+      const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency) values (601, 'Race2', $1, $2, 100, 100, 'USD') returning id", [today, addDays(today, 1)]);
+      const jobs = [];
+      for (let i = 0; i < 6; i++) {
+        const u = i % 2 ? "st1" : "st2";
+        for (let d = 0; d < 12; d++) jobs.push(db.tx(u, (c) => c.query("select settle_staff_cafeteria($1, null, 'EGP', 60, 'كاش', '{}'::jsonb) r", ["سارة" + d])));
+        jobs.push(db.tx(u, (c) => c.query("select record_booking_payment($1, 60, 'كاش', '{}'::jsonb, null) r", [id])));
+      }
+      await Promise.all(jobs);
+      const [e] = await db.q("select sum(paid_amount)::float paid, max(paid_amount)::float mx from staff_cafeteria");
+      const [b] = await db.q("select amount_paid::float paid from bookings where id = $1", [id]);
+      const recs = await db.q("select rows, cafeteria_rows from shift_records");
+      const sum = (arr, k) => (arr || []).reduce((a, x) => a + (Number(x[k]) || 0), 0);
+      expect(e.mx).toBeLessThanOrEqual(100);
+      expect(b.paid).toBeLessThanOrEqual(100);
+      expect(sum(recs.flatMap((r) => r.cafeteria_rows), "collectionAmt")).toBeCloseTo(e.paid, 2);
+      expect(sum(recs.flatMap((r) => r.rows), "collectionAmt")).toBeCloseTo(b.paid, 2);
+    } finally { await db.close(); }
+  });
+
   it("موظفين بيختاروا نفس الشيفت في نفس اللحظة: واحد بس ياخده", async () => {
     const { db, today } = await setup();
     try {
