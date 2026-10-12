@@ -7,7 +7,7 @@ import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, E
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { resolveMyShift, getShiftRecord, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord } from "../data/shifts";
+import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -286,10 +286,17 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
       setClaims(c);
       if (mine) {
         const [sk] = mine;
-        let rec = await getShiftRecord(day, sk);
+        const cur = await getShiftRecordStrict(day, sk);
         const prev = await getPrevShiftClosing(day, sk);
+        if (cur.error || prev.error) {
+          // قراءة فاشلة (نت/سيرفر): مانكمّلش بسجل فاضي ولا رصيد افتتاحي صفر - نعيد المحاولة بعد شوية والشاشة فاضلة على "جاري التحميل"
+          showToast("⚠ تعذر تحميل اليومية (مشكلة اتصال) - بنعيد المحاولة تلقائيًا");
+          setTimeout(() => { if (!cancelled) setRefreshKey((k) => k + 1); }, 5000);
+          return;
+        }
+        let rec = cur.data;
         if (!rec) {
-          const fresh = freshShiftRecord(day, sk, profile.name, profile.username, rooms, prev?.cash || undefined, prev?.method || undefined);
+          const fresh = freshShiftRecord(day, sk, profile.name, profile.username, rooms, prev.data?.cash || undefined, prev.data?.method || undefined);
           const created = await createShiftRecord(fresh);
           rec = created.data || fresh;
         }
@@ -304,7 +311,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
           if (res.data) { rec = res.data; onLog(`إقفال تلقائي لشيفت ${SHIFTS.find((s) => s.key === sk)?.label} ليوم ${day} بعد انتهاء هامش الأوفر تايم (${SHIFT_OVERTIME_GRACE_HOURS} ساعة)`); }
         }
         if (cancelled) return;
-        setMyShiftKey(sk); setRecord(rec); setPrevClosing(prev?.cash || null); setPrevMethodClosing(prev?.method || null);
+        setMyShiftKey(sk); setRecord(rec); setPrevClosing(prev.data?.cash || null); setPrevMethodClosing(prev.data?.method || null);
       } else { setMyShiftKey(null); setRecord(null); }
       setLoading(false);
     })();
@@ -351,11 +358,18 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
     return () => { cancelled = true; };
   }, [mode, histDate, histShift, dataVersion]);
 
+  // عهدة الشيفت اللي قبله: لو الشيفت اللي قبله ماتفتحش خالص بنرجع لأقرب شيفت قبله (لحد ٣) اتقفل بعهدة؛ لو لقينا شيفت مفتوح
+  // مانكمّلش رجوع (بيتقفل تلقائيًا وعهدته بتتنقل). بترجّع { data } أو { error } لو أي قراءة فشلت.
   async function getPrevShiftClosing(date, shiftKey) {
-    const prev = prevShiftOf(date, shiftKey);
-    const rec = await getShiftRecord(prev.date, prev.shiftKey);
-    if (rec && rec.closed) return { cash: rec.closingCash, method: rec.methodClosing };
-    return null;
+    let cursor = { date, shiftKey };
+    for (let i = 0; i < 3; i++) {
+      cursor = prevShiftOf(cursor.date, cursor.shiftKey);
+      const r = await getShiftRecordStrict(cursor.date, cursor.shiftKey);
+      if (r.error) return { error: r.error };
+      if (!r.data) continue;
+      return r.data.closed ? { data: { cash: r.data.closingCash, method: r.data.methodClosing } } : { data: null };
+    }
+    return { data: null };
   }
 
   async function claimShift(shiftKey) {

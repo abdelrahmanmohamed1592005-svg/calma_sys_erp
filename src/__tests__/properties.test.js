@@ -135,3 +135,34 @@ describe("خصائص عامة (property tests) على منطق التحصيل: �
     }
   });
 });
+
+describe("rebaseShiftRecord - مراجعة الكود الكاملة", () => {
+  const row = (room, amt = "", extra = {}) => ({ room, expenseDesc: "", expenseAmt: amt, expenseCategory: "أخرى", expenseCurrency: "EGP", collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP", paymentDetails: {}, notes: "", ...extra });
+  const rec = (over) => ({ rows: [], hotelRows: [], cafeteriaRows: [], shiftNotes: "", ...over });
+
+  it("بند فندق اتمسح عند الموظف بينمسح ومفيش بند بيتكرر (كان C بيتكرر مرتين)", () => {
+    const A = row("h1", 100), B = row("h2", 200), C = row("h3", 300);
+    const base = rec({ hotelRows: [A, B, C] });
+    const out = rebaseShiftRecord(base, rec({ hotelRows: [B, C] }), rec({ hotelRows: [A, B, C], shiftNotes: "x", updatedAt: "t2" }));
+    expect(out.hotelRows.map((r) => r.room)).toEqual(["h2", "h3"]);
+    expect(out.shiftNotes).toBe("x");
+  });
+
+  it("الموظف كتب تحصيل في خانة والسيرفر زوّد تحصيل حجز في نفس الخانة: بيتجمعوا (٥٠٠ + ٣٠٠) مش واحد بيمسح التاني", () => {
+    const base = rec({ rows: [row(601)] });
+    const mine = rec({ rows: [row(601, "", { collectionAmt: 500 })] });
+    const fresh = rec({ rows: [row(601, "", { collectionAmt: 300, bookingId: "b1", collectionDesc: "تحصيل" })], updatedAt: "t2" });
+    const out = rebaseShiftRecord(base, mine, fresh);
+    expect(out.rows[0].collectionAmt).toBe(800);
+    expect(out.rows[0].bookingId).toBe("b1");
+  });
+
+  it("تعديل الموظف في خانة والسيرفر ما لمسهاش: بتفضل زي ما كتب الموظف، وخانة السيرفر الجديدة بتفضل", () => {
+    const base = rec({ rows: [row(601), row(602)] });
+    const mine = rec({ rows: [row(601, "", { notes: "ملاحظتي" }), row(602)] });
+    const fresh = rec({ rows: [row(601), row(602, "", { collectionAmt: 40, collectionDesc: "x" })], updatedAt: "t2" });
+    const out = rebaseShiftRecord(base, mine, fresh);
+    expect(out.rows[0].notes).toBe("ملاحظتي");
+    expect(out.rows[1].collectionAmt).toBe(40);
+  });
+});

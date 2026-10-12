@@ -37,6 +37,14 @@ export async function getShiftRecord(date, shiftKey) {
   return shiftFromRow(data);
 }
 
+/* زي getShiftRecord بس بتفرّق بين "مفيش سجل" (data = null) و"القراءة فشلت" (error): قراءة فاشلة (نت وقع لحظة) ما تتعاملش كأن
+   اليومية مش موجودة - وإلا كان هيتعمل سجل جديد برصيد افتتاحي صفر وتتكتب فوق عهدة الشيفت اللي قبله. */
+export async function getShiftRecordStrict(date, shiftKey) {
+  const { data, error } = await supabase.from("shift_records").select("*").eq("date", date).eq("shift_key", shiftKey).maybeSingle();
+  if (error) return { error: error.message };
+  return { data: data ? shiftFromRow(data) : null };
+}
+
 export async function createShiftRecord(rec) {
   const { data, error } = await supabase.from("shift_records").insert(shiftToRow(rec)).select().maybeSingle();
   if (error) return { error: error.message };

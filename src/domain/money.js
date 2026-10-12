@@ -142,7 +142,7 @@ export function applyCollectionToRows(rows, entry) {
   if (idx === -1) idx = rows.findIndex((r) => r.room === entry.room && isEmptyRow(r) && !r.bookingId);
   const out = rows.slice();
   if (idx === -1) {
-    out.push({ ...emptyLedgerRow(entry.room), ...(bid ? { bookingId: bid } : {}), collectionAmt: amount, collectionMethod: entry.method, collectionCurrency: entry.currency, collectionDesc: label, ...(details ? { paymentDetails: details } : {}) });
+    out.push({ ...emptyLedgerRow(entry.room), ...(bid ? { bookingId: bid } : {}), collectionAmt: Math.round(amount * 100) / 100, collectionMethod: entry.method, collectionCurrency: entry.currency, collectionDesc: label, ...(details ? { paymentDetails: details } : {}) });
     return { rows: out, added: true };
   }
   const r = rows[idx];
@@ -278,6 +278,9 @@ export function computeShiftTotals(record) {
       methodClosing[m][cur] = (methodHandover[m]?.[cur] || 0) + (byMethodCurrency[m]?.[cur] || 0);
     });
   });
+  // تقريب كل المبالغ لقرشين: مجموع أعداد عشرية بيطلّع بقايا زي 75.02999999999999 كانت بتتخزّن وتتنقل كعهدة للشيفت اللي بعده
+  const rnd = (o) => { Object.keys(o).forEach((k) => { if (typeof o[k] === "number") o[k] = Math.round(o[k] * 100) / 100; else if (o[k] && typeof o[k] === "object") rnd(o[k]); }); return o; };
+  [totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodClosing].forEach(rnd);
   return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodHandover, methodClosing };
 }
 
@@ -345,20 +348,32 @@ export function rebaseShiftRecord(base, mine, fresh) {
   const out = { ...fresh };
   Object.keys(mine).forEach((k) => { if (!skip.has(k) && !same(mine[k], base?.[k])) out[k] = mine[k]; });
   // الصفوف (الغرف وبنود الفندق): نطبّق بس الخانات اللي الموظف غيّرها فعلاً فوق نسخة السيرفر
-  const mergeRows = (baseRows, mineRows, freshRows) => {
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const mergeRows = (baseRows, mineRows, freshRows, { structural = false } = {}) => {
+    // بند اتمسح/اتضاف عند الموظف (طول مختلف عن النسخة الأصلية): المطابقة بالمكان بتبوّظ (بند بيتكرر وبند بيتمسح ويرجع)،
+    // وبنود الفندق بيكتبها الموظف نفسه بس - فنسخته هي الصح
+    if (structural && (mineRows || []).length !== (baseRows || []).length) return (mineRows || []).slice();
     const rows = (freshRows || []).slice();
     (mineRows || []).forEach((row, i) => {
       const b = baseRows?.[i];
       if (!b) { rows.push(row); return; }
       if (!rows[i] || same(row, b)) return;
       const merged = { ...rows[i] };
-      Object.keys(row).forEach((k) => { if (!same(row[k], b[k])) merged[k] = row[k]; });
+      Object.keys(row).forEach((k) => {
+        if (same(row[k], b[k])) return;
+        // الموظف كتب مبلغ تحصيل في خانة والسيرفر زوّد تحصيل حجز في نفس الخانة: بنجمع الاتنين (مش الأحدث يمسح التاني)
+        if (k === "collectionAmt" && !same(rows[i][k], b[k])) {
+          merged[k] = r2((Number(rows[i][k]) || 0) + ((Number(row[k]) || 0) - (Number(b[k]) || 0)));
+          return;
+        }
+        merged[k] = row[k];
+      });
       rows[i] = merged;
     });
     return rows;
   };
   out.rows = mergeRows(base?.rows, mine.rows, fresh.rows);
-  out.hotelRows = mergeRows(base?.hotelRows, mine.hotelRows, fresh.hotelRows);
+  out.hotelRows = mergeRows(base?.hotelRows, mine.hotelRows, fresh.hotelRows, { structural: true });
   out.cafeteriaRows = mergeRows(base?.cafeteriaRows, mine.cafeteriaRows, fresh.cafeteriaRows);
   return out;
 }
