@@ -150,7 +150,7 @@ export function applyCollectionToRows(rows, entry) {
   out[idx] = {
     ...r,
     ...(bid && !r.bookingId ? { bookingId: bid } : {}),
-    collectionAmt: (Number(r.collectionAmt) || 0) + amount,
+    collectionAmt: Math.round(((Number(r.collectionAmt) || 0) + amount) * 100) / 100,      // تقريب لخانتين (من غير 175.04000000000002)
     collectionMethod: entry.method,
     collectionCurrency: entry.currency,
     collectionDesc: r.collectionDesc ? `${r.collectionDesc} / ${label}` : label,
@@ -183,7 +183,7 @@ export function applyCafeteriaCollection(cafeteriaRows, entry) {
     return { rows: out, added: true };
   }
   const r = list[idx];
-  out[idx] = { ...r, collectionAmt: (Number(r.collectionAmt) || 0) + amount, collectionDesc: r.collectionDesc ? `${r.collectionDesc} / ${label}` : label };
+  out[idx] = { ...r, collectionAmt: Math.round(((Number(r.collectionAmt) || 0) + amount) * 100) / 100, collectionDesc: r.collectionDesc ? `${r.collectionDesc} / ${label}` : label };
   return { rows: out, added: false };
 }
 
@@ -195,8 +195,8 @@ export function splitPaymentForCafeteria(booking, amount) {
   if (amt <= 0) return { cafeteria: 0, rest: amt };
   const ex = booking?.extras || {};
   const outstanding = Math.max(0, (Number(ex.cafeteria) || 0) - (Number(ex.cafeteriaPaid) || 0));
-  const cafeteria = Math.min(amt, outstanding);
-  return { cafeteria, rest: amt - cafeteria };
+  const cafeteria = Math.round(Math.min(amt, outstanding) * 100) / 100;
+  return { cafeteria, rest: Math.round((amt - cafeteria) * 100) / 100 };       // تقريب لخانتين: مفيش كسور عشرية عائمة (6.199999...) في المبالغ
 }
 export function cafeteriaOutstanding(booking) {
   const ex = booking?.extras || {};

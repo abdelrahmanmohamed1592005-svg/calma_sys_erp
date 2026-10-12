@@ -6,7 +6,8 @@ import { todayStr, shiftDayNow, addDays, nightsBetween, uid, arabicDateLong } fr
 import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { appendBookingCollection, getPaymentsIndex } from "../data/shifts";
+import { getPaymentsIndex } from "../data/shifts";
+import { recordBookingPayment } from "../data/payments";
 import { guarded } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
 
@@ -16,7 +17,7 @@ function emptyBooking() {
     payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } };
 }
 
-export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onDecideRefund, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
+export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onRefresh, onDecideRefund, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
   const [form, setForm] = useState(null);
   const [filter, setFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -141,6 +142,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     const payNow = form.payNow || { amount: "", method: "كاش", details: emptyPaymentDetails() };
     const advance = !isExistingBooking && !collectionLocked && !online ? Number(payNow.amount) || 0 : 0;
     if (!Number.isFinite(advance) || advance < 0) { showToast("المدفوع لازم يكون رقم صحيح مش سالب"); return; }
+    if (advance > 0 && !myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - ماينفعش تسجّل دفعة مقدّمة. احفظ الحجز من غير دفعة وسجّلها بعد ما تفتح شيفتك"); return; }
     if (advance > 0) {
       const detailsErr = validatePaymentDetailsFor(payNow.method, payNow.details);
       if (detailsErr) { showToast(detailsErr); return; }
@@ -151,7 +153,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
       : advance > 0 ? cleanPaymentDetailsFor(payNow.method, payNow.details) : (originalBooking?.paymentDetails || emptyPaymentDetails());
     let cleaned = {
       ...form, room: Number(form.room), guestName: sanitizeText(form.guestName, 120), phone: sanitizeText(form.phone, 40), code: sanitizeText(form.code, 60), notes: sanitizeText(form.notes, 1000),
-      pax: Math.max(1, Math.floor(Number(form.pax) || 1)), priceNight: priceNightNum, totalRoom: totalRoomNum, amountPaid: isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : advance,
+      pax: Math.max(1, Math.floor(Number(form.pax) || 1)), priceNight: priceNightNum, totalRoom: totalRoomNum, amountPaid: isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : 0,
       extras: clampedExtras, earlyCheckin: { ...clampedEarlyCheckin, note: sanitizeText(clampedEarlyCheckin.note, 300) }, paymentMethod: payMethod, paymentDetails: cleanPaymentDetails, needsRoomReview: false, approvalStatus: "approved",
     };
     delete cleaned.payNow;
@@ -169,9 +171,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     }
     // الدفعة المقدّمة ماتزيدش عن اللي الفندق مطلوب يحصّله
     if (advance > 0 && advance > bookingHotelTotal(cleaned)) { showToast(`المدفوع (${fmt(advance)}) أكبر من الإجمالي (${fmt(bookingHotelTotal(cleaned))} ${cleaned.currency})`); return; }
-    // الجزء اللي بيسدّد خدمات كافيتيريا (لو الحجز عليه) بيروح لصف الكافيتيريا في اليومية
-    const split = advance > 0 ? splitPaymentForCafeteria(cleaned, advance) : { cafeteria: 0, rest: 0 };
-    if (split.cafeteria > 0) cleaned = { ...cleaned, extras: { ...cleaned.extras, cafeteriaPaid: (Number(cleaned.extras?.cafeteriaPaid) || 0) + split.cafeteria } };
     // "تسكين مكرر" (الخطة اتأكدت فوق إنها سليمة): لكل حجز قديم متعارض -
     // - بدأ قبل الجديد: نقصّر تاريخ خروجه لتاريخ دخول الجديد ونعلّمه "غادر مبكرًا"
     //   (مش "ملغي"؛ بيتحاسب على الليالي اللي قعدها والزيادة المدفوعة طلب رد).
@@ -216,17 +215,12 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     // دايمًا لو مدير الحجوزات هو اللي عدّل/أضاف (collectionLocked بيصفّر
     // amountPaid له فوق في الحالتين).
     const savedId = res.data?.id || cleaned.id;
-    const paidDelta = advance;
     let note = "";
-    if (paidDelta > 0 && myActiveShiftKey) {
-      const ledgerRes = await appendBookingCollection(myActiveShiftDate || shiftDayNow(), myActiveShiftKey, profile, rooms, {
-        id: uid(), bookingId: savedId, room: cleaned.room, guestName: cleaned.guestName,
-        amount: paidDelta, currency: cleaned.currency, method: cleaned.paymentMethod, details: cleaned.paymentDetails, cafeteriaPart: split.cafeteria,
-        note: "تحصيل حجز جديد", at: Date.now(),
-      });
-      if (ledgerRes?.error) note += " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
-    } else if (paidDelta > 0) {
-      note += " — ⚠ مفيش شيفتك شغال دلوقتي فالمبلغ ماتسجّلش في اليومية تلقائيًا، سجّليه يدويًا";
+    // الدفعة المقدّمة بتتسجّل بعملية ذرية في القاعدة (الحجز + اليومية + كافيتيريا النزيل) بعد حفظ الحجز
+    if (advance > 0) {
+      const payRes = await recordBookingPayment({ bookingId: savedId, amount: advance, method: payMethod, details: cleaned.paymentDetails, note: "تحصيل حجز جديد" });
+      if (payRes.error) note += " — ⚠ الحجز اتحفظ لكن الدفعة ماتسجّلتش (" + payRes.error + ") - سجّلها من لوحة الغرف";
+      else if (onRefresh) onRefresh();
     }
     refundRequests.forEach((c) => { note += ` — ${c.guestName} غادر مبكرًا: اتحاسب على الليالي اللي قعدها، و${fmt((Number(c.amountPaid) || 0) - bookingGrandTotal(c))} ${c.currency} زيادة مدفوعة عن الليالي اللي ماقعدهاش اتبعتت كطلب رد فلوس لمدير الحجوزات`; });
     const paidAfter = Number(cleaned.amountPaid) || 0;

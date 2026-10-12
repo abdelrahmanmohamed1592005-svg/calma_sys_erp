@@ -3,8 +3,8 @@ import { Plus, Check } from "lucide-react";
 import { PaymentDetailsInline } from "./shared";
 import { COMMON_CURRENCIES, PAYMENT_METHODS, EXPENSE_CATEGORIES, methodOptionsFor, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstanding, fmt } from "../domain/money";
 import { roomLabel } from "../domain/constants";
-import { insertStaffCafeteria, payStaffCafeteria, staffOwed } from "../data/staffCafeteria";
-import { appendStaffCafeteriaCollection } from "../data/shifts";
+import { staffOwed } from "../data/staffCafeteria";
+import { recordStaffCafeteria, settleStaffCafeteria } from "../data/payments";
 import { sanitizeText } from "../domain/security";
 import { guarded } from "../lib/busy";
 
@@ -13,7 +13,7 @@ const keyOf = (name, username) => (username || String(name || "").trim().toLower
 
 /* تحصيل الكافيتيريا التلقائي (خدمات نزلاء اتحصّلت + سداد استاف) + خدمات
    النزلاء اللي لسه عليهم فلوس + كافيتيريا الاستاف (مين أخد ومين دفع ومين عليه فلوس). */
-export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, locked, readOnly, profile, profiles, staffEntries, onReload, flushNow, onRecordUpdated, onLog, showToast }) {
+export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, locked, readOnly, profile, profiles, staffEntries, onReload, flushNow, reloadRecord, onLog, showToast }) {
   const rows = (record.cafeteriaRows || []).filter((r) => (Number(r.collectionAmt) || 0) !== 0);
   const guestOutstanding = (bookings || []).filter((b) => b.status !== "ملغي" && cafeteriaOutstanding(b) > 0);
   const entries = staffEntries || [];
@@ -37,16 +37,6 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
     const p = staffList.find((x) => x.username === who);
     return p ? { name: p.name || p.username, username: p.username } : { name: "", username: null };
   }
-  // السداد بيتسجّل في صف الكافيتيريا في يومية الشيفت (بوسيلته وتفاصيلها)
-  async function ledgerFor(consumer, amountPaid, cur, m, det) {
-    await flushNow();
-    const res = await appendStaffCafeteriaCollection(record.date, record.shiftKey, profile, rooms, {
-      consumerKey: keyOf(consumer.consumerName, consumer.consumerUsername), who: consumer.consumerName, amount: amountPaid, currency: cur, method: m, details: det, note: "كافيتيريا استاف",
-    });
-    if (res.error) { showToast("⚠ السداد اتسجّل على الاستاف لكن تعذر تسجيله في اليومية: " + res.error); return; }
-    onRecordUpdated(res.data);
-  }
-
   async function addConsumption() {
     return guarded("staff-cafe-add", async () => {
       const c = resolveConsumer();
@@ -55,15 +45,16 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       if (!(amt > 0)) { showToast("اكتب مبلغ الاستهلاك (أكبر من صفر)"); return; }
       if (payMode === "pay") { const err = validatePaymentDetailsFor(method, details); if (err) { showToast(err); return; } }
       const det = cleanPaymentDetailsFor(method, details);
-      const res = await insertStaffCafeteria({
-        day: record.date, shiftKey: record.shiftKey, consumerUsername: c.username, consumerName: c.name, description: sanitizeText(desc, 300), amount: amt, currency,
-        paid: payMode === "pay" ? { amount: amt, method, details: det, day: record.date, shiftKey: record.shiftKey } : null,
+      await flushNow();
+      const res = await recordStaffCafeteria({
+        name: c.name, username: c.username, description: sanitizeText(desc, 300), amount: amt, currency,
+        method: payMode === "pay" ? method : null, details: payMode === "pay" ? det : null,
       });
       if (res.error) { showToast(res.error); return; }
       onLog(`كافيتيريا استاف - ${c.name}: ${fmt(amt)} ${currency}${payMode === "pay" ? ` (دفع ${method})` : " (آجل - عليه فلوس)"}`);
       const wasPay = payMode === "pay";
       setDesc(""); setAmount(""); setDetails(emptyPaymentDetails()); setPayMode("later"); setMethod("كاش");
-      if (wasPay) await ledgerFor({ consumerName: c.name, consumerUsername: c.username }, amt, currency, method, det);
+      await reloadRecord();
       await onReload();
       showToast(wasPay ? "تم تسجيل الاستهلاك والسداد" : `تم تسجيل الاستهلاك - ${c.name} عليه ${fmt(amt)} ${currency}`);
     });
@@ -86,19 +77,13 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       if (amt > owed) { showToast(`المبلغ أكبر من المديونية (${fmt(owed)} ${g.currency})`); return; }
       const err = validatePaymentDetailsFor(payMethod, payDetails); if (err) { showToast(err); return; }
       const det = cleanPaymentDetailsFor(payMethod, payDetails);
-      let left = amt;
-      const oldestFirst = [...g.entries].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-      for (const e of oldestFirst) {
-        if (left <= 0) break;
-        const part = Math.min(left, staffOwed(e));
-        const r = await payStaffCafeteria(e, { amount: part, method: payMethod, details: det, day: record.date, shiftKey: record.shiftKey });
-        if (r.error || r.conflict) { showToast(r.error || "السجل اتعدّل من مكان تاني - حدّث وجرّب تاني"); await onReload(); return; }
-        left -= part;
-      }
+      await flushNow();
+      const r = await settleStaffCafeteria({ name: g.name, username: g.username, currency: g.currency, amount: amt, method: payMethod, details: det });
+      if (r.error) { showToast(r.error); await onReload(); return; }
       onLog(`سداد كافيتيريا استاف - ${g.name}: ${fmt(amt)} ${g.currency} (${payMethod})`);
       const usedMethod = payMethod;
       setPayFor(null); setPayAmt(""); setPayMethod("كاش"); setPayDetails(emptyPaymentDetails());
-      await ledgerFor({ consumerName: g.name, consumerUsername: g.username }, amt, g.currency, usedMethod, det);
+      await reloadRecord();
       await onReload();
       showToast(`تم تسجيل سداد ${fmt(amt)} ${g.currency} من ${g.name}${amt < owed ? ` - لسه عليه ${fmt(owed - amt)}` : " - مفيش عليه حاجة"}`);
     });

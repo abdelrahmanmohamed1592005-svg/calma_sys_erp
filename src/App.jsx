@@ -166,6 +166,8 @@ export default function App() {
     addActivity(entry).then((r) => { if (r?.error) showToast("⚠ تعذر تسجيل الحركة في سجل الحركة - اتأكد من النت وسجّل الإجراء تاني لو لزم"); });
   }
 
+  // بعد عملية في القاعدة (دفعة مثلاً): نعيد تحميل الحجوزات واليوميات من القاعدة
+  function refreshAll() { mutationSeq.current++; setDataVersion((v) => v + 1); }
   async function handleSaveOverride(roomNumber, status) { mutationSeq.current++; const res = await setRoomOverride(roomNumber, status, currentProfile?.username); mutationSeq.current++; if (!res.error) setOverrides((prev) => ({ ...prev, [roomNumber]: { status, updatedAt: Date.now() } })); return res; }
   // تعديل آمن من تعارض تعديلين في نفس اللحظة (زي اليومية بالظبط): لو حد
   // عدّل نفس الحجز في نفس اللحظة، بنرجّع "تعارض" بدل ما نكتب فوق تعديله
@@ -262,9 +264,9 @@ export default function App() {
       )}
       {loadingData ? <LoadingScreen /> : (
         <>
-          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onEditBooking={requestEditBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "ledger" && <DailyLedger rooms={rooms} bookings={bookings} profiles={allProfiles} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
+          {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
           {activeTab === "activity" && <ActivityPanel activity={activity} />}
           {activeTab === "users" && <UsersPanel users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}

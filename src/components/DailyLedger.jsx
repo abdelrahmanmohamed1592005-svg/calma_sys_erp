@@ -421,6 +421,16 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   }
   // بيبعت أي كتابة معلّقة فورًا (قبل ما شاشة تانية تكتب على نفس السجل)
   async function flushNow() { if (debounceTimer.current) clearTimeout(debounceTimer.current); await flushPending(); }
+  // بعد عملية ذرية على السيرفر (كافيتيريا استاف): نجيب السجل الجديد، ولو الموظف كتب حاجة في الأثناء نطبّقها فوقه
+  async function reloadRecord() {
+    const fresh = await getShiftRecord(today, myShiftKey);
+    if (!fresh) return;
+    if (pendingRef.current) {
+      const merged = rebaseShiftRecord(baseRecordRef.current || record, pendingRef.current, fresh);
+      baseUpdatedAtRef.current = fresh.updatedAt; baseRecordRef.current = fresh;
+      pendingRef.current = merged; setRecord(merged);
+    } else setRecord(fresh);
+  }
   function updateRow(idx, patch) { const rows = record.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)); persist({ ...record, rows }, { silent: true }); }
   function updateHotelRow(idx, patch) { const hotelRows = hotelRowsOf(record).map((r, i) => (i === idx ? { ...r, ...patch } : r)); persist({ ...record, hotelRows }, { silent: true }); }
   function addHotelRow() { persist({ ...record, hotelRows: [...hotelRowsOf(record), emptyLedgerRow(HOTEL_ROW_LABEL)] }, { silent: true, immediate: true }); }
@@ -525,7 +535,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
             <LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} />
-            <CafeteriaSection record={record} rooms={rooms} bookings={bookings} onUpdateCafeteria={updateCafeteria} locked={locked} readOnly={!perms.editLedger} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={flushNow} onRecordUpdated={(r) => setRecord(r)} onLog={onLog} showToast={showToast} />
+            <CafeteriaSection record={record} rooms={rooms} bookings={bookings} onUpdateCafeteria={updateCafeteria} locked={locked} readOnly={!perms.editLedger} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={flushNow} reloadRecord={reloadRecord} onLog={onLog} showToast={showToast} />
             <HotelRowsTable record={record} locked={locked} onUpdateRow={updateHotelRow} onAddRow={addHotelRow} onRemoveRow={removeHotelRow} />
             <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -563,7 +573,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
                 </div>
               )}
               <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} />
-              <CafeteriaSection record={histRecord} rooms={rooms} bookings={bookings} onUpdateCafeteria={() => {}} locked={true} readOnly={true} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={async () => {}} onRecordUpdated={() => {}} onLog={onLog} showToast={showToast} />
+              <CafeteriaSection record={histRecord} rooms={rooms} bookings={bookings} onUpdateCafeteria={() => {}} locked={true} readOnly={true} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={async () => {}} reloadRecord={async () => {}} onLog={onLog} showToast={showToast} />
               {(histRecord.hotelRows || []).some((r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || r.expenseDesc || r.collectionDesc) && <HotelRowsTable record={histRecord} locked={true} onUpdateRow={() => {}} onAddRow={() => {}} onRemoveRow={() => {}} />}
               <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}

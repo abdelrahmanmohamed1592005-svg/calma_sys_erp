@@ -2219,3 +2219,235 @@ end;
 $$;
 revoke all on function decide_booking_refund(uuid, text, timestamptz, text) from public, anon;
 grant execute on function decide_booking_refund(uuid, text, timestamptz, text) to authenticated;
+
+-- --------------------------------------------------------------------------
+-- 32) إصلاح كود الحجز بعد ٩٩٩٩ حجز في الشهر: lpad(k, 4) كان بيقصّ الرقم الأطول من ٤ خانات (١٠٠٠٠ ← ١٠٠٠)
+--     فيتكرر الكود ويفشل الإدخال بقيد التفرّد. دلوقتي الرقم الأطول بيتكتب كامل (B2610-10000).
+--     بيطلع في اختبار الحمل (sim/load.sim.js).
+-- --------------------------------------------------------------------------
+create or replace function next_booking_code(p_day date default null)
+returns text language plpgsql security definer set search_path = public as $$
+declare ym_v text := to_char(coalesce(p_day, hotel_today()), 'YYMM'); k int;
+begin
+  insert into booking_code_counters(ym, n) values (ym_v, 1)
+    on conflict (ym) do update set n = booking_code_counters.n + 1
+    returning n into k;
+  return 'B' || ym_v || '-' || lpad(k::text, greatest(4, length(k::text)), '0');
+end;
+$$;
+revoke all on function next_booking_code(date) from public, anon, authenticated;
+
+-- --------------------------------------------------------------------------
+-- 33) تسجيل الفلوس بعملية واحدة ذرية (atomic) داخل قاعدة البيانات بدل خطوتين من المتصفح:
+--     قبل كده الواجهة كانت بتحدّث الحجز الأول وبعدين تكتب في اليومية (طلبين منفصلين)، فلو التاني فشل
+--     (نت وقع، تعارض متكرر...) الفلوس كانت بتتسجّل على الحجز ومش في اليومية. دلوقتي:
+--       record_booking_payment  : دفعة على حجز (المدفوع + صف الوسيلة في اليومية + كافيتيريا النزيل) كله أو ولا حاجة.
+--       record_staff_cafeteria  : استهلاك استاف (آجل أو مدفوع فورًا) + صف الكافيتيريا في اليومية.
+--       settle_staff_cafeteria  : سداد مديونية استاف (بيتوزّع على الأقدم الأول) + اليومية.
+--     والتحقق (المبلغ ≤ المتبقي، وسيلة صالحة، آخر ٤ أرقام للفيزا، رقم تليفون للتحويل) بقى في القاعدة نفسها كمان.
+--     منطق دمج صفوف اليومية هنا مطابق لـ applyCollectionToRows/applyCafeteriaCollection في src/domain/money.js
+--     (واختبار sim بيقارن النسختين).
+-- --------------------------------------------------------------------------
+create or replace function calma_online_method(m text) returns boolean language sql immutable as
+$$ select m in ('فيزا', 'تحويل بنكي / انستاباي', 'فودافون كاش', 'انستاباي', 'تحويل بنكي') $$;
+create or replace function calma_last4(t text) returns text language sql immutable as
+$$ select right(regexp_replace(translate(coalesce(t, ''), '٠١٢٣٤٥٦٧٨٩', '0123456789'), '\D', '', 'g'), 4) $$;
+create or replace function calma_phone(t text) returns text language sql immutable as
+$$ select left(regexp_replace(translate(coalesce(t, ''), '٠١٢٣٤٥٦٧٨٩', '0123456789'), '[^0-9+]', '', 'g'), 20) $$;
+create or replace function calma_num(t text) returns numeric language sql immutable as
+$$ select case when trim(coalesce(t, '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(t)::numeric else 0 end $$;
+create or replace function calma_clean_details(m text, d jsonb) returns jsonb language sql immutable as $$
+  select case
+    when m = 'فيزا' then jsonb_build_object('senderName', '', 'senderNumber', calma_last4(d ->> 'senderNumber'), 'ref', '', 'onlinePaid', false)
+    when calma_online_method(m) then jsonb_build_object('senderName', left(btrim(regexp_replace(coalesce(d ->> 'senderName', ''), E'[\\x01-\\x1f\\x7f]', '', 'g')), 120), 'senderNumber', calma_phone(d ->> 'senderNumber'), 'ref', '', 'onlinePaid', false)
+    else jsonb_build_object('senderName', '', 'senderNumber', '', 'ref', '', 'onlinePaid', false) end $$;
+create or replace function calma_details_err(m text, d jsonb) returns text language sql immutable as $$
+  select case
+    when m = 'فيزا' and length(calma_last4(d ->> 'senderNumber')) <> 4 then 'اكتب آخر ٤ أرقام من الكارت (٤ أرقام بالظبط)'
+    when calma_online_method(m) and m <> 'فيزا' and length(regexp_replace(calma_phone(d ->> 'senderNumber'), '\D', '', 'g')) < 6 then 'اكتب رقم التليفون اللي اتحوّل منه'
+    else null end $$;
+create or replace function calma_details_key(m text, d jsonb) returns text language sql immutable as $$
+  select case when m = 'فيزا' then calma_last4(d ->> 'senderNumber')
+              when calma_online_method(m) then concat_ws(' · ', nullif(btrim(coalesce(d ->> 'senderName', '')), ''), nullif(btrim(coalesce(d ->> 'senderNumber', '')), ''))
+              else '' end $$;
+create or replace function calma_valid_method(m text) returns boolean language sql immutable as
+$$ select m is not null and char_length(m) <= 40 and m in ('كاش', 'فيزا', 'تحويل بنكي / انستاباي', 'فودافون كاش', 'انستاباي', 'تحويل بنكي') $$;
+
+-- دمج تحصيل في صف الغرفة (نفس قواعد applyCollectionToRows)
+create or replace function calma_apply_room_collection(p_rows jsonb, p_room int, p_booking uuid, p_method text, p_cur text, p_details jsonb, p_amount numeric, p_label text)
+returns jsonb language plpgsql immutable as $$
+declare i int; el jsonb; idx int := null; n int := jsonb_array_length(p_rows); k text := calma_details_key(p_method, p_details); amt numeric; was_empty boolean; ne jsonb;
+begin
+  if p_amount = 0 then return p_rows; end if;
+  for i in 0 .. n - 1 loop
+    el := p_rows -> i; amt := calma_num(el ->> 'collectionAmt');
+    if (el ->> 'room') = p_room::text and (el ->> 'bookingId') = p_booking::text
+       and not (amt = 0 and coalesce(el ->> 'collectionDesc', '') = '')
+       and el ->> 'collectionMethod' = p_method and coalesce(el ->> 'collectionCurrency', '') = p_cur
+       and calma_details_key(p_method, el -> 'paymentDetails') = k then idx := i; exit; end if;
+  end loop;
+  if idx is null then
+    for i in 0 .. n - 1 loop
+      el := p_rows -> i; amt := calma_num(el ->> 'collectionAmt');
+      if (el ->> 'room') = p_room::text and amt = 0 and coalesce(el ->> 'collectionDesc', '') = '' and coalesce(el ->> 'bookingId', '') = '' then idx := i; exit; end if;
+    end loop;
+  end if;
+  if idx is null then
+    return p_rows || jsonb_build_array(jsonb_build_object('room', p_room, 'bookingId', p_booking, 'expenseDesc', '', 'expenseAmt', '', 'expenseCategory', 'أخرى', 'expenseCurrency', 'EGP',
+      'collectionDesc', p_label, 'collectionAmt', p_amount, 'collectionMethod', p_method, 'collectionCurrency', p_cur, 'paymentDetails', p_details, 'notes', ''));
+  end if;
+  el := p_rows -> idx; amt := calma_num(el ->> 'collectionAmt');
+  was_empty := amt = 0 and coalesce(el ->> 'collectionDesc', '') = '';
+  ne := el || jsonb_build_object('collectionAmt', amt + p_amount, 'collectionMethod', p_method, 'collectionCurrency', p_cur,
+          'collectionDesc', case when coalesce(el ->> 'collectionDesc', '') <> '' then (el ->> 'collectionDesc') || ' / ' || p_label else p_label end);
+  if coalesce(el ->> 'bookingId', '') = '' then ne := ne || jsonb_build_object('bookingId', p_booking); end if;
+  if was_empty then ne := ne || jsonb_build_object('paymentDetails', p_details); end if;
+  return jsonb_set(p_rows, array[idx::text], ne);
+end;
+$$;
+
+-- دمج تحصيل كافيتيريا (نزيل/استاف) في cafeteria_rows (نفس قواعد applyCafeteriaCollection)
+create or replace function calma_apply_cafe_collection(p_rows jsonb, p_kind text, p_key text, p_who text, p_room int, p_method text, p_cur text, p_details jsonb, p_amount numeric, p_label text)
+returns jsonb language plpgsql immutable as $$
+declare i int; el jsonb; idx int := null; n int := jsonb_array_length(p_rows); k text := calma_details_key(p_method, p_details); rk text; ne jsonb;
+begin
+  if p_amount = 0 then return p_rows; end if;
+  for i in 0 .. n - 1 loop
+    el := p_rows -> i;
+    rk := case when coalesce(el ->> 'kind', 'guest') = 'staff' then coalesce(el ->> 'consumerKey', '') else coalesce(el ->> 'bookingId', '') end;
+    if coalesce(el ->> 'kind', 'guest') = p_kind and rk = p_key and el ->> 'collectionMethod' = p_method and coalesce(el ->> 'collectionCurrency', '') = p_cur
+       and calma_details_key(p_method, el -> 'paymentDetails') = k then idx := i; exit; end if;
+  end loop;
+  if idx is null then
+    ne := jsonb_build_object('room', 'كافيتيريا', 'kind', p_kind, 'who', coalesce(p_who, ''), 'expenseDesc', '', 'expenseAmt', '', 'expenseCategory', 'أخرى', 'expenseCurrency', 'EGP',
+      'collectionDesc', p_label, 'collectionAmt', p_amount, 'collectionMethod', p_method, 'collectionCurrency', p_cur, 'paymentDetails', p_details, 'notes', '');
+    ne := ne || case when p_kind = 'staff' then jsonb_build_object('consumerKey', p_key) else jsonb_build_object('bookingId', p_key, 'guestRoom', p_room) end;
+    return p_rows || jsonb_build_array(ne);
+  end if;
+  el := p_rows -> idx;
+  return jsonb_set(p_rows, array[idx::text], el || jsonb_build_object('collectionAmt', calma_num(el ->> 'collectionAmt') + p_amount,
+    'collectionDesc', case when coalesce(el ->> 'collectionDesc', '') <> '' then (el ->> 'collectionDesc') || ' / ' || p_label else p_label end));
+end;
+$$;
+
+-- شيفت الموظف الحالي المفتوح (آخر شيفت مفتوح ليه النهارده/امبارح) - مقفول للتعديل أثناء العملية
+create or replace function calma_my_open_shift() returns shift_records language plpgsql security definer set search_path = public as $$
+declare uname text; sr shift_records;
+begin
+  select username into uname from profiles where id = auth.uid();
+  select * into sr from shift_records where staff_username = uname and closed = false and date >= hotel_today() - 1
+    order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc limit 1 for update;
+  if not found then raise exception 'مفيش شيفتك مفتوح - التحصيل لازم يتسجّل في يومية شيفتك'; end if;
+  return sr;
+end;
+$$;
+revoke all on function calma_my_open_shift() from public, anon, authenticated;
+
+create or replace function record_booking_payment(p_booking uuid, p_amount numeric, p_method text, p_details jsonb default '{}'::jsonb, p_expected timestamptz default null, p_note text default 'تحصيل')
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  b bookings%rowtype; sr shift_records; amt numeric := round(p_amount, 2); due numeric; err text; det jsonb;
+  cafe_out numeric; cafe numeric := 0; v_extras jsonb; v_rows jsonb; v_caf jsonb; note text := left(coalesce(nullif(btrim(p_note), ''), 'تحصيل'), 60);
+begin
+  if not is_staff() then raise exception 'تسجيل التحصيل من صلاحية موظف الشيفت بس'; end if;
+  if amt is null or amt <= 0 then raise exception 'اكتب مبلغ الدفعة (أكبر من صفر)'; end if;
+  if not calma_valid_method(p_method) then raise exception 'وسيلة الدفع غير صالحة'; end if;
+  err := calma_details_err(p_method, coalesce(p_details, '{}'::jsonb));
+  if err is not null then raise exception '%', err; end if;
+  det := calma_clean_details(p_method, coalesce(p_details, '{}'::jsonb));
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if b.status = 'ملغي' then raise exception 'الحجز ملغي - مينفعش يتحصّل عليه'; end if;
+  if p_expected is not null and b.updated_at is distinct from p_expected then
+    raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني';
+  end if;
+  due := greatest(0, booking_hotel_total(b) - coalesce(b.amount_paid, 0));
+  if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل (%)', trim_scale(due); end if;
+  sr := calma_my_open_shift();
+  -- الدفعة بتسدّد خدمات كافيتيريا النزيل الأول، والباقي لصف الغرفة
+  cafe_out := greatest(0, calma_num(b.extras ->> 'cafeteria') - calma_num(b.extras ->> 'cafeteriaPaid'));
+  cafe := least(amt, cafe_out);
+  v_extras := case when cafe > 0 then jsonb_set(b.extras, '{cafeteriaPaid}', to_jsonb(calma_num(b.extras ->> 'cafeteriaPaid') + cafe)) else b.extras end;
+  update bookings set amount_paid = coalesce(amount_paid, 0) + amt, payment_method = p_method, extras = v_extras where id = p_booking;
+  v_rows := calma_apply_room_collection(coalesce(sr.rows, '[]'::jsonb), b.room, b.id, p_method, b.currency, det, amt - cafe,
+    note || coalesce(' - ' || nullif(b.guest_name, ''), '') || ' (+' || trim_scale(amt - cafe) || ' ' || b.currency || ')');
+  v_caf := coalesce(sr.cafeteria_rows, '[]'::jsonb);
+  if cafe > 0 then
+    v_caf := calma_apply_cafe_collection(v_caf, 'guest', b.id::text, b.guest_name, b.room, p_method, b.currency, det, cafe,
+      'خدمة كافيتيريا' || coalesce(' - ' || nullif(b.guest_name, ''), '') || ' (+' || trim_scale(cafe) || ' ' || b.currency || ')');
+  end if;
+  update shift_records set rows = v_rows, cafeteria_rows = v_caf,
+    booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
+    where date = sr.date and shift_key = sr.shift_key;
+  return jsonb_build_object('amount', amt, 'cafeteria', cafe, 'left', due - amt, 'currency', b.currency, 'method', p_method, 'details', det, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
+end;
+$$;
+revoke all on function record_booking_payment(uuid, numeric, text, jsonb, timestamptz, text) from public, anon;
+grant execute on function record_booking_payment(uuid, numeric, text, jsonb, timestamptz, text) to authenticated;
+
+create or replace function record_staff_cafeteria(p_name text, p_username text, p_desc text, p_amount numeric, p_currency text, p_method text default null, p_details jsonb default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare sr shift_records; amt numeric := round(p_amount, 2); nm text := btrim(coalesce(p_name, '')); err text; det jsonb; v_id uuid; paid boolean := p_method is not null and btrim(p_method) <> '';
+begin
+  if not is_staff() then raise exception 'تسجيل كافيتيريا الاستاف من صلاحية موظف الشيفت بس'; end if;
+  if char_length(nm) < 1 or char_length(nm) > 120 then raise exception 'اختار اسم الموظف أو اكتب الاسم'; end if;
+  if amt is null or amt <= 0 or amt > 1000000 then raise exception 'اكتب مبلغ الاستهلاك (أكبر من صفر)'; end if;
+  if p_currency not in ('EGP', 'USD', 'EUR', 'SAR', 'GBP') then raise exception 'عملة غير صالحة'; end if;
+  sr := calma_my_open_shift();
+  if paid then
+    if not calma_valid_method(p_method) then raise exception 'وسيلة الدفع غير صالحة'; end if;
+    err := calma_details_err(p_method, coalesce(p_details, '{}'::jsonb));
+    if err is not null then raise exception '%', err; end if;
+    det := calma_clean_details(p_method, coalesce(p_details, '{}'::jsonb));
+  end if;
+  insert into staff_cafeteria(day, shift_key, consumer_username, consumer_name, description, amount, currency, paid_amount, payments)
+  values (sr.date, sr.shift_key, nullif(btrim(coalesce(p_username, '')), ''), nm, left(coalesce(p_desc, ''), 300), amt, p_currency, case when paid then amt else 0 end,
+          case when paid then jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'at', (extract(epoch from now()) * 1000)::bigint, 'amount', amt, 'method', p_method, 'details', det, 'day', sr.date, 'shiftKey', sr.shift_key)) else '[]'::jsonb end)
+  returning id into v_id;
+  if paid then
+    update shift_records set cafeteria_rows = calma_apply_cafe_collection(coalesce(cafeteria_rows, '[]'::jsonb), 'staff', coalesce(nullif(btrim(coalesce(p_username, '')), ''), lower(nm)), nm, null, p_method, p_currency, det, amt,
+      'كافيتيريا استاف - ' || nm || ' (+' || trim_scale(amt) || ' ' || p_currency || ')')
+      where date = sr.date and shift_key = sr.shift_key;
+  end if;
+  return jsonb_build_object('id', v_id, 'amount', amt, 'paid', paid);
+end;
+$$;
+revoke all on function record_staff_cafeteria(text, text, text, numeric, text, text, jsonb) from public, anon;
+grant execute on function record_staff_cafeteria(text, text, text, numeric, text, text, jsonb) to authenticated;
+
+create or replace function settle_staff_cafeteria(p_name text, p_username text, p_currency text, p_amount numeric, p_method text, p_details jsonb default '{}'::jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  sr shift_records; amt numeric := round(p_amount, 2); nm text := btrim(coalesce(p_name, '')); k text := coalesce(nullif(btrim(coalesce(p_username, '')), ''), lower(btrim(coalesce(p_name, ''))));
+  err text; det jsonb; owed numeric; left_amt numeric; e record; part numeric;
+begin
+  if not is_staff() then raise exception 'تسجيل سداد الاستاف من صلاحية موظف الشيفت بس'; end if;
+  if amt is null or amt <= 0 then raise exception 'اكتب مبلغ السداد'; end if;
+  if not calma_valid_method(p_method) then raise exception 'وسيلة الدفع غير صالحة'; end if;
+  err := calma_details_err(p_method, coalesce(p_details, '{}'::jsonb));
+  if err is not null then raise exception '%', err; end if;
+  det := calma_clean_details(p_method, coalesce(p_details, '{}'::jsonb));
+  sr := calma_my_open_shift();
+  select coalesce(sum(amount - paid_amount), 0) into owed from staff_cafeteria
+    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount;
+  if owed <= 0 then raise exception 'مفيش مديونية على الموظف ده'; end if;
+  if amt > owed then raise exception 'المبلغ أكبر من المديونية (%)', trim_scale(owed); end if;
+  left_amt := amt;
+  for e in select id, amount, paid_amount from staff_cafeteria
+           where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount
+           order by created_at, id for update loop
+    exit when left_amt <= 0;
+    part := least(left_amt, e.amount - e.paid_amount);
+    update staff_cafeteria set paid_amount = paid_amount + part,
+      payments = payments || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'at', (extract(epoch from now()) * 1000)::bigint, 'amount', part, 'method', p_method, 'details', det, 'day', sr.date, 'shiftKey', sr.shift_key))
+      where id = e.id;
+    left_amt := left_amt - part;
+  end loop;
+  update shift_records set cafeteria_rows = calma_apply_cafe_collection(coalesce(cafeteria_rows, '[]'::jsonb), 'staff', k, nm, null, p_method, p_currency, det, amt,
+    'كافيتيريا استاف - ' || nm || ' (+' || trim_scale(amt) || ' ' || p_currency || ')')
+    where date = sr.date and shift_key = sr.shift_key;
+  return jsonb_build_object('amount', amt, 'left', owed - amt, 'currency', p_currency);
+end;
+$$;
+revoke all on function settle_staff_cafeteria(text, text, text, numeric, text, jsonb) from public, anon;
+grant execute on function settle_staff_cafeteria(text, text, text, numeric, text, jsonb) to authenticated;
