@@ -43,14 +43,14 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
 
   // ---- الحجوزات ----
   const online = { onlinePaid: true, senderName: "", senderNumber: "", ref: "BK-1" };
-  await env.seedBooking({ room: 607, guest: "Online One", start: 0, nights: 1, price: 500, total: 500, payment_details: online, source: "Booking.com" });
-  await env.seedBooking({ room: 612, guest: "Online Extras", start: 0, nights: 1, price: 200, total: 200, payment_details: online, source: "Booking.com", extras: { laundry: 0, cafeteria: 0, tours: 50, pickup: 0 } });
-  await env.seedBooking({ room: 608, guest: "Visa Direct", start: 0, nights: 1, price: 300, total: 300, paid: 300, settled: true, method: "فيزا", currency: "EGP" });
-  await env.seedBooking({ room: 611, guest: "Cash Direct", start: 0, nights: 1, price: 100, total: 100, paid: 100, settled: true, method: "كاش", currency: "USD" });
-  await env.seedBooking({ room: 609, guest: "Owes Money", start: -1, nights: 3, price: 100, total: 300 + 100, paid: 100, currency: "USD" });
-  await env.seedBooking({ room: 613, guest: "Cancelled Kept", start: 0, nights: 1, price: 80, total: 80, paid: 80, method: "فيزا", currency: "EUR", status: "ملغي" });
+  await env.seedBooking({ anchor: "shift", room: 607, guest: "Online One", start: 0, nights: 1, price: 500, total: 500, payment_details: online, source: "Booking.com" });
+  await env.seedBooking({ anchor: "shift", room: 612, guest: "Online Extras", start: 0, nights: 1, price: 200, total: 200, payment_details: online, source: "Booking.com", extras: { laundry: 0, cafeteria: 0, tours: 50, pickup: 0 } });
+  await env.seedBooking({ anchor: "shift", room: 608, guest: "Visa Direct", start: 0, nights: 1, price: 300, total: 300, paid: 300, settled: true, method: "فيزا", currency: "EGP" });
+  await env.seedBooking({ anchor: "shift", room: 611, guest: "Cash Direct", start: 0, nights: 1, price: 100, total: 100, paid: 100, settled: true, method: "كاش", currency: "USD" });
+  await env.seedBooking({ anchor: "shift", room: 609, guest: "Owes Money", start: -1, nights: 3, price: 100, total: 300 + 100, paid: 100, currency: "USD" });
+  await env.seedBooking({ anchor: "shift", room: 613, guest: "Cancelled Kept", start: 0, nights: 1, price: 80, total: 80, paid: 80, method: "فيزا", currency: "EUR", status: "ملغي" });
   await env.qRaw("update bookings set refund_decision = 'kept' where guest_name = 'Cancelled Kept'");
-  await env.seedBooking({ room: 610, guest: "Pending Refund", start: 0, nights: 1, price: 60, total: 60, paid: 60, currency: "USD", status: "ملغي" });
+  await env.seedBooking({ anchor: "shift", room: 610, guest: "Pending Refund", start: 0, nights: 1, price: 60, total: 60, paid: 60, currency: "USD", status: "ملغي" });
   await env.qRaw("update bookings set refund_pending = true where guest_name = 'Pending Refund'");
 
   // ---- الأرقام المتوقعة (مستقلة) ----
@@ -129,7 +129,7 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
 
 test("مجموع تقارير الأيام = تقرير الفترة (من غير تكرار حجز أونلاين ولا تحصيل)", async ({ page, env }) => {
   for (const [u, r] of [["boss", "gm"], ["ahmed", "staff"], ["sara", "staff"]]) await env.seedUser(u, r, u);
-  const d0 = shiftDay(), d1 = cairoDate(-1);
+  const d0 = shiftDay(), d1 = cairoDate(d0 === cairoDate(0) ? -1 : -2);   // اليوم اللي قبل يوم الشيفت (بعد منتصف الليل يوم الشيفت = امبارح)
   const emptyRow = (room) => ({ room, expenseDesc: "", expenseAmt: "", expenseCategory: "أخرى", expenseCurrency: "EGP", collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP", paymentDetails: {}, notes: "" });
   const rowsFor = (patch) => Array.from({ length: 16 }, (_, i) => ({ ...emptyRow(601 + i), ...(patch[601 + i] || {}) }));
   const p1 = { 601: col(100, "كاش", "USD"), 602: exp(40, "نظافة", "EGP") };
@@ -137,7 +137,7 @@ test("مجموع تقارير الأيام = تقرير الفترة (من غي�
   await env.seedShift("sara", { key: "night", day: d1, closed: true, rowsPatch: p1, stored: totalsOf(rowsFor(p1), emptyRow("كافيتيريا")) });
   await env.seedShift("ahmed", { key: myShiftKey(), day: d0, rowsPatch: p0 });
   // حجز أونلاين ٣ ليالي بدأ امبارح: بيتحسب مرة واحدة بس (في يوم الدخول)
-  await env.seedBooking({ room: 607, guest: "Online Multi", start: -1, nights: 3, price: 100, total: 300, payment_details: { onlinePaid: true, senderName: "", senderNumber: "", ref: "" } });
+  await env.seedBooking({ anchor: "shift", room: 607, guest: "Online Multi", start: -1, nights: 3, price: 100, total: 300, payment_details: { onlinePaid: true, senderName: "", senderNumber: "", ref: "" } });
   await page.goto("/");
   await login(page, "boss");
   await goTab(page, "التقارير");

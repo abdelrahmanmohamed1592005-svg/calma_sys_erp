@@ -188,7 +188,7 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
 
   test("رفض الرد: الفلوس تفضل متحصّلة وتظهر في التقرير", async ({ page, env }) => {
     await users(env);
-    const id = await seedPaidBooking(env, { room: 607, guest: "Keep Guest", nights: 2, price: 100, paid: 200, method: "فيزا" });
+    const id = await seedPaidBooking(env, { room: 607, guest: "Keep Guest", nights: 2, price: 100, paid: 200, method: "فيزا", anchor: "shift" });
     await env.seedShift("ahmed");     // اليومية فاضية: التحصيل ده اتسجّل على الحجز بس (مفيش journal)
     await page.goto("/");
     await login(page, "rawan");
