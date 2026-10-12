@@ -27,7 +27,7 @@ test.describe("موظف الشيفت", () => {
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 601);
     await expect(roomCard(page)).toContainText("Booked Guest");
-    await expect(page.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ })).toHaveCount(0);
+    await expect(page.getByTestId("pay-record")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /تمديد الحجز/ })).toHaveCount(0);
     await expect(page.getByText(/مش شيفتك دلوقتي/).first()).toBeVisible();
     await openRoom(page, 602);
@@ -50,7 +50,7 @@ test.describe("موظف الشيفت", () => {
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 602);
     await expect(page.getByText(/شيفتك مقفول/).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ })).toHaveCount(0);
+    await expect(page.getByTestId("pay-record")).toHaveCount(0);
   });
 
   test("غرفة متاحة: الموظف يغيّر حالتها (صيانة/تنظيف) وبتتسجّل باسمه، ومدير الحجوزات يشوفها", async ({ page, env }) => {
@@ -65,6 +65,8 @@ test.describe("موظف الشيفت", () => {
     await openRoom(page, 604);
     await page.getByRole("button", { name: "تحت التنظيف" }).click();
     await expect(toast(page)).toContainText("تم تحديث حالة الغرفة");
+    // التوست بتاع أول غرفة ممكن يكون لسه ظاهر: نستنى الكتابة التانية توصل القاعدة قبل ما نقارن
+    await expect.poll(async () => (await env.q("select count(*)::int n from room_overrides"))[0].n, { timeout: 8000 }).toBe(2);
     const ovs = await env.q("select room_number, status, updated_by from room_overrides order by room_number");
     expect(ovs).toEqual([{ room_number: 603, status: "maintenance", updated_by: "ahmed" }, { room_number: 604, status: "cleaning", updated_by: "ahmed" }]);
     await expect(page.getByText(/صيانة 1/)).toBeVisible();
@@ -123,7 +125,7 @@ test.describe("مدير الحجوزات", () => {
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 601);
     await expect(roomCard(page)).toContainText("Res Edit");
-    await expect(page.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ })).toHaveCount(0);   // التحصيل مش شغله
+    await expect(page.getByTestId("pay-record")).toHaveCount(0);   // التحصيل مش شغله
     await expect(field(page, "غسيل")).toHaveCount(0);
     await field(page, "جولات").fill("25");
     await page.getByRole("button", { name: /حفظ الرسوم/ }).click();
@@ -134,7 +136,8 @@ test.describe("مدير الحجوزات", () => {
     // شاشة الحجوزات: السعر والمدفوع مقفولين
     await goTab(page, "الحجوزات");
     await page.locator(".cx-card", { hasText: "Res Edit" }).last().locator("button").first().click();
-    await expect(page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input")).toBeDisabled();
+    await expect(page.getByTestId("advance-amount")).toHaveCount(0);       // مفيش تسجيل تحصيل لمدير الحجوزات
+    await expect(page.getByTestId("payment-block")).toContainText("المدفوع حتى الآن");   // المدفوع للعرض بس
     await expect(page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']")).toBeDisabled();
     await expect(page.getByText(/حجز قديم - أي حاجة فلوس فيه بقت مقفولة/)).toBeVisible();
     await field(page, "اسم النزيل").fill("Res Edit Renamed");
@@ -168,6 +171,8 @@ test.describe("مدير الحجوزات", () => {
       await c.getByRole("button", { name: "تأكيد الإلغاء؟" }).click();
       await expect(toast(page)).toContainText("تم إلغاء الحجز");
     }
+    // التوست بتاع الأول ممكن يكون لسه ظاهر وقت الإلغاء التاني: نستنى القاعدة
+    await expect.poll(async () => (await env.q("select count(*)::int n from bookings where status = 'ملغي'"))[0].n, { timeout: 8000 }).toBe(2);
     expect(await env.q("select guest_name, status, refund_pending from bookings where guest_name in ('Cancel Me','Keep Me') order by guest_name")).toEqual([
       { guest_name: "Cancel Me", status: "ملغي", refund_pending: false }, { guest_name: "Keep Me", status: "ملغي", refund_pending: true }]);
   });

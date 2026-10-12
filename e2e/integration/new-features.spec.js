@@ -1,7 +1,7 @@
 // الميزات الجديدة: أكواد الأفراد، الحجز الأونلاين (من غير وسيلة دفع ولا عمولة)، ظهور التسكين المكرر
 // وتحصيله المنفصل، مصاريف وإيرادات الفندق في اليومية، سعر الليلة على بلوك الغرفة، وحالة الحجز الملغي.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, SHIFT_LABEL, openRoom, openMore } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, SHIFT_LABEL, openRoom, openMore, payOnBoard, waitLedgerSaved } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -19,15 +19,17 @@ test.describe("الحجز المدفوع أونلاين", () => {
     await login(page, "rawan");
     await goTab(page, "الحجوزات");
     await page.getByRole("button", { name: /حجز جديد/ }).click();
-    const methodSelect = page.locator("xpath=//label[contains(.,'طريقة الدفع')]/following-sibling::select");
-    await expect(methodSelect).toBeVisible();
+    // مدير الحجوزات: مفيش خانات تحصيل ولا وسيلة دفع (ده شغل موظف الشيفت)، وبلوك الدفع بيرجع لما يشيل علامة الأونلاين
+    await expect(page.getByTestId("payment-block")).toBeVisible();
+    await expect(page.getByTestId("advance-method")).toHaveCount(0);
     await openMore(page);
     await page.getByRole("checkbox", { name: /الحجز مدفوع أونلاين/ }).check();
+    await expect(page.getByTestId("payment-block")).toHaveCount(0);
     await expect(page.locator("xpath=//label[contains(.,'طريقة الدفع')]")).toHaveCount(0);
     await expect(page.getByText(/عمولة/)).toHaveCount(0);
     await expect(page.getByText(/الصافي|بالعمولة/)).toHaveCount(0);
     await page.getByRole("checkbox", { name: /الحجز مدفوع أونلاين/ }).uncheck();
-    await expect(methodSelect).toBeVisible();
+    await expect(page.getByTestId("payment-block")).toBeVisible();
     // وحجز أونلاين فعلي: مفيش وسيلة دفع ظاهرة في القائمة ولا البطاقة
     await openMore(page);
     await page.getByRole("checkbox", { name: /الحجز مدفوع أونلاين/ }).check();
@@ -108,7 +110,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await field(page, "اسم النزيل").fill("Replacement Guest");
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await priceInput(page).fill("100");
-    await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill("50");
+    await page.getByTestId("advance-amount").fill("50");
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
     const nw = await get(env, "Replacement Guest");
@@ -129,8 +131,8 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     // تحصيل باقي المبلغ من لوحة الغرف بيروح لنفس صف الحجز الجديد
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 613);
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     [rec] = await env.q("select rows from shift_records");
     rows = rec.rows.filter((r) => r.room === 613 && Number(r.collectionAmt) !== 0);
     expect(rows).toHaveLength(2);
@@ -174,7 +176,7 @@ test.describe("مصاريف وإيرادات الفندق في اليومية", 
     await row1.getByPlaceholder("بيان المصروف").fill("خامات تنظيف");
     await row1.getByPlaceholder("مبلغ المصروف").fill("30");
     await row1.locator("select.cx-select").nth(1).selectOption("USD");
-    await page.waitForTimeout(1400);
+    await expect.poll(async () => { const r = (await env.q("select hotel_rows from shift_records"))[0]; const x = r?.hotel_rows?.[1]; return x ? `${x.expenseCategory}|${x.expenseCurrency}|${x.expenseAmt}` : null; }, { timeout: 8000 }).toBe("نظافة|USD|30");
     const rec = (await env.q("select * from shift_records"))[0];
     expect(rec.hotel_rows).toHaveLength(2);
     expect(rec.hotel_rows[0]).toMatchObject({ expenseDesc: "فاتورة الكهرباء", collectionDesc: "إيجار القاعة" });
@@ -220,10 +222,10 @@ test.describe("مصاريف وإيرادات الفندق في اليومية", 
     await expect(page.getByRole("button", { name: /شيل بند فندق/ })).toHaveCount(0);   // بند واحد: مفيش حذف
     await page.getByTestId("hotel-row-add").click();
     await page.getByTestId("hotel-row-1").getByPlaceholder("بيان المصروف").fill("مؤقت");
-    await page.waitForTimeout(1200);
+    await waitLedgerSaved(page);
     expect((await env.q("select hotel_rows from shift_records"))[0].hotel_rows).toHaveLength(2);
     await page.getByRole("button", { name: "شيل بند فندق 2" }).click();
-    await page.waitForTimeout(1000);
+    await waitLedgerSaved(page);
     expect((await env.q("select hotel_rows from shift_records"))[0].hotel_rows).toHaveLength(1);
   });
 
@@ -235,7 +237,7 @@ test.describe("مصاريف وإيرادات الفندق في اليومية", 
     await login(page, "ahmed");
     await goTab(page, "اليومية");
     await page.getByTestId("hotel-row-0").getByPlaceholder("مبلغ المصروف").fill("15");
-    await page.waitForTimeout(1300);
+    await waitLedgerSaved(page);
     const rec = (await env.q("select hotel_rows from shift_records"))[0];
     expect(rec.hotel_rows).toHaveLength(1);
     expect(Number(rec.hotel_rows[0].expenseAmt)).toBe(15);

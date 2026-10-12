@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
-import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingHotelTotal, bookingAmountDue, refundDueAmount, refundStatusOf, ONLINE_METHODS, PAYMENT_METHODS, methodOptionsFor } from "../domain/money";
+import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, refundDueAmount, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, splitPaymentForCafeteria, cafeteriaOutstanding, ONLINE_METHODS } from "../domain/money";
 import { todayStr, shiftDayNow, nightsBetween, addDays, uid } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, appendBookingCollection } from "../data/shifts";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox } from "./shared";
+import { GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline } from "./shared";
 import { sanitizeText } from "../domain/security";
-import { withBusy } from "../lib/busy";
+import { withBusy, guarded } from "../lib/busy";
 
 const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#F5EFD6", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
@@ -22,13 +22,16 @@ function Sec({ id, title, children, badge }) {
   );
 }
 
-export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOverride, onToggleSettled, onUpdateBooking, onEditBooking, onDecideRefund, onLog, showToast, dataVersion }) {
+export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOverride, onUpdateBooking, onEditBooking, onDecideRefund, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [extrasDraft, setExtrasDraft] = useState(null);
   const extrasBaseRef = useRef("");
   const normExtras = (e) => JSON.stringify([Number(e?.laundry) || 0, Number(e?.cafeteria) || 0, Number(e?.tours) || 0, Number(e?.pickup) || 0]);
-  const [collectMethod, setCollectMethod] = useState("كاش");
+  // دفعة جديدة على الحجز: مبلغ + وسيلة + تفاصيلها (فيزا = آخر ٤ أرقام، تحويل = اسم + رقم)
+  const [pay, setPay] = useState({ amount: "", method: "كاش", details: emptyPaymentDetails() });
+  // تحصيل رسم الدخول المبكر ليه وسيلته وتفاصيله المستقلة (مايتخلطوش مع خانات الدفعة العادية)
+  const [epay, setEpay] = useState({ method: "كاش", details: emptyPaymentDetails() });
   const [codeQuery, setCodeQuery] = useState("");
   const [extendNights, setExtendNights] = useState(1);
   const [ecFee, setEcFee] = useState("");
@@ -40,8 +43,8 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date) : null;
 
   useEffect(() => { if (status?.booking) setExtrasDraft({ laundry: status.booking.extras?.laundry || "", cafeteria: status.booking.extras?.cafeteria || "", tours: status.booking.extras?.tours || "", pickup: status.booking.extras?.pickup || "" }); else setExtrasDraft(null); if (status?.booking) extrasBaseRef.current = normExtras(status.booking.extras); }, [selected, status?.booking?.id]);
-  useEffect(() => { if (status?.booking) setCollectMethod(status.booking.paymentMethod || "كاش"); }, [selected, status?.booking?.id]);
-  useEffect(() => { setExtendNights(1); setEcFee(""); setEcNote(""); setEcCollect(true); }, [selected, status?.booking?.id]);
+  useEffect(() => { setPay({ amount: "", method: "كاش", details: emptyPaymentDetails() }); }, [selected, status?.booking?.id]);
+  useEffect(() => { setExtendNights(1); setEcFee(""); setEcNote(""); setEcCollect(true); setEpay({ method: "كاش", details: emptyPaymentDetails() }); }, [selected, status?.booking?.id]);
   useEffect(() => { if (status?.booking) setCodesDraft(normalizeGuestCodes(status.booking.guestCodes, status.booking.pax)); else setCodesDraft([]); }, [selected, status?.booking?.id, status?.booking?.pax, JSON.stringify(status?.booking?.guestCodes || [])]);
 
   useEffect(() => {
@@ -78,88 +81,73 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     onLog(`تغيير حالة ${roomLabel(rooms, selected)} إلى: ${MANUAL_STATUS_OPTIONS.find((o) => o.key === statusKey)?.label}`);
     showToast("تم تحديث حالة الغرفة");
   }
-  // تسجيل تحصيل كامل المبلغ لازم يسجل طريقة الدفع الفعلية (فيزا/تحويل بنكي/
-  // فودافون كاش...) مش بس يعلّم "متحصّل" - عشان التقرير يقدر يحسب كل طريقة
-  // دفع صح، فبنحدّث amountPaid وطريقة الدفع مع علامة التحصيل في تحديث واحد.
-  // بعد كده الإجمالي/الرسوم الإضافية بقت مقفولة (قاعدة البيانات نفسها بترفض
-  // أي تعديل عليها - انظر قسم ١٧ في schema.sql) لحد ما حد يلغي علامة التحصيل
-  // دي الأول - عشان "خلاص اتحصّل" يفضل معناها خلاص فعليًا، مش حاجة ممكن
-  // تتغيّر من تحتها وتبوّظ المبلغ اللي فعليًا استلمناه.
-  async function collectFullPayment(booking) { return withBusy(() => collectFullPaymentInner(booking)); }
-  async function collectFullPaymentInner(booking) {
-    // حجز أونلاين: سعر الغرفة اتدفع للمنصة، فالفندق بيحصّل بس الخدمات/الدخول المبكر
-    const online = !!booking.paymentDetails?.onlinePaid;
-    const gt = bookingHotelTotal(booking);
-    const res = await onUpdateBooking(booking.id, { ...booking, paymentMethod: collectMethod, amountPaid: gt, settled: online ? booking.settled : true });
+  // تسجيل دفعة (كاملة أو جزئية) على الحجز: كل دفعة ليها وسيلتها وتفاصيلها
+  // (فيزا: آخر ٤ أرقام، تحويل: اسم + رقم) وبتتسجّل في صف نفس الوسيلة في اليومية،
+  // فتدخل التحصيل وعهدة الفيزا والتقرير بنفس التفاصيل. حالة الحجز (مدفوع
+  // بالكامل / متبقي) بتتحدّث لوحدها من المدفوع والإجمالي - مفيش علامة بتتعلّم.
+  // لو النزيل عليه خدمات كافيتيريا، الدفعة بتسدّدها الأول وبتروح لصف الكافيتيريا.
+  async function recordPayment(booking) { return guarded("pay:" + booking.id, () => recordPaymentInner(booking)); }
+  async function recordPaymentInner(booking) {
+    if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
+    const due = bookingAmountDue(booking);
+    const typed = pay.amount === "" ? due : Number(pay.amount);
+    const amount = Math.round((Number(typed) || 0) * 100) / 100;
+    if (!(amount > 0)) { showToast("اكتب مبلغ الدفعة (أكبر من صفر)"); return; }
+    if (amount > due) { showToast(`المبلغ أكبر من المتبقي على النزيل (${fmt(due)} ${booking.currency})`); return; }
+    const detailsErr = validatePaymentDetailsFor(pay.method, pay.details);
+    if (detailsErr) { showToast(detailsErr); return; }
+    if (!myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - التحصيل لازم يتسجّل في يومية شيفتك"); return; }
+    const details = cleanPaymentDetailsFor(pay.method, pay.details);
+    const method = pay.method;
+    // الخانات بتتصفّر فورًا (القيم اتحفظت فوق) عشان اللي بيتكتب بعد كده مايضيعش وقت الحفظ
+    setPay({ amount: "", method: "كاش", details: emptyPaymentDetails() });
+    const split = splitPaymentForCafeteria(booking, amount);
+    const extras = split.cafeteria > 0 ? { ...(booking.extras || {}), cafeteriaPaid: (Number(booking.extras?.cafeteriaPaid) || 0) + split.cafeteria } : booking.extras;
+    const res = await onUpdateBooking(booking.id, { ...booking, extras, paymentMethod: method, amountPaid: (Number(booking.amountPaid) || 0) + amount });
     if (res?.error) { showToast(res.error); return; }
-    onLog(`تحصيل كامل مبلغ الحجز (${collectMethod}) - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
-    // سجّل المبلغ المتحصّل فعليًا دلوقتي (المتبقي اللي كان على النزيل) تلقائيًا
-    // في يومية شيفت موظف الشيفت النهارده - انظر appendBookingCollection في
-    // data/shifts.js. من غيرها كان التحصيل (خصوصًا الكاش) ممكن ميظهرش في
-    // رصيد الدرج أو "تحصيل اليوم" فوق إلا لو الموظف دخّله يدويًا تاني في
-    // اليومية.
-    const paidDelta = gt - (Number(booking.amountPaid) || 0);
+    const detailsText = describePaymentDetails(method, details) ? "\u2066" + describePaymentDetails(method, details) + "\u2069" : "";
+    onLog(`تحصيل ${fmt(amount)} ${booking.currency} (${method}${detailsText ? " " + detailsText : ""}) - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
     let ledgerWarning = "";
-    if (paidDelta !== 0 && myActiveShiftKey) {
-      const ledgerRes = await appendBookingCollection(myActiveShiftDate || shiftDayNow(), myActiveShiftKey, profile, rooms, {
-        id: uid(), bookingId: booking.id, room: booking.room, guestName: booking.guestName,
-        amount: paidDelta, currency: booking.currency, method: collectMethod,
-        note: "تحصيل كامل مبلغ الحجز", at: Date.now(),
-      });
-      if (ledgerRes?.error) ledgerWarning = " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
-    }
-    showToast((online ? "تم تسجيل تحصيل الخدمات/الدخول المبكر" : "تم تسجيل التحصيل الكامل - السعر والرسوم الإضافية مقفولة دلوقتي، لو احتجتي تعدّليهم لازم تلغي التحصيل الأول") + ledgerWarning);
-  }
-  // الحجز مدفوع فعلًا بالكامل (المدفوع >= الإجمالي) لكن علامة "متحصّل" اتشالت
-  // (مثلاً بعد إلغاء التحصيل لتعديل الرسوم) - بنرجّعها من غير أي مبلغ جديد.
-  async function markSettled(booking) { return withBusy(() => markSettledInner(booking)); }
-  async function markSettledInner(booking) {
-    const res = await onToggleSettled(booking, true);
-    if (res?.error) { showToast(res.error); return; }
-    onLog(`تعليم الحجز متحصّل بالكامل - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
-    showToast("تم تعليم الحجز متحصّل بالكامل");
-  }
-  async function undoSettled(booking) { return withBusy(() => undoSettledInner(booking)); }
-  async function undoSettledInner(booking) {
-    const res = await onToggleSettled(booking, false);
-    if (res?.error) { showToast(res.error); return; }
-    onLog(`إلغاء تحصيل كامل مبلغ الحجز - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
-    showToast("تم إلغاء علامة التحصيل - السعر والرسوم بقت قابلة للتعديل تاني");
+    const ledgerRes = await appendBookingCollection(myActiveShiftDate || shiftDayNow(), myActiveShiftKey, profile, rooms, {
+      id: uid(), bookingId: booking.id, room: booking.room, guestName: booking.guestName,
+      amount, currency: booking.currency, method, details, cafeteriaPart: split.cafeteria,
+      note: "تحصيل", at: Date.now(),
+    });
+    if (ledgerRes?.error) ledgerWarning = " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
+    const left = Math.max(0, due - amount);
+    showToast(`تم تسجيل ${fmt(amount)} ${booking.currency} (${method}${detailsText ? " " + detailsText : ""})${split.cafeteria > 0 ? ` - منها ${fmt(split.cafeteria)} كافيتيريا` : ""} - ${left > 0 ? `المتبقي ${fmt(left)} ${booking.currency}` : "الحجز مدفوع بالكامل"}` + ledgerWarning);
   }
   // دخول مبكر: رسم بيتضاف على الحجز (بيزوّد الإجمالي)، وممكن يتحصّل في نفس اللحظة فيدخل اليومية والتقرير والتوتال.
-  async function applyEarlyCheckin(booking) { return withBusy(() => applyEarlyCheckinInner(booking)); }
+  async function applyEarlyCheckin(booking) { return guarded("early:" + booking.id, () => applyEarlyCheckinInner(booking)); }
   async function applyEarlyCheckinInner(booking) {
     if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
     const fee = Math.max(0, Math.round((Number(ecFee) || 0) * 100) / 100);
     if (!(fee > 0)) { showToast("اكتب رسم الدخول المبكر (أكبر من صفر)"); return; }
     const collectNow = !!perms.markPaymentReceived && ecCollect;
-    const next = { ...booking, earlyCheckin: { applied: true, fee, note: sanitizeText(ecNote, 300) }, settled: false };
-    if (collectNow) { next.amountPaid = (Number(booking.amountPaid) || 0) + fee; next.paymentMethod = collectMethod; }
+    if (collectNow) { const detailsErr = validatePaymentDetailsFor(epay.method, epay.details); if (detailsErr) { showToast(detailsErr); return; } }
+    const details = cleanPaymentDetailsFor(epay.method, epay.details);
+    const next = { ...booking, earlyCheckin: { applied: true, fee, note: sanitizeText(ecNote, 300) } };
+    if (collectNow) { next.amountPaid = (Number(booking.amountPaid) || 0) + fee; next.paymentMethod = epay.method; }
     const res = await onUpdateBooking(booking.id, next);
     if (res?.error) { showToast(res.error); return; }
     let saved = res?.data || next;
-    onLog(`دخول مبكر ${fee} ${booking.currency} - ${roomLabel(rooms, booking.room)} - ${booking.guestName}${collectNow ? ` (اتحصّل - ${collectMethod})` : " (لسه ماتحصّلش)"}`);
+    onLog(`دخول مبكر ${fee} ${booking.currency} - ${roomLabel(rooms, booking.room)} - ${booking.guestName}${collectNow ? ` (اتحصّل - ${epay.method})` : " (لسه ماتحصّلش)"}`);
     let warn = "";
     if (collectNow) {
       if (myActiveShiftKey) {
         const ledgerRes = await appendBookingCollection(myActiveShiftDate || shiftDayNow(), myActiveShiftKey, profile, rooms, {
           id: uid(), bookingId: booking.id, room: booking.room, guestName: booking.guestName,
-          amount: fee, currency: booking.currency, method: collectMethod, note: "رسم دخول مبكر", at: Date.now(),
+          amount: fee, currency: booking.currency, method: epay.method, details, note: "رسم دخول مبكر", at: Date.now(),
         });
         if (ledgerRes?.error) warn = " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
       } else warn = " — ⚠ مفيش شيفتك شغال فالمبلغ ماتسجّلش في اليومية تلقائيًا";
-      // الحجز كان متحصّل بالكامل قبل الرسم ورجع متحصّل بعد التحصيل: نرجّع العلامة
-      if (booking.settled && !booking.paymentDetails?.onlinePaid && bookingAmountDue(saved) <= 0) {
-        const r2 = await onToggleSettled(saved, true);
-        if (r2?.error) warn += " — تعذر إرجاع علامة \"متحصّل بالكامل\": " + r2.error;
-      }
     }
     setEcFee(""); setEcNote("");
     showToast(`تم تسجيل الدخول المبكر (${fmt(fee)} ${booking.currency})${collectNow ? " واتحصّل" : " - لسه متبقي على النزيل، حصّله من زرار التحصيل"}` + warn);
   }
   // غادر مبكرًا: بيقصّر الإقامة لحد النهارده (الحد الأدنى ليلة)، والزيادة اللي كان النزيل دافعها عن ليالي
   // ماقعدهاش بتتحوّل لطلب رد فلوس لمدير الحجوزات (قاعدة البيانات هي اللي بتفتحه).
-  async function earlyLeave(booking) { return withBusy(() => earlyLeaveInner(booking)); }
+  async function earlyLeave(booking) { return guarded("leave:" + booking.id, () => earlyLeaveInner(booking)); }
   async function earlyLeaveInner(booking) {
     if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
     const patch = earlyLeavePatch(booking, date, "plain");
@@ -202,7 +190,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   // الإجمالي الكلي، المتبقي، التقارير - بتتحدث تلقائي لوحدها. وبتتأكد الأول
   // إن الغرفة مش متحجزة لحد تاني في الليالي الإضافية دي قبل ما تأكد - لو فيه
   // تعارض وكان هو حجز أضافه مدير الحجوزات، بنوضح ده صريح في رسالة الرفض.
-  async function extendBooking(booking) { return withBusy(() => extendBookingInner(booking)); }
+  async function extendBooking(booking) { return guarded("extend:" + booking.id, () => extendBookingInner(booking)); }
   async function extendBookingInner(booking) {
     if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
     const n = Math.max(1, Number(extendNights) || 1);
@@ -216,20 +204,18 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     }
     const newTotalRoom = repricedTotalRoom(booking, booking.checkin, newCheckout);
     const extended = { ...booking, checkout: newCheckout, totalRoom: newTotalRoom };
-    // الليالي الإضافية ليها سعر (سعر الليلة المتفق عليه) ولسه ماتحصّلتش - فلو
-    // الحجز كان "متحصّل بالكامل" وبقى عليه متبقي، العلامة بتتشال تلقائيًا
-    // والغرفة تبقى حمراء لحد ما يتحصّل الفرق (مش لازم حد يلغي التحصيل بإيده).
+    // الليالي الإضافية ليها سعر (سعر الليلة المتفق عليه) ولسه ماتحصّلتش - فالمتبقي
+    // بيزيد لوحده والغرفة تبقى حمراء لحد ما يتحصّل الفرق.
     const gtNew = bookingGrandTotal(extended);
     const paidNow = Number(booking.amountPaid) || 0;
-    const reopensBalance = !booking.paymentDetails?.onlinePaid && booking.settled && gtNew > paidNow;
-    const res = await onUpdateBooking(booking.id, { ...extended, settled: reopensBalance ? false : booking.settled });
+    const res = await onUpdateBooking(booking.id, extended);
     if (res?.error) { showToast(res.error); return; }
     onLog(`تمديد حجز ${roomLabel(rooms, booking.room)} - ${booking.guestName} بـ${n} ليلة/ليالي - تشيك أوت جديد ${newCheckout}`);
     const due = booking.paymentDetails?.onlinePaid ? 0 : Math.max(0, gtNew - paidNow);
     showToast(`تم تمديد الحجز لحد ${newCheckout}${due > 0 ? ` - الإجمالي بقى ${fmt(gtNew)} ${booking.currency} والمتبقي ${fmt(due)} (الغرفة حمراء لحد التحصيل)` : ""}`);
     setExtendNights(1);
   }
-  async function saveExtras(booking) { return withBusy(() => saveExtrasInner(booking)); }
+  async function saveExtras(booking) { return guarded("extras:" + booking.id, () => saveExtrasInner(booking)); }
   async function saveExtrasInner(booking) {
     if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
     // منع أي قيمة سالبة من غير داعي تضرب قيد قاعدة البيانات (bookings_extras_nonneg)
@@ -331,7 +317,6 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                   {b.guestName}
                   {online && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 11 }}>مدفوع أونلاين</span>}
                   {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 11 }}>تسكين مكرر</span>}
-                  {b.settled && <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)", marginInlineStart: 6, fontSize: 11 }}>متحصّل بالكامل - مقفول</span>}
                 </div>
                 <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>
                   {b.checkin} ← {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {fmt(b.priceNight)} {b.currency} / ليلة · {b.pax || 1} فرد
@@ -346,19 +331,16 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
 
               {/* الأفعال الأساسية: تحصيل / غادر مبكرًا */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                {perms.markPaymentReceived && !offShift && online && due > 0 && (<>
-                  <select className="cx-select" data-testid="collect-method" style={{ fontSize: 12, width: 120 }} value={collectMethod} onChange={(e) => setCollectMethod(e.target.value)}>{methodOptionsFor(collectMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                  <button className="cx-btn cx-btn-gold" data-testid="collect-extras" style={{ fontSize: 12 }} onClick={() => collectFullPayment(b)}><Check size={13} /> تسجيل تحصيل الخدمات/الدخول المبكر</button>
-                </>)}
-                {perms.markPaymentReceived && !offShift && !online && (
-                  b.settled ? (
-                    <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => undoSettled(b)}>إلغاء علامة "متحصّل بالكامل"</button>
-                  ) : due <= 0 ? (
-                    <button className="cx-btn cx-btn-gold" style={{ fontSize: 12 }} onClick={() => markSettled(b)}><Check size={13} /> تعليم "متحصّل بالكامل"</button>
-                  ) : (<>
-                    <select className="cx-select" data-testid="collect-method" style={{ fontSize: 12, width: 120 }} value={collectMethod} onChange={(e) => setCollectMethod(e.target.value)}>{methodOptionsFor(collectMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                    <button className="cx-btn cx-btn-gold" style={{ fontSize: 12 }} onClick={() => collectFullPayment(b)}><Check size={13} /> تسجيل تحصيل كامل المبلغ</button>
-                  </>)
+                {perms.markPaymentReceived && !offShift && b.status !== "ملغي" && due > 0 && (
+                  <div data-testid="pay-panel" style={{ width: "100%", background: "#fff", borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{online ? "تسجيل تحصيل الخدمات/الدخول المبكر" : "تسجيل دفعة"} <span style={{ fontWeight: 400, color: "var(--muted)" }}>(سيب المبلغ فاضي = كامل المتبقي {fmt(due)} {b.currency})</span></div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start" }}>
+                      <input className="cx-input" data-testid="pay-amount" type="number" min="0" placeholder={`المبلغ (${fmt(due)})`} style={{ width: 120 }} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} />
+                      <select className="cx-select" data-testid="collect-method" style={{ fontSize: 12, width: 150 }} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                      <PaymentDetailsInline compact={false} testid="pay" method={pay.method} details={pay.details} onChange={(d) => setPay({ ...pay, details: d })} />
+                      <button className="cx-btn cx-btn-gold" data-testid="pay-record" style={{ fontSize: 12 }} onClick={() => recordPayment(b)}><Check size={13} /> تسجيل التحصيل</button>
+                    </div>
+                  </div>
                 )}
                 {occupiedNow && perms.editRoomStatus && !offShift && (
                   <span data-testid="early-leave"><TwoStepButton label="غادر مبكرًا (تقصير الإقامة)" confirmLabel={`تأكيد المغادرة المبكرة؟ ${earlyLeavePreview(b)}`} onConfirm={() => earlyLeave(b)} /></span>
@@ -369,7 +351,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
               {/* باقي التفاصيل مطوية عشان الشاشة تفضل بسيطة */}
               {(extrasList.length > 0 || (canAct && occupiedNow)) && (
                 <Sec id="sec-extras" title="خدمات إضافية ودخول مبكر" badge={extrasList.length ? extrasList.length : null}>
-                  {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift && !b.settled ? (
+                  {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift ? (
                     <div>
                       <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (بتتضاف على طول من غير ما تفتح الحجز كامل)</div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
@@ -383,7 +365,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                       <button className="cx-btn cx-btn-gold" style={{ marginTop: 8, fontSize: 12 }} onClick={() => saveExtras(b)}><Check size={13} /> حفظ الرسوم</button>
                     </div>
                   ) : extrasList.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{extrasList.map(([label, amt]) => <span key={label} className="cx-pill" style={{ background: "var(--paper2)" }}>{label}: {fmt(amt)}</span>)}{b.settled && canAct && <span style={{ fontSize: 11, color: "var(--muted)" }}>(مقفولة - الحجز متحصّل بالكامل)</span>}</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{extrasList.map(([label, amt]) => <span key={label} className="cx-pill" style={{ background: "var(--paper2)" }}>{label}: {fmt(amt)}</span>)}</div>
                   )}
                   {b.earlyCheckin?.applied && b.earlyCheckin.note && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر: {b.earlyCheckin.note}</div>}
                   {occupiedNow && !b.earlyCheckin?.applied && canAct && (
@@ -394,7 +376,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                         <input className="cx-input" data-testid="early-note" placeholder="ملاحظة (اختياري)" value={ecNote} onChange={(e) => setEcNote(e.target.value)} style={{ width: 160 }} />
                         {perms.markPaymentReceived && (<>
                           <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}><input type="checkbox" data-testid="early-collect" checked={ecCollect} onChange={(e) => setEcCollect(e.target.checked)} /> حصّلته دلوقتي</label>
-                          {ecCollect && <select className="cx-select" style={{ fontSize: 12, width: 110 }} value={collectMethod} onChange={(e) => setCollectMethod(e.target.value)}>{methodOptionsFor(collectMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>}
+                          {ecCollect && <><select className="cx-select" data-testid="early-method" style={{ fontSize: 12, width: 130 }} value={epay.method} onChange={(e) => setEpay({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select><PaymentDetailsInline compact={false} testid="early" method={epay.method} details={epay.details} onChange={(d) => setEpay({ ...epay, details: d })} /></>}
                         </>)}
                         <button className="cx-btn cx-btn-gold" data-testid="early-apply" style={{ fontSize: 12 }} onClick={() => applyEarlyCheckin(b)}><Check size={13} /> تسجيل الدخول المبكر</button>
                       </div>
@@ -430,11 +412,11 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
               <Sec id="sec-info" title="بيانات الحجز">
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, fontSize: 12.5 }}>
                   <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>مصدر الحجز</div><div style={{ fontWeight: 700 }}>{b.source}</div></div>
-                  {!online && <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>طريقة الدفع</div><div style={{ fontWeight: 700 }}>{b.paymentMethod}</div></div>}
+                  {!online && <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>آخر وسيلة دفع</div><div style={{ fontWeight: 700 }}>{b.paymentMethod}</div></div>}
                   <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>سعر الليلة × المدة</div><div style={{ fontWeight: 700 }}>{fmt(b.priceNight)} × {nightsBetween(b.checkin, b.checkout)} = {fmt(b.totalRoom)} {b.currency}</div></div>
                   {online && b.paymentDetails?.ref && <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>ملاحظة حجز المنصة</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.ref}</div></div>}
-                  {!online && ONLINE_METHODS.includes(b.paymentMethod) && b.paymentDetails?.senderName && (
-                    <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>تفاصيل التحويل المباشر</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.senderName} · {b.paymentDetails.senderNumber} {b.paymentDetails.ref && `· ${b.paymentDetails.ref}`}</div></div>
+                  {!online && ONLINE_METHODS.includes(b.paymentMethod) && describePaymentDetails(b.paymentMethod, b.paymentDetails) && (
+                    <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>{b.paymentMethod === "فيزا" ? "فيزا - آخر ٤ أرقام" : "تفاصيل التحويل"}</div><div dir="ltr" style={{ fontWeight: 700, textAlign: "right" }}>{describePaymentDetails(b.paymentMethod, b.paymentDetails)}</div></div>
                   )}
                   {b.notes && <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>ملاحظات</div><div>{b.notes}</div></div>}
                 </div>

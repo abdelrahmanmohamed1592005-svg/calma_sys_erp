@@ -87,13 +87,11 @@ export function resolveDuplicateCheckin(clash, newCheckin, today = todayStr()) {
 export function earlyLeavePatch(clash, newCheckout, reason = "duplicate") {
   const totalRoom = repricedTotalRoom(clash, clash.checkin, newCheckout);
   const next = { ...clash, checkout: newCheckout, totalRoom };
-  const online = !!clash.paymentDetails?.onlinePaid;
-  const settled = !!clash.settled && (online || (Number(clash.amountPaid) || 0) >= bookingGrandTotal(next));
   const tail = reason === "duplicate" ? " - الغرفة اتسلمت لحجز تسكين مكرر جديد" : ` (قبل معاده ${clash.checkout})`;
   const note = newCheckout === clash.checkin
     ? `غادر مبكرًا في نفس يوم الدخول (${clash.checkin})${tail}`
     : `غادر مبكرًا في ${newCheckout}${tail}`;
-  return { checkout: newCheckout, totalRoom, settled, status: "تم تسجيل الخروج", leftEarly: true, notes: (clash.notes ? clash.notes + " — " : "") + note };
+  return { checkout: newCheckout, totalRoom, status: "تم تسجيل الخروج", leftEarly: true, notes: (clash.notes ? clash.notes + " — " : "") + note };
 }
 
 /* خطة تسكين مكرر كاملة لكل الحجوزات القديمة المتعارضة - بترجع إما رفض

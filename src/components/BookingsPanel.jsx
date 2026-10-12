@@ -1,17 +1,19 @@
 import React, { useState, useEffect } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock } from "lucide-react";
 import { TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox } from "./shared";
-import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, methodOptionsFor, ONLINE_METHODS, emptyPaymentDetails, bookingGrandTotal, bookingAmountDue, refundDueAmount, refundStatusOf } from "../domain/money";
+import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, splitPaymentForCafeteria, bookingGrandTotal, bookingHotelTotal, refundStatusOf } from "../domain/money";
 import { todayStr, shiftDayNow, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { appendBookingCollection } from "../data/shifts";
-import { withBusy } from "../lib/busy";
+import { guarded } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
 
 function emptyBooking() {
-  return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, guestCodes: [""], checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", amountTendered: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", settled: false, notes: "", imported: false, needsRoomReview: false };
+  return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, guestCodes: [""], checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", notes: "", imported: false, needsRoomReview: false,
+    // دفعة مقدّمة (اختيارية) وقت إضافة الحجز - كل دفعة ليها وسيلتها وتفاصيلها (آخر ٤ أرقام الفيزا / اسم ورقم المحوِّل) وبتتسجّل في اليومية بيهم
+    payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } };
 }
 
 export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onDecideRefund, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
@@ -28,29 +30,25 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
   useEffect(() => {
     if (pendingEditId) {
       const b = bookings.find((x) => x.id === pendingEditId);
-      if (b) setForm({ ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails() });
+      if (b) setForm(formFromBooking(b));
       onConsumeEditRequest();
     }
   }, [pendingEditId]);
 
   function startNew() { setForm(emptyBooking()); }
-  function startEdit(b) { setForm({ ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails() }); }
+  function formFromBooking(b) { return { ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails(), payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } }; }
+  function startEdit(b) { setForm(formFromBooking(b)); }
 
   const isExistingBooking = form ? bookings.some((b) => b.id === form.id) : false;
   const originalBooking = form && isExistingBooking ? bookings.find((b) => b.id === form.id) : null;
   const moneyLocked = role === "reservations" && isExistingBooking;
   // مدير الحجوزات يضيف حجز ويحدد سعره عادي (فوق)، لكن "استلمنا الفلوس فعليًا
-  // ولا لأ" (المدفوع/المتحصّل/الباقي) مش شغله خالص - ده قرار موظف الشيفت
-  // اللي قدام النزيل فعليًا. القفل ده شامل حتى وقت إنشاء حجز جديد، مش بس
-  // وقت تعديل حجز قديم زي moneyLocked فوق.
+  // ولا لأ" (المدفوع) مش شغله خالص - ده قرار موظف الشيفت اللي قدام النزيل
+  // فعليًا. القفل ده شامل حتى وقت إنشاء حجز جديد، مش بس وقت تعديل حجز قديم.
+  // حالة الدفع (مدفوع بالكامل / متبقي) بتتحسب لوحدها من المدفوع والإجمالي -
+  // مفيش علامة "متحصّل" بتتعلّم بالإيد ولا بتقفل حاجة.
   const collectionLocked = role === "reservations";
-  // الحجز ده "متحصّل بالكامل" فعلًا ولسه كذلك (form.settled لسه true) - يبقى
-  // أي حاجة تخص قيمته (سعر/إجمالي/رسوم/دخول مبكر/طريقة الدفع) مقفولة لحد ما
-  // حد يلغي علامة التحصيل الأول، بغض النظر عن الدور. ده هو نفس القرار اللي
-  // في بلوك الغرف (RoomBoard.jsx) ونفس قيد قاعدة البيانات (قسم ١٧ في
-  // schema.sql) - عشان "خلاص اتحصّل" يفضل معناها خلاص فعليًا.
-  const settledLocked = isExistingBooking && !!originalBooking?.settled && !!form?.settled;
-  const chargeLocked = moneyLocked || settledLocked;
+  const chargeLocked = moneyLocked;
   // الدخول المبكر ممكن يتسجّل على حجز موجود لسه ماتسجّلش عليه (حتى لو التسعير مقفول)؛ لو اتسجّل قبل كده بيتقفل زي باقي الرسوم.
   const earlyLocked = chargeLocked && !(isExistingBooking && !originalBooking?.earlyCheckin?.applied);
 
@@ -68,8 +66,10 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
   const roomTotalNow = lockedRepricedTotal != null ? lockedRepricedTotal : (Number(form?.totalRoom || autoTotalRoom) || 0);
   const earlyFee = form && form.earlyCheckin?.applied ? Number(form.earlyCheckin.fee) || 0 : 0;
   const grandTotal = form ? roomTotalNow + (Number(form.extras.laundry) || 0) + (Number(form.extras.cafeteria) || 0) + (Number(form.extras.tours) || 0) + (Number(form.extras.pickup) || 0) + earlyFee : 0;
-  const balanceDue = form ? grandTotal - (Number(form.amountPaid) || 0) : 0;
-  const changeDue = form && form.paymentMethod === "كاش" && form.amountTendered !== "" ? (Number(form.amountTendered) || 0) - grandTotal : null;
+  // اللي اتدفع قبل كده (حجز موجود) + الدفعة المقدّمة دلوقتي (حجز جديد بس)
+  const paidBefore = isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : 0;
+  const advanceNow = form && !isExistingBooking ? Math.max(0, Number(form.payNow?.amount) || 0) : 0;
+  const balanceDue = form ? Math.max(0, grandTotal - paidBefore - advanceNow) : 0;
   // كل الحجوزات الفعلية المتعارضة مع الغرفة/التواريخ دي، والخطة اللي هتتنفذ
   // لو تأكّد "تسكين مكرر" - بتتحسب لحظيًا عشان الموظف يشوف قبل ما يحفظ إيه اللي
   // هيحصل بالظبط للحجز القديم (أو ليه مرفوض وليه).
@@ -89,13 +89,13 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
   async function rollbackResolved(done) {
     let allOk = true;
     for (const d of [...done].reverse()) {
-      const r = await onUpdateBooking(d.updated.id, { ...d.updated, checkout: d.original.checkout, totalRoom: d.original.totalRoom, settled: d.original.settled, status: d.original.status, leftEarly: d.original.leftEarly, notes: d.original.notes });
+      const r = await onUpdateBooking(d.updated.id, { ...d.updated, checkout: d.original.checkout, totalRoom: d.original.totalRoom, status: d.original.status, leftEarly: d.original.leftEarly, notes: d.original.notes });
       if (r?.error) allOk = false;
     }
     return allOk;
   }
 
-  async function saveBooking() { return withBusy(saveBookingInner); }
+  async function saveBooking() { return guarded("save-booking", saveBookingInner); }
   async function saveBookingInner() {
     if (perms.roomStatusRestricted && offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تضيف أو تعدّل حجز" : "مش شيفتك دلوقتي - الحجوزات بتتضاف/تتعدل وقت شيفتك اللي حاجزه بس"); return; }
     if (!form.room || !form.guestName.trim()) { showToast("لازم تحدد الغرفة واسم النزيل"); return; }
@@ -103,7 +103,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     // الفورم: نحدّث نسخته المرجعية ونطلب مراجعة، بدل ما كل حفظة بعد كده تفشل
     // بـ"تعارض" والفورم يفضل متعلّق على نسخة قديمة.
     if (isExistingBooking && originalBooking && form.updatedAt && originalBooking.updatedAt && form.updatedAt !== originalBooking.updatedAt) {
-      setForm((f) => ({ ...f, updatedAt: originalBooking.updatedAt, amountPaid: originalBooking.amountPaid, amountTendered: originalBooking.amountTendered, settled: originalBooking.settled }));
+      setForm((f) => ({ ...f, updatedAt: originalBooking.updatedAt, amountPaid: originalBooking.amountPaid }));
       showToast("الحجز ده اتحدّث من مكان تاني وانت بتعدّل فيه (غالبًا تحصيل) - راجع القيم الجديدة واضغط حفظ تاني");
       return;
     }
@@ -124,64 +124,47 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     // أرقام غلط (سالبة/كسور/نص) بتتصلّح هنا قبل الحفظ بدل ما توصل لقيود قاعدة
     // البيانات وتطلّع رسالة تقنية، ونصوص الحقول الحرة بتتنظّف وتتحدد بطول أقصى.
     const pd = form.paymentDetails || {};
-    const cleanPaymentDetails = { ...pd, senderName: sanitizeText(pd.senderName, 120), senderNumber: sanitizeText(pd.senderNumber, 60), ref: sanitizeText(pd.ref, 200) };
     const priceNightNum = Math.max(0, Number(form.priceNight) || 0);
     const totalRoomNum = form.totalRoom !== "" ? Number(form.totalRoom) : autoTotalRoom;
     if (!Number.isFinite(totalRoomNum) || totalRoomNum < 0) { showToast("إجمالي الغرفة لازم يكون رقم صحيح مش سالب"); return; }
-    const amountPaidNum = form.amountPaid === "" ? 0 : Number(form.amountPaid);
-    if (!Number.isFinite(amountPaidNum) || amountPaidNum < 0) { showToast("المدفوع لازم يكون رقم صحيح مش سالب"); return; }
+    // الدفعة المقدّمة (حجز جديد بس، وموظف الشيفت بس): ليها وسيلتها وتفاصيلها
+    // المخصوصة (فيزا = آخر ٤ أرقام، تحويل = اسم + رقم) وبتتسجّل في اليومية بيهم.
+    const online = !!pd.onlinePaid;
+    const payNow = form.payNow || { amount: "", method: "كاش", details: emptyPaymentDetails() };
+    const advance = !isExistingBooking && !collectionLocked && !online ? Number(payNow.amount) || 0 : 0;
+    if (!Number.isFinite(advance) || advance < 0) { showToast("المدفوع لازم يكون رقم صحيح مش سالب"); return; }
+    if (advance > 0) {
+      const detailsErr = validatePaymentDetailsFor(payNow.method, payNow.details);
+      if (detailsErr) { showToast(detailsErr); return; }
+    }
+    const payMethod = advance > 0 ? payNow.method : (originalBooking?.paymentMethod || "كاش");
+    const cleanPaymentDetails = online
+      ? { ...emptyPaymentDetails(), onlinePaid: true, ref: sanitizeText(pd.ref, 200) }
+      : advance > 0 ? cleanPaymentDetailsFor(payNow.method, payNow.details) : (originalBooking?.paymentDetails || emptyPaymentDetails());
     let cleaned = {
       ...form, room: Number(form.room), guestName: sanitizeText(form.guestName, 120), phone: sanitizeText(form.phone, 40), code: sanitizeText(form.code, 60), notes: sanitizeText(form.notes, 1000),
-      pax: Math.max(1, Math.floor(Number(form.pax) || 1)), priceNight: priceNightNum, totalRoom: totalRoomNum, amountPaid: amountPaidNum, amountTendered: Math.max(0, Number(form.amountTendered) || 0),
-      extras: clampedExtras, earlyCheckin: { ...clampedEarlyCheckin, note: sanitizeText(clampedEarlyCheckin.note, 300) }, paymentDetails: cleanPaymentDetails, needsRoomReview: false, approvalStatus: "approved",
+      pax: Math.max(1, Math.floor(Number(form.pax) || 1)), priceNight: priceNightNum, totalRoom: totalRoomNum, amountPaid: isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : advance,
+      extras: clampedExtras, earlyCheckin: { ...clampedEarlyCheckin, note: sanitizeText(clampedEarlyCheckin.note, 300) }, paymentMethod: payMethod, paymentDetails: cleanPaymentDetails, needsRoomReview: false, approvalStatus: "approved",
     };
+    delete cleaned.payNow;
     if (!cleaned.guestName) { showToast("لازم تحدد الغرفة واسم النزيل"); return; }
     cleaned.guestCodes = normalizeGuestCodes(Array.from({ length: cleaned.pax }, (_, i) => sanitizeText(form.guestCodes?.[i] ?? "", 40)), cleaned.pax);
     const monthClash = findGuestCodeConflict(bookings, cleaned.guestCodes, cleaned.checkin, cleaned.id);
     if (monthClash) { showToast(`الكود ${monthClash.code} مستخدم الشهر ده بالفعل (غرفة ${monthClash.room} - ${monthClash.guestName}) - اختار كود تاني`); return; }
     const dupCode = duplicateGuestCode(cleaned.guestCodes);
     if (dupCode) { showToast(`الكود ${dupCode} مكتوب لأكتر من فرد في نفس الحجز - كل فرد ليه كود مختلف`); return; }
-    // قفل قيمة الحجز (سعر/إجمالي/رسوم/دخول مبكر/طريقة دفع): لو مدير حجوزات
-    // بيعدّل حجز قديم، أو لو الحجز متحصّل بالكامل فعلاً ولسه كذلك - نفرض
-    // القيم الأصلية حتى لو الواجهة اتلعب فيها بأي طريقة (دفاع إضافي، القفل
-    // الحقيقي في قاعدة البيانات نفسها - قسم ١٤/١٧ في schema.sql). الاستثناء
-    // الوحيد إجمالي الغرفة: بيتحرك مع عدد الليالي (تمديد/تقصير) بنفس سعر الليلة.
+    // مدير الحجوزات بيعدّل حجز قديم: قيمة الحجز (سعر/رسوم/وسيلة دفع) تفضل زي ما هي
+    // حتى لو الواجهة اتلعب فيها (القفل الحقيقي في قاعدة البيانات - قسم ١٤/١٥).
+    // الاستثناء الوحيد إجمالي الغرفة: بيتحرك مع عدد الليالي بنفس سعر الليلة.
     if (chargeLocked && originalBooking) {
       cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: lockedRepricedTotal, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin?.applied ? originalBooking.earlyCheckin : cleaned.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails };
     }
-    // قفل التحصيل (المدفوع/المتحصّل نقدًا/تم التحصيل بالكامل): مدير الحجوزات
-    // بس ملوش دعوة بالتحصيل خالص - حجز جديد أو حجز مش مقفول بالكامل بيترجع
-    // لقيمته الأصلية (أو صفر لحجز جديد) حتى لو الواجهة اتلعب فيها.
-    if (moneyLocked && originalBooking) {
-      cleaned = { ...cleaned, amountPaid: originalBooking.amountPaid, amountTendered: originalBooking.amountTendered, settled: originalBooking.settled };
-    } else if (collectionLocked) {
-      cleaned = { ...cleaned, amountPaid: originalBooking ? originalBooking.amountPaid : 0, amountTendered: originalBooking ? originalBooking.amountTendered : 0, settled: originalBooking ? originalBooking.settled : false };
-    }
-    // لو الحجز كان "متحصّل بالكامل" وإجماليه زاد (تمديد/ليالي إضافية) بقى فيه
-    // متبقي - علامة "متحصّل" بتتشال تلقائيًا (الغرفة تبقى حمراء لحد ما موظف
-    // الشيفت يحصّل الفرق)، ومدير الحجوزات مايحتاجش يلغي التحصيل بإيده (مش من
-    // صلاحيته أصلًا). قاعدة البيانات بتسمح بالحالة دي بس (قسم ١٤).
-    let reopenedDue = 0;
-    if (originalBooking?.settled && cleaned.settled) {
-      const gtAfter = bookingGrandTotal(cleaned);
-      const paidNow = Number(cleaned.amountPaid) || 0;
-      const isOnline = !!cleaned.paymentDetails?.onlinePaid;
-      if (gtAfter !== bookingGrandTotal(originalBooking)) {
-        if (isOnline || gtAfter > paidNow) {
-          cleaned = { ...cleaned, settled: false };
-          if (!isOnline) reopenedDue = gtAfter - paidNow;
-        }
-        // (الإجمالي نقص بسبب تقصير ليالي والمدفوع لسه مغطّيه: العلامة بتفضل،
-        // والزيادة المدفوعة بتتحوّل تلقائيًا لطلب رد فلوس لمدير الحجوزات.)
-      }
-    }
-    // مينفعش "متحصّل بالكامل" يتسجل والمدفوع لسه أقل من الإجمالي الكلي - دفاع
-    // إضافي هنا (الشرط الحقيقي في قاعدة البيانات - قسم ٢٤ في schema.sql)،
-    // عشان مايحصلش حجز متحصّل بالكامل وعليه متبقي في نفس الوقت.
-    if (!cleaned.paymentDetails?.onlinePaid && cleaned.settled) {
-      const gtNow = bookingGrandTotal(cleaned);
-      if ((Number(cleaned.amountPaid) || 0) < gtNow) { showToast(`مينفعش تعلّمي "متحصّل بالكامل" وفيه ${fmt(gtNow - (Number(cleaned.amountPaid) || 0))} ${cleaned.currency} لسه متبقية`); return; }
-    }
+    // الدفعة المقدّمة ماتزيدش عن اللي الفندق مطلوب يحصّله
+    if (advance > 0 && advance > bookingHotelTotal(cleaned)) { showToast(`المدفوع (${fmt(advance)}) أكبر من الإجمالي (${fmt(bookingHotelTotal(cleaned))} ${cleaned.currency})`); return; }
+    // الجزء اللي بيسدّد خدمات كافيتيريا (لو الحجز عليه) بيروح لصف الكافيتيريا في اليومية
+    const split = advance > 0 ? splitPaymentForCafeteria(cleaned, advance) : { cafeteria: 0, rest: 0 };
+    if (split.cafeteria > 0) cleaned = { ...cleaned, extras: { ...cleaned.extras, cafeteriaPaid: (Number(cleaned.extras?.cafeteriaPaid) || 0) + split.cafeteria } };
+    const reopenedDue = 0;
     // "تسكين مكرر" (الخطة اتأكدت فوق إنها سليمة): لكل حجز قديم متعارض -
     // - بدأ قبل الجديد: نقصّر تاريخ خروجه لتاريخ دخول الجديد ونعلّمه "غادر مبكرًا"
     //   (مش "ملغي"؛ بيتحاسب على الليالي اللي قعدها والزيادة المدفوعة طلب رد).
@@ -226,20 +209,19 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     // دايمًا لو مدير الحجوزات هو اللي عدّل/أضاف (collectionLocked بيصفّر
     // amountPaid له فوق في الحالتين).
     const savedId = res.data?.id || cleaned.id;
-    const paidDelta = (Number(cleaned.amountPaid) || 0) - (originalBooking ? Number(originalBooking.amountPaid) || 0 : 0);
+    const paidDelta = advance;
     let note = "";
-    if (paidDelta !== 0 && myActiveShiftKey) {
+    if (paidDelta > 0 && myActiveShiftKey) {
       const ledgerRes = await appendBookingCollection(myActiveShiftDate || shiftDayNow(), myActiveShiftKey, profile, rooms, {
         id: uid(), bookingId: savedId, room: cleaned.room, guestName: cleaned.guestName,
-        amount: paidDelta, currency: cleaned.currency, method: cleaned.paymentMethod,
-        note: isExistingBooking ? "فرق مدفوع بتعديل حجز" : "تحصيل حجز جديد", at: Date.now(),
+        amount: paidDelta, currency: cleaned.currency, method: cleaned.paymentMethod, details: cleaned.paymentDetails, cafeteriaPart: split.cafeteria,
+        note: "تحصيل حجز جديد", at: Date.now(),
       });
       if (ledgerRes?.error) note += " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
-    } else if (paidDelta !== 0) {
+    } else if (paidDelta > 0) {
       note += " — ⚠ مفيش شيفتك شغال دلوقتي فالمبلغ ماتسجّلش في اليومية تلقائيًا، سجّليه يدويًا";
     }
     refundRequests.forEach((c) => { note += ` — ${c.guestName} غادر مبكرًا: اتحاسب على الليالي اللي قعدها، و${fmt((Number(c.amountPaid) || 0) - bookingGrandTotal(c))} ${c.currency} زيادة مدفوعة عن الليالي اللي ماقعدهاش اتبعتت كطلب رد فلوس لمدير الحجوزات`; });
-    if (reopenedDue > 0) note += ` — الحجز عليه ${fmt(reopenedDue)} ${cleaned.currency} متبقي (فرق الليالي) والغرفة هتظهر حمراء لحد ما موظف الشيفت يحصّله`;
     const paidAfter = Number(cleaned.amountPaid) || 0;
     if (!cleaned.paymentDetails?.onlinePaid && isExistingBooking && paidAfter > bookingGrandTotal(cleaned) && cleaned.status !== "ملغي") note += ` — ⚠ المدفوع (${fmt(paidAfter)}) بقى أكبر من الإجمالي الجديد بـ ${fmt(paidAfter - bookingGrandTotal(cleaned))} ${cleaned.currency} - فيه فلوس زيادة لازم تترد للنزيل`;
     if (cleaned.status === "ملغي" && originalBooking?.status !== "ملغي" && paidAfter > 0) note += ` — الحجز اتلغى وفيه ${fmt(paidAfter)} ${cleaned.currency} متحصّل: اتبعت طلب رد فلوس لمدير الحجوزات (هو اللي يقرر يرد أو يرفض، ولو رد بيتشال من التحصيل واليومية)`;
@@ -339,7 +321,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>تاريخ الخروج</label><input className="cx-input" type="date" min={form.checkin ? addDays(form.checkin, 1) : undefined} value={form.checkout} onChange={(e) => setForm({ ...form, checkout: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>السعر لليلة {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={chargeLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value })} /><select className="cx-select" disabled={chargeLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 90 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={chargeLocked} placeholder={String(autoTotalRoom)} value={lockedRepricedTotal != null ? lockedRepricedTotal : form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
-            {!form.paymentDetails?.onlinePaid && <div><label style={{ fontSize: 11, color: "var(--muted)" }}>طريقة الدفع {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><select className="cx-select" disabled={chargeLocked} value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}>{methodOptionsFor(form.paymentMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select></div>}
 
             {/* الحالة (ومعاها "ملغي") من صلاحية مدير الحجوزات بس - موظف
                 الشيفت وقت إضافة حجز جديد (walk-in) مش بيشوف الاختيار ده
@@ -351,11 +332,10 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
           </div>
 
           {moneyLocked && <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", background: "var(--paper2)", borderRadius: 8, padding: 8, display: "flex", gap: 6, alignItems: "center" }}><Lock size={13} /> حجز قديم - أي حاجة فلوس فيه بقت مقفولة ومش قابلة للتعديل. لو محتاج تصحيح مالي كلّم المدير العام.</div>}
-          {!moneyLocked && settledLocked && <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", background: "var(--paper2)", borderRadius: 8, padding: 8, display: "flex", gap: 6, alignItems: "center" }}><Lock size={13} /> الحجز ده متحصّل بالكامل - السعر/الإجمالي/الرسوم مقفولة. لو احتجتي تعدّليها، لازم تلغي علامة "تم تحصيل كامل المبلغ" تحت الأول.</div>}
 
           {lockedRepricedTotal != null && originalBooking && lockedRepricedTotal !== (Number(originalBooking.totalRoom) || 0) && (
             <div style={{ marginTop: 10, fontSize: 12, color: "var(--teal)", background: "var(--paper2)", borderRadius: 8, padding: 8 }}>
-              عدد الليالي اتغيّر ({nightsBetween(originalBooking.checkin, originalBooking.checkout)} ← {nights}) - إجمالي الغرفة اتحرك تلقائيًا من {fmt(originalBooking.totalRoom)} إلى {fmt(lockedRepricedTotal)} {form.currency} بنفس سعر الليلة. {originalBooking.settled && !originalBooking.paymentDetails?.onlinePaid && lockedRepricedTotal > (Number(originalBooking.totalRoom) || 0) ? "علامة \"متحصّل بالكامل\" هتتشال تلقائيًا ويظهر المتبقي." : ""}
+              عدد الليالي اتغيّر ({nightsBetween(originalBooking.checkin, originalBooking.checkout)} ← {nights}) - إجمالي الغرفة اتحرك تلقائيًا من {fmt(originalBooking.totalRoom)} إلى {fmt(lockedRepricedTotal)} {form.currency} بنفس سعر الليلة.
             </div>
           )}
           {form.status === "ملغي" && (isExistingBooking ? originalBooking?.status !== "ملغي" : true) && (Number(isExistingBooking ? originalBooking?.amountPaid : form.amountPaid) || 0) > 0 && (
@@ -376,17 +356,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
             </div>
           )}
 
-          {ONLINE_METHODS.includes(form.paymentMethod) && !form.paymentDetails.onlinePaid && (
-            <div className="cx-card" style={{ marginTop: 10, padding: 10, background: "var(--paper2)" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>تفاصيل التحويل المباشر {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-                <input className="cx-input" placeholder="اسم المرسل" disabled={chargeLocked} value={form.paymentDetails.senderName} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, senderName: e.target.value } })} />
-                <input className="cx-input" placeholder={form.paymentMethod === "فيزا" ? "آخر ٤ أرقام الكارت" : "رقم المحفظة / الهاتف"} disabled={chargeLocked} value={form.paymentDetails.senderNumber} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, senderNumber: e.target.value } })} />
-                <input className="cx-input" placeholder="رقم العملية / ملاحظة" disabled={chargeLocked} value={form.paymentDetails.ref} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, ref: e.target.value } })} />
-              </div>
-            </div>
-          )}
-
           {form.paymentDetails.onlinePaid ? (
             <div className="cx-card" style={{ marginTop: 10, padding: 10 }}>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي الكلي (غرفة + رسوم)</div>
@@ -394,24 +363,23 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
               <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>الحجز مدفوع أونلاين - سعر الغرفة اتدفع للمنصة. أي خدمات إضافية أو رسم دخول مبكر بتتحصّل في الفندق من بلوك الغرفة وبتدخل اليومية والتقرير.</div>
             </div>
           ) : (
-            <div className="cx-card" style={{ marginTop: 10, padding: 10 }}>
+            <div className="cx-card" data-testid="payment-block" style={{ marginTop: 10, padding: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
                 <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الإجمالي الكلي (غرفة + رسوم)</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{fmt(grandTotal)} {form.currency}</div></div>
-                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المدفوع حتى الآن {(moneyLocked || collectionLocked) && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={moneyLocked || collectionLocked} value={form.amountPaid} onChange={(e) => setForm({ ...form, amountPaid: e.target.value })} /></div>
-                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المتبقي على النزيل</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0", color: balanceDue > 0 ? "var(--rust)" : "var(--sage)" }}>{fmt(balanceDue)} {form.currency}</div></div>
-                {form.paymentMethod === "كاش" && (<>
-                  <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المبلغ المُستلم نقدًا</label><input className="cx-input" type="number" disabled={moneyLocked || collectionLocked} value={form.amountTendered} onChange={(e) => setForm({ ...form, amountTendered: e.target.value })} /></div>
-                  <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الباقي (الفكة)</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{changeDue != null ? fmt(changeDue) : "—"} {form.currency}</div></div>
-                </>)}
+                {isExistingBooking && <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المدفوع حتى الآن</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{fmt(paidBefore)} {form.currency}</div></div>}
+                <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المتبقي على النزيل</label><div data-testid="balance-due" style={{ fontWeight: 800, fontSize: 15, padding: "6px 0", color: balanceDue > 0 ? "var(--rust)" : "var(--sage)" }}>{fmt(balanceDue)} {form.currency}</div></div>
               </div>
-              {collectionLocked && !moneyLocked && <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Lock size={11} /> تسجيل التحصيل من صلاحية موظف الشيفت بس - إنت تقدر تحدد سعر الحجز، لكن تأكيد استلام الفلوس يتم من اليومية وقت الشيفت.</div>}
-              {/* "متحصّل بالكامل" لازم المدفوع يكون فعليًا وصل للإجمالي الكلي
-                  أول - مش علامة حرة تتحط من غير ما الفلوس تكون جت فعلًا (ده
-                  كان بيسمح بتضارب: حجز عليه متبقي ومعلّم "متحصّل بالكامل" في
-                  نفس الوقت). القفل ده في قاعدة البيانات نفسها كمان (قسم ٢٤
-                  في schema.sql). */}
-              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" disabled={moneyLocked || collectionLocked || balanceDue > 0} checked={form.settled} onChange={(e) => setForm({ ...form, settled: e.target.checked })} /><span style={{ fontSize: 12.5 }}>تم تحصيل كامل المبلغ (مُصفّى)</span></div>
-              {!moneyLocked && !collectionLocked && balanceDue > 0 && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--rust)" }}>مينفعش تعلّمي "متحصّل بالكامل" وفيه {fmt(balanceDue)} {form.currency} لسه متبقية - زوّدي "المدفوع حتى الآن" لحد الإجمالي الكلي الأول.</div>}
+              {!isExistingBooking && !collectionLocked && (
+                <div data-testid="advance-payment" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>المدفوع حتى الآن (اختياري) - بيتسجّل في اليومية بوسيلته وتفاصيله</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8, alignItems: "start" }}>
+                    <div><label style={{ fontSize: 11, color: "var(--muted)" }}>المبلغ المدفوع ({form.currency})</label><input className="cx-input" data-testid="advance-amount" type="number" min="0" value={form.payNow?.amount ?? ""} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, amount: e.target.value } })} /></div>
+                    <div><label style={{ fontSize: 11, color: "var(--muted)" }}>طريقة الدفع</label><select className="cx-select" data-testid="advance-method" value={form.payNow?.method || "كاش"} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, method: e.target.value, details: emptyPaymentDetails() } })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
+                    <div><PaymentDetailsInline compact={false} testid="advance" method={form.payNow?.method || "كاش"} details={form.payNow?.details} onChange={(d) => setForm({ ...form, payNow: { ...form.payNow, details: d } })} /></div>
+                  </div>
+                </div>
+              )}
+              {collectionLocked && <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Lock size={11} /> تسجيل التحصيل (كاش / فيزا / تحويل) من صلاحية موظف الشيفت بس - إنت بتحدد سعر الحجز، وحالة الدفع بتتحدّث تلقائيًا أول ما يتحصّل.</div>}
             </div>
           )}
 

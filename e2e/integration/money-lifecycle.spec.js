@@ -1,7 +1,7 @@
 // دورة حياة الفلوس من الشاشات فوق قاعدة بيانات حقيقية: تحصيل، رسوم إضافية، تمديد،
 // إلغاء، طلب رد الفلوس وقراره - ومتابعة الأثر على الحجز واليومية ولوحة الغرف والتقرير.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom, openMore } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom, openMore, payOnBoard } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -21,13 +21,13 @@ const collectOnBoard = async (page, room, method) => {
   await goTab(page, "لوحة الغرف");
   await openRoom(page, room);
   const card = roomCard(page);
-  if (method) await card.getByTestId("collect-method").selectOption(method);
-  await card.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-  await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+  const transfer = method && method !== "كاش" && method !== "فيزا";
+  await payOnBoard(page, { method, last4: method === "فيزا" ? "1234" : undefined, senderName: transfer ? "Sender" : undefined, phone: transfer ? "01012345678" : undefined });
+  await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
 };
 
 test.describe("رسوم إضافية وتجميع التحصيل", () => {
-  test("تحصيل ثم إلغاء العلامة ثم رسوم إضافية ثم تحصيل الفرق: صف اليومية بيتجمّع", async ({ page, env }) => {
+  test("تحصيل ثم رسوم إضافية ثم تحصيل الفرق: الحالة تلقائية، وصف اليومية بيتجمّع", async ({ page, env }) => {
     await users(env);
     await env.seedShift("ahmed");
     const id = await env.seedBooking({ room: 602, guest: "Extras Guest", nights: 2, price: 100 });
@@ -37,26 +37,24 @@ test.describe("رسوم إضافية وتجميع التحصيل", () => {
     await collectOnBoard(page, 602);
     let [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ amount_paid: 200, settled: true });
-    await expect(roomCard(page)).toContainText("متحصّل بالكامل - مقفول");
-    // الرسوم الإضافية مقفولة والفورم مش ظاهر
-    await expect(page.getByRole("button", { name: /حفظ الرسوم/ })).toHaveCount(0);
-
-    await roomCard(page).getByRole("button", { name: /إلغاء علامة/ }).click();
-    await expect(toast(page)).toContainText("تم إلغاء علامة التحصيل");
-    [b] = await env.q("select * from bookings where id = $1", [id]);
-    expect(b).toMatchObject({ settled: false, amount_paid: 200 });
+    // الحالة "مدفوع بالكامل" تلقائية - مفيش علامة ولا زرار تعليم/إلغاء، ومفيش قفل على الرسوم
+    await expect(roomCard(page).getByTestId("pay-state")).toContainText("مدفوع بالكامل");
+    await expect(roomCard(page)).not.toContainText("مقفول");
+    await expect(page.getByRole("button", { name: /إلغاء علامة|تعليم/ })).toHaveCount(0);
+    await expect(page.getByTestId("pay-record")).toHaveCount(0);       // مفيش متبقي = مفيش تحصيل
 
     await field(page, "جولات").fill("30");
     await page.getByRole("button", { name: /حفظ الرسوم/ }).click();
     await expect(toast(page)).toContainText("تم حفظ الرسوم الإضافية");
     [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b.extras).toMatchObject({ tours: 30 });
-    await expect(roomCard(page)).toContainText(/المتبقي/);
+    expect(b.settled).toBe(false);                                       // الحالة اتحدّثت لوحدها لمتبقي
+    await expect(roomCard(page).getByTestId("pay-state")).toContainText("دفع جزئي");
     expect(digits(await roomCard(page).innerText())).toMatch(/المتبقي30USD/);
     await expect(page.getByText(/مشغولة - متبقي فلوس 1/)).toBeVisible();
 
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ amount_paid: 230, settled: true });
     const { rows, bc } = await ledgerRows(env, 602);
@@ -98,8 +96,8 @@ test.describe("التمديد من لوحة الغرف", () => {
     let [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ total_room: 200, amount_paid: 100, settled: false, checkout: cairoDate(2) });
     await expect(page.getByText(/مشغولة - متبقي فلوس 1/)).toBeVisible();
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ amount_paid: 200, settled: true });
     const { rows } = await ledgerRows(env, 603);

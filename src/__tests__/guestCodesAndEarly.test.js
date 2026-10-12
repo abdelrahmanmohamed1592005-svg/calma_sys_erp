@@ -59,7 +59,8 @@ describe("المغادرة المبكرة", () => {
   it("قعد ليلة من ٣ ودافع الكل: بيتحاسب ليلة والباقي يتحوّل لرد", () => {
     const b = { ...base, amountPaid: 300, settled: true };
     const patch = earlyLeavePatch(b, "2030-01-02", "plain");
-    expect(patch).toMatchObject({ checkout: "2030-01-02", totalRoom: 100, leftEarly: true, status: "تم تسجيل الخروج", settled: true });
+    expect(patch).toMatchObject({ checkout: "2030-01-02", totalRoom: 100, leftEarly: true, status: "تم تسجيل الخروج" });
+    expect(patch.settled).toBeUndefined();
     expect(patch.notes).toContain("قبل معاده 2030-01-04");
     expect(patch.notes).not.toContain("تسكين مكرر");
     const after = { ...b, ...patch, refundPending: true };
@@ -69,9 +70,9 @@ describe("المغادرة المبكرة", () => {
     const patch = earlyLeavePatch({ ...base, amountPaid: 200, checkout: "2030-01-03", totalRoom: 200 }, "2030-01-01", "plain");
     expect(patch).toMatchObject({ checkout: "2030-01-01", totalRoom: 100, leftEarly: true });
   });
-  it("المدفوع أقل من الليالي اللي قعدها: علامة متحصّل بتتشال", () => {
-    const patch = earlyLeavePatch({ ...base, amountPaid: 100, settled: true }, "2030-01-03", "plain");
-    expect(patch.settled).toBe(false);
+  it("المدفوع أقل من الليالي اللي قعدها: المتبقي بيظهر لوحده (من غير علامة)", () => {
+    const patch = earlyLeavePatch({ ...base, amountPaid: 100 }, "2030-01-03", "plain");
+    expect(patch.settled).toBeUndefined();
     expect(bookingGrandTotal({ ...base, totalRoom: patch.totalRoom })).toBe(200);
   });
   it("تسكين مكرر: الملاحظة بتذكر التسكين", () => {

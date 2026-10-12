@@ -19,7 +19,7 @@ import { getActivity, addActivity } from "./data/activity";
 import { PERMISSIONS, ROOMS_DEFAULT, roomLabel } from "./domain/constants";
 import { todayStr, isSameDay, uid } from "./domain/dates";
 import { refundDueAmount, fmt } from "./domain/money";
-import { withBusy } from "./lib/busy";
+import { guarded } from "./lib/busy";
 
 export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -182,7 +182,6 @@ export default function App() {
     }
     return res;
   }
-  async function handleToggleSettled(booking, value) { return safeUpdateBooking(booking.id, { ...booking, settled: value }); }
   async function handleInsertBooking(booking) { mutationSeq.current++; const res = await insertBooking(booking); mutationSeq.current++; if (res.data) { setBookings((prev) => [res.data, ...prev]); setDataVersion((v) => v + 1); } return res; }
   async function handleUpdateBooking(id, booking) { return safeUpdateBooking(id, booking); }
   // قرار مدير الحجوزات في طلب رد فلوس (رد فعلي / إبقاء الفلوس) - معاملة واحدة
@@ -197,7 +196,7 @@ export default function App() {
 
   // قرار طلب رد الفلوس (من أي شاشة): "refund" = رد فعلي بيتخصم من اليومية، "keep" = رفض والفلوس تفضل متحصّلة
   async function runRefund(b, decision, method) {
-    return withBusy(async () => {
+    return guarded("refund:" + b.id, async () => {
       const amount = refundDueAmount(b);
       const res = await handleDecideRefund(b, decision, method);
       if (res?.error) { showToast(res.error); return; }
@@ -263,8 +262,8 @@ export default function App() {
       )}
       {loadingData ? <LoadingScreen /> : (
         <>
-          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onToggleSettled={handleToggleSettled} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "ledger" && <DailyLedger rooms={rooms} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onEditBooking={requestEditBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "ledger" && <DailyLedger rooms={rooms} bookings={bookings} profiles={allProfiles} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
           {activeTab === "activity" && <ActivityPanel activity={activity} />}

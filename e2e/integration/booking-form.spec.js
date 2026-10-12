@@ -1,6 +1,6 @@
 // فورم الحجز بتفاصيله (تحقق، رسوم، أونلاين، تنضيف، بحث...) فوق قاعدة بيانات حقيقية.
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, openRoom, openMore } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, openRoom, openMore, payOnBoard } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -9,7 +9,6 @@ async function users(env) {
 }
 const openForm = async (page) => { await goTab(page, "الحجوزات"); await page.getByRole("button", { name: /حجز جديد/ }).click(); return page.locator(".cx-card[data-calma-editing]"); };
 const priceInput = (page) => page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']");
-const settledBox = (page) => page.locator("xpath=//span[contains(.,'تم تحصيل كامل المبلغ')]/preceding-sibling::input[@type='checkbox']");
 const save = (page) => page.getByRole("button", { name: /حفظ الحجز/ }).click();
 const bk = async (env, guest) => (await env.q("select * from bookings where guest_name = $1", [guest]))[0];
 const asStaff = async (page, env) => { await users(env); await env.seedShift("ahmed"); await page.goto("/"); await login(page, "ahmed"); };
@@ -28,11 +27,24 @@ test.describe("التحقق من المدخلات", () => {
     await expect(toast(page)).toContainText("إجمالي الغرفة لازم يكون رقم صحيح مش سالب");
 
     await priceInput(page).fill("100");
-    await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill("-5");
+    await page.getByTestId("advance-amount").fill("-5");
     await save(page);
     await expect(toast(page)).toContainText("المدفوع لازم يكون رقم صحيح مش سالب");
 
-    await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill("");
+    // دفع أكتر من الإجمالي مرفوض، وفيزا من غير ٤ أرقام مرفوضة، وتحويل من غير رقم مرفوض
+    await page.getByTestId("advance-amount").fill("999");
+    await save(page);
+    await expect(toast(page)).toContainText("أكبر من الإجمالي");
+    await page.getByTestId("advance-amount").fill("50");
+    await page.getByTestId("advance-method").selectOption("فيزا");
+    await page.getByTestId("advance-last4").fill("12");
+    await save(page);
+    await expect(toast(page)).toContainText("آخر ٤ أرقام");
+    await page.getByTestId("advance-method").selectOption("فودافون كاش");
+    await save(page);
+    await expect(toast(page)).toContainText("رقم التليفون");
+
+    await page.getByTestId("advance-amount").fill("");
     await field(page, "تاريخ الخروج").fill(cairoDate(-1));
     await save(page);
     await expect(toast(page)).toContainText("تاريخ الخروج لازم يكون بعد تاريخ الدخول");
@@ -98,8 +110,8 @@ test.describe("الرسوم وطرق الدفع", () => {
     await openRoom(page, 604);
     expect(digits(await roomCard(page).innerText())).toMatch(/المتبقي230USD/);
     await expect(roomCard(page)).toContainText("ملاحظة الدخول المبكر: وصل الفجر");
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     expect((await bk(env, "Early Bird")).amount_paid).toBe(230);
   });
 
@@ -144,37 +156,44 @@ test.describe("الرسوم وطرق الدفع", () => {
     await field(page, "اسم النزيل").fill("Visa Guest");
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await priceInput(page).fill("100");
-    await page.locator("xpath=//label[contains(.,'طريقة الدفع')]/following-sibling::select").selectOption("فيزا");
-    await page.getByPlaceholder("اسم المرسل").fill("John Visa");
-    await page.getByPlaceholder("آخر ٤ أرقام الكارت").fill("4242");
-    await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill("120");
+    await page.getByTestId("advance-method").selectOption("فيزا");
+    // الفيزا: خانة واحدة بس (آخر ٤ أرقام) - مفيش اسم مرسل ولا رقم عملية
+    await expect(page.getByTestId("advance-last4")).toBeVisible();
+    await expect(page.getByPlaceholder("اسم المرسل")).toHaveCount(0);
+    await expect(page.getByPlaceholder("رقم العملية / ملاحظة")).toHaveCount(0);
+    await page.getByTestId("advance-last4").fill("4242");
+    await page.getByTestId("advance-amount").fill("120");
     expect(digits(await form.innerText())).toContain("المتبقيعلىالنزيل80USD");
-    await expect(settledBox(page)).toBeDisabled();
     await save(page);
     await expect(toast(page)).toContainText("تم الحفظ");
     const b = await bk(env, "Visa Guest");
     expect(b).toMatchObject({ payment_method: "فيزا", amount_paid: 120, settled: false });
-    expect(b.payment_details).toMatchObject({ senderName: "John Visa", senderNumber: "4242" });
+    expect(b.payment_details).toMatchObject({ senderName: "", senderNumber: "4242", ref: "" });
     const [rec] = await env.q("select rows, booking_collections from shift_records");
     const row = rec.rows.find((r) => r.room === 606);
+    // المدفوع بالفيزا راح لصف فيزا بآخر ٤ أرقام - مش كاش
     expect(row).toMatchObject({ collectionAmt: 120, collectionMethod: "فيزا", collectionCurrency: "USD" });
+    expect(row.paymentDetails).toMatchObject({ senderNumber: "4242" });
+    expect(rec.rows.filter((r) => r.collectionMethod === "كاش" && Number(r.collectionAmt) !== 0)).toHaveLength(0);
     expect(rec.booking_collections).toHaveLength(1);
     expect(rec.booking_collections[0].bookingId).toBe(b.id);
   });
 
-  test("كاش: المبلغ المستلم والباقي (الفكة)، وتعليم متحصّل لما المدفوع يغطّي الإجمالي", async ({ page, env }) => {
+  test("كاش: مفيش مبلغ مستلم ولا فكة ولا علامة متحصّل، والحالة بتتحسب لوحدها", async ({ page, env }) => {
     await asStaff(page, env);
     const form = await openForm(page);
     await form.locator("select.cx-select").first().selectOption("607");
     await field(page, "اسم النزيل").fill("Cash Guest");
     await priceInput(page).fill("150");
-    await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill("150");
-    await page.locator("xpath=//label[contains(.,'المبلغ المُستلم نقدًا')]/following-sibling::input").fill("200");
-    expect(digits(await form.innerText())).toContain("الباقي(الفكة)50USD");
-    await settledBox(page).check();
+    await page.getByTestId("advance-amount").fill("150");
+    const txt = await form.innerText();
+    expect(txt).not.toContain("المبلغ المُستلم نقدًا");
+    expect(txt).not.toContain("الفكة");
+    expect(txt).not.toContain("تم تحصيل كامل المبلغ");
     await save(page);
     await expect(toast(page)).toContainText("تم الحفظ");
-    expect(await bk(env, "Cash Guest")).toMatchObject({ amount_paid: 150, amount_tendered: 200, settled: true });
+    // الحالة اتحسبت لوحدها: المدفوع غطّى الإجمالي => متحصّل (من غير ما حد يعلّم)
+    expect(await bk(env, "Cash Guest")).toMatchObject({ amount_paid: 150, settled: true });
   });
 
   test("عملات مختلفة: حجز بيورو وآخر بجنيه، وكل واحد بعملته في البطاقة", async ({ page, env }) => {
@@ -189,8 +208,8 @@ test.describe("الرسوم وطرق الدفع", () => {
     await openRoom(page, 609);
     expect(digits(await roomCard(page).innerText())).toContain("900EGP");
     // تحصيل بعملة الحجز: الصف في اليومية بعملة الحجز
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     const [rec] = await env.q("select rows from shift_records");
     expect(rec.rows.find((r) => r.room === 609)).toMatchObject({ collectionAmt: 900, collectionCurrency: "EGP" });
   });

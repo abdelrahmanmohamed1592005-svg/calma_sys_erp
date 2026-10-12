@@ -9,7 +9,7 @@
   وفي الآخر التقرير ولوحة الغرف بيطابقوا القاعدة.
 */
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom, payOnBoard } from "../ui";
 
 const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const ROOMS = [601, 602, 603, 604];
@@ -21,8 +21,9 @@ const nightsBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864
 
 async function snapshot(env) {
   const bookings = await env.q("select * from bookings order by created_at");
-  const recs = await env.q("select rows from shift_records");
-  const ledger = recs.reduce((s, r) => s + r.rows.reduce((a, x) => a + (x.collectionCurrency === "USD" ? Number(x.collectionAmt) || 0 : 0), 0) + 0, 0);
+  const recs = await env.q("select rows, cafeteria_rows from shift_records");
+  const sumUsd = (list) => list.reduce((a, x) => a + (x.collectionCurrency === "USD" ? Number(x.collectionAmt) || 0 : 0), 0);
+  const ledger = recs.reduce((s, r) => s + sumUsd(r.rows) + sumUsd(r.cafeteria_rows || []), 0);
   return { bookings, ledger };
 }
 async function checkInvariants(env, label) {
@@ -84,13 +85,10 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         log.push(`collect ${b.guest_name}`);
         await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
-        if (isOnline(b)) {
-          await roomCard(staff).getByTestId("collect-extras").click();
-          await expect(toast(staff)).toContainText("تم تسجيل تحصيل الخدمات");
-        } else {
-          await roomCard(staff).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-          await expect(toast(staff)).toContainText("تم تسجيل التحصيل الكامل");
-        }
+        // دفعة كاملة (المبلغ فاضي = كل المتبقي) بوسيلة عشوائية - فيزا بآخر ٤ أرقام، تحويل باسم ورقم
+        const method = pick(["كاش", "فيزا", "فودافون كاش", "تحويل بنكي / انستاباي"]);
+        await payOnBoard(staff, { method, last4: method === "فيزا" ? "4242" : undefined, senderName: method === "فودافون كاش" || method.startsWith("تحويل") ? "Sender" : undefined, phone: method === "فودافون كاش" || method.startsWith("تحويل") ? "01012345678" : undefined });
+        await expect(toast(staff)).toContainText("الحجز مدفوع بالكامل");
       },
       async earlyCheckin() {
         const { bookings } = await snapshot(env);
@@ -103,6 +101,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         await expect(roomCard(staff)).toContainText(b.guest_name);
         await staff.getByTestId("early-fee").fill(String(fee));
         if (!now) await staff.getByTestId("early-collect").uncheck();
+        else await staff.getByTestId("early-method").selectOption("كاش");
         await staff.getByTestId("early-apply").click();
         await expect(toast(staff)).toContainText("تم تسجيل الدخول المبكر");
       },

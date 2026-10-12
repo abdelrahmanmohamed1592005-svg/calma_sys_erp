@@ -37,9 +37,7 @@ export function buildImportDraft(row, idx, rooms, existingBookings) {
   const cafeteria = Number(getField(row, ["Cafeteria ($)", "Cafeteria"])) || 0;
   const tours = Number(getField(row, ["Tours ($)", "Tours"])) || 0;
   const pickup = Number(getField(row, ["Pickup ($)", "Pickup"])) || 0;
-  const amountTendered = Number(getField(row, ["Amount Tendered"])) || 0;
   const totalRoom = Number(getField(row, ["Total Room ($)", "Total Room"])) || priceNight * nights;
-  const settled = getField(row, ["Clear"]) !== "";
   const source = getField(row, ["Source"]) || "Booking.com";
 
   let room = "", matched = "none";
@@ -58,8 +56,8 @@ export function buildImportDraft(row, idx, rooms, existingBookings) {
     priceNight, currency, totalRoom, extras: { laundry, cafeteria, tours, pickup },
     earlyCheckin: { applied: false, fee: 0, note: "" },
     paymentMethod, paymentDetails: { senderName: "", senderNumber: "", ref: onlineRef },
-    amountPaid: totalRoom, amountTendered,
-    source, status: "مؤكد", approvalStatus: "approved", settled, notes: "",
+    amountPaid: totalRoom,
+    source, status: "مؤكد", approvalStatus: "approved", notes: "",
     imported: true, needsRoomReview: matched !== "explicit" || !room, excluded: false,
   };
 }

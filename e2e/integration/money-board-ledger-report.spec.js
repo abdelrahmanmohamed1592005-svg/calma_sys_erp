@@ -1,5 +1,5 @@
 import { test, expect } from "../fixtures";
-import { login, logout, claimShift, addBooking, goTab, boardTile, roomCard, toast, refresh, digits, shiftDay, myShiftKey, cairoDate, openRoom } from "../ui";
+import { login, logout, claimShift, addBooking, goTab, boardTile, roomCard, toast, refresh, digits, shiftDay, myShiftKey, cairoDate, openRoom, payOnBoard } from "../ui";
 
 async function seed(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -24,9 +24,8 @@ test("تحصيل كامل من لوحة الغرف: الحجز + اليومية 
   await openRoom(page, 601);
   const card = roomCard(page);
   await expect(card).toContainText("Guest One");
-  await card.getByTestId("collect-method").selectOption("فيزا");
-  await card.getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-  await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+  await payOnBoard(page, { method: "فيزا", last4: "1234" });
+  await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
 
   // قاعدة البيانات
   [b] = await env.q("select * from bookings");

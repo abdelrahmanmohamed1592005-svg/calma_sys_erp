@@ -12,7 +12,7 @@ select t.pass('C12 يغادر بعد ليلتين', t.upd('st1', 'C12', 'checkou
 select t.eq('C12 مفيش طلب رد (المدفوع أقل من الإجمالي الجديد)', t.f('C12', 'refund_pending'), 'false');
 select t.pass('C13 حجز بسعر خصم (٣٦٠ لـ ٤ ليالي)', t.ins('st1', 'C13', 607, -2, 2, 100, 360, 360, true));
 select t.pass('C13 تقصير نص المدة (الإجمالي ١٨٠ بمتوسط السعر مش ٢٠٠)', t.upd('st1', 'C13', 'checkout = hotel_today(), total_room = 180, status = ''تم تسجيل الخروج'', left_early = true'));
-select t.reject('C13 بسعر الليلة الاسمي (٢٠٠) بعد التقصير مرفوض (الحجز متحصّل ومقفول السعر)', t.upd('st1', 'C13', 'total_room = 200'), 'متحصّل بالكامل');
+select t.reject('C13 بسعر الليلة الاسمي (٢٠٠) بعد التقصير مرفوض (موظف الشيفت مايغيّرش إجمالي الغرفة بقيمة تانية)', t.upd('st1', 'C13', 'total_room = 200'), 'تعديل بيانات الحجز الأساسية');
 select t.pass('D3 حجز جديد', t.ins('st1', 'D3', 608, 5, 6, 100, 100, 0, false));
 select t.pass('D3 رسوم إضافية جولات ٢٠', t.upd('st1', 'D3', 'extras = ''{"laundry":0,"cafeteria":0,"tours":20,"pickup":0}''::jsonb'));
 select t.pass('D3 تحصيل الإجمالي كله ١٢٠', t.upd('st1', 'D3', 'amount_paid = 120, settled = true'));
@@ -75,8 +75,8 @@ select t.pass('H7 المدير العام يفعّله تاني', t.dml('gm1', $
 -- A-3) تمديد الموظف لحجز متحصّل، وتمديد فوق حجز تاني، وحذف حجز عليه فلوس
 -- ======================================================================
 select t.pass('A13 حجز ليلة مدفوع ومتحصّل', t.ins('st1', 'A13', 610, 20, 21, 100, 100, 100, true));
-select t.reject('A13 الموظف يمدّد وعلامة متحصّل لسه true (متبقي جديد) مرفوض', t.upd('st1', 'A13', 'checkout = hotel_today() + 22, total_room = 200'), 'مينفعش');
-select t.pass('A13 تمديد صحيح: بيشيل علامة متحصّل والمتبقي بيظهر', t.upd('st1', 'A13', 'checkout = hotel_today() + 22, total_room = 200, settled = false'));
+select t.pass('A13 تمديد صحيح: الحالة بتتحوّل لمتبقي تلقائيًا والمتبقي بيظهر', t.upd('st1', 'A13', 'checkout = hotel_today() + 22, total_room = 200'));
+select t.eq('A13 الحالة false تلقائيًا (من غير ما حد يشيل علامة)', t.f('A13', 'settled'), 'false');
 select t.pass('A14 حجز بعده على نفس الغرفة', t.ins('st1', 'A14', 610, 23, 25, 100, 200));
 select t.reject('A14 تمديد فوق حجز تاني (حجز مزدوج) مرفوض', t.upd('st1', 'A13', 'checkout = hotel_today() + 24, total_room = 400'), 'bookings_no_overlap');
 select t.pass('A15 حجز بدون فلوس', t.ins('st1', 'A15', 611, 30, 31, 100, 100));

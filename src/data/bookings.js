@@ -37,8 +37,9 @@ function bookingToRow(b) {
     checkin: b.checkin, checkout: b.checkout, price_night: Number(b.priceNight) || 0, currency: b.currency,
     total_room: Number(b.totalRoom) || 0, extras: b.extras || {}, early_checkin: b.earlyCheckin || { applied: false, fee: 0, note: "" },
     payment_method: b.paymentMethod, payment_details: b.paymentDetails || {},
-    amount_paid: Number(b.amountPaid) || 0, amount_tendered: Number(b.amountTendered) || 0,
-    source: b.source, status: b.status, approval_status: b.approvalStatus || "approved", settled: !!b.settled,
+    amount_paid: Number(b.amountPaid) || 0,
+    source: b.source, status: b.status, approval_status: b.approvalStatus || "approved",
+    // settled (متحصّل بالكامل) مابتتبعتش: قاعدة البيانات بتحسبها لوحدها من المدفوع والإجمالي
     notes: b.notes || "", imported: !!b.imported, needs_room_review: !!b.needsRoomReview,
     left_early: !!b.leftEarly, duplicate_placement: !!b.duplicatePlacement,
     guest_codes: Array.isArray(b.guestCodes) ? b.guestCodes : [],

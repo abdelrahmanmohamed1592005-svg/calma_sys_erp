@@ -1,7 +1,7 @@
 // تزامن بين جهازين/مستخدمين على نفس البيانات (فوق قاعدة حقيقية): لازم ماحدش يكتب فوق
 // تعديل التاني بصمت، وماحدش ياخد الفلوس مرتين، ومحدش يحجز نفس الغرفة مرتين.
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, claimShift, cairoDate, refresh, digits, shiftDay, myShiftKey, SHIFT_LABEL, openRoom, showAllRooms } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, claimShift, cairoDate, refresh, digits, shiftDay, myShiftKey, SHIFT_LABEL, openRoom, showAllRooms, payOnBoard } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -26,8 +26,8 @@ test("مدير الحجوزات بيعدّل حجز والموظف حصّله ف
   await login(staff, "ahmed");
   await goTab(staff, "لوحة الغرف");
   await openRoom(staff, 601);
-  await roomCard(staff).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-  await expect(toast(staff)).toContainText("تم تسجيل التحصيل الكامل");
+  await payOnBoard(staff);
+  await expect(toast(staff)).toContainText("الحجز مدفوع بالكامل");
 
   // أول حفظة: اكتشاف التعارض (من غير ما تكتب فوق التحصيل)
   await page.getByRole("button", { name: /حفظ الحجز/ }).click();
