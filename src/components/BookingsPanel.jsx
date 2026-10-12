@@ -233,7 +233,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     if (advance > 0) {
       const payRes = await recordBookingPayment({ bookingId: savedId, amount: advance, method: payMethod, details: cleaned.paymentDetails, note: "تحصيل حجز جديد" });
       if (payRes.error) note += " — ⚠ الحجز اتحفظ لكن الدفعة ماتسجّلتش (" + payRes.error + ") - سجّلها من لوحة الغرف";
-      else if (onRefresh) onRefresh();
+      else if (onRefresh) await onRefresh();
     }
     refundRequests.forEach((c) => { note += ` — ${c.guestName} غادر مبكرًا: اتحاسب على الليالي اللي قعدها، و${fmt((Number(c.amountPaid) || 0) - bookingGrandTotal(c))} ${c.currency} زيادة مدفوعة عن الليالي اللي ماقعدهاش اتبعتت كطلب رد فلوس لمدير الحجوزات`; });
     const paidAfter = Number(cleaned.amountPaid) || 0;

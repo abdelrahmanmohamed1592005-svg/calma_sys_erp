@@ -167,7 +167,16 @@ export default function App() {
   }
 
   // بعد عملية في القاعدة (دفعة مثلاً): نعيد تحميل الحجوزات واليوميات من القاعدة
-  function refreshAll() { mutationSeq.current++; setDataVersion((v) => v + 1); }
+  // بعد عملية ذرية في القاعدة (دفعة مثلاً): نجيب الحجوزات من جديد ونستنى ده يخلص قبل ما الشاشة تقول "تم" (من غير كده البطاقة
+  // كانت بتفضل شايفة "المدفوع صفر" لحظات بعد رسالة النجاح). بترجّع true لو التحديث نجح.
+  async function refreshAll() {
+    mutationSeq.current++;
+    const b = await getBookings();
+    mutationSeq.current++;
+    if (b) setBookings(b);
+    setDataVersion((v) => v + 1);
+    return !!b;
+  }
   async function handleSaveOverride(roomNumber, status) { mutationSeq.current++; const res = await setRoomOverride(roomNumber, status, currentProfile?.username); mutationSeq.current++; if (!res.error) setOverrides((prev) => ({ ...prev, [roomNumber]: { status, updatedAt: Date.now() } })); return res; }
   // تعديل آمن من تعارض تعديلين في نفس اللحظة (زي اليومية بالظبط): لو حد
   // عدّل نفس الحجز في نفس اللحظة، بنرجّع "تعارض" بدل ما نكتب فوق تعديله

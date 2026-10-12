@@ -120,7 +120,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     const details = out.details || cleanPaymentDetailsFor(method, rawDetails);
     const detailsText = describePaymentDetails(method, details) ? "\u2066" + describePaymentDetails(method, details) + "\u2069" : "";
     onLog(`تحصيل ${fmt(amount)} ${booking.currency} (${method}${detailsText ? " " + detailsText : ""}) - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
-    if (onRefresh) onRefresh();
+    if (onRefresh) await onRefresh();
     getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); });     // تفصيل المدفوع بالوسيلة بعد ما اليومية اتحدّثت
     const cafe = Number(out.cafeteria) || 0;
     const left = Math.max(0, due - amount);
@@ -144,7 +144,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
       // الرسم اتسجّل على الحجز (زوّد المتبقي) فدلوقتي بنحصّله بعملية ذرية: الحجز + اليومية
       const pr = await recordBookingPayment({ bookingId: booking.id, amount: fee, method: epay.method, details: epay.details, note: "رسم دخول مبكر" });
       if (pr?.error) warn = " — لكن التحصيل ماتسجّلش: " + pr.error + " (الرسم لسه متبقي على النزيل - سجّله من خانة تسجيل دفعة)";
-      else { if (onRefresh) onRefresh(); getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); }); }
+      else { if (onRefresh) await onRefresh(); getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); }); }
     }
     setEcFee(""); setEcNote("");
     showToast(`تم تسجيل الدخول المبكر (${fmt(fee)} ${booking.currency})${collectNow && !warn ? " واتحصّل" : " - لسه متبقي على النزيل، سجّله من خانة (تسجيل دفعة)"}` + warn);

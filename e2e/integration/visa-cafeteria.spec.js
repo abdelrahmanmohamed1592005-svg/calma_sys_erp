@@ -390,10 +390,10 @@ test.describe("كافيتيريا الاستاف: مين أخد ومين دفع 
     expect(denied(await asDb("ahmed", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { consumer_name: "حد تاني" }))).toBe(true);
     expect(denied(await asDb("ahmed", "DELETE", `/rest/v1/staff_cafeteria?id=eq.${e.id}`))).toBe(true);
     expect(Number((await env.q("select amount from staff_cafeteria"))[0].amount)).toBe(30);
-    // الموظف يقدر يسدّد (يزوّد المدفوع) بس مايزيدش عن المبلغ
-    expect(denied(await asDb("ahmed", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { paid_amount: 999 }))).toBe(true);
-    expect(denied(await asDb("ahmed", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { paid_amount: 10 }))).toBe(false);
-    expect(denied(await asDb("ahmed", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { paid_amount: 5 }))).toBe(true);     // تقليل المدفوع ممنوع
+    // السداد بالـ API المباشر ممنوع على أي موظف (قسم ٣٥): بيتسدّد من settle_staff_cafeteria بس (من اليومية)
+    for (const v of [999, 10, 5]) expect(denied(await asDb("ahmed", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { paid_amount: v }))).toBe(true);
+    expect(Number((await env.q("select paid_amount from staff_cafeteria"))[0].paid_amount)).toBe(0);
+    expect(denied(await asDb("ahmed", "POST", "/rest/v1/staff_cafeteria", { consumer_name: "x", amount: 5, paid_amount: 5, currency: "EGP" }))).toBe(true);
     // مدير الحجوزات / الحسابات: قراءة بس (مفيش إضافة ولا تعديل)
     for (const u of ["rawan", "mona"]) {
       const ins = await asDb(u, "POST", "/rest/v1/staff_cafeteria", { consumer_name: "x", amount: 5, currency: "EGP" });
@@ -401,9 +401,10 @@ test.describe("كافيتيريا الاستاف: مين أخد ومين دفع 
       const sel = await asDb(u, "GET", "/rest/v1/staff_cafeteria?select=id");
       expect(sel.body).toHaveLength(1);
     }
-    // مدير الحسابات يعدّل المبلغ لو في غلط، والمدير العام يمسح
-    expect(denied(await asDb("mona", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { amount: 25 }))).toBe(false);
-    expect(Number((await env.q("select amount from staff_cafeteria"))[0].amount)).toBe(25);
+    // المبلغ مقفول بالـ API حتى على الحسابات (التصحيح من محرر SQL)، لكن الوصف مش فلوس والحسابات تقدر تعدّله؛ والمدير العام يمسح
+    expect(denied(await asDb("mona", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { amount: 25 }))).toBe(true);
+    expect(Number((await env.q("select amount from staff_cafeteria"))[0].amount)).toBe(30);
+    expect(denied(await asDb("mona", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { description: "قهوة وكيك" }))).toBe(false);
     expect(denied(await asDb("boss", "DELETE", `/rest/v1/staff_cafeteria?id=eq.${e.id}`))).toBe(false);
     expect(await env.q("select 1 from staff_cafeteria")).toHaveLength(0);
     // قيم غلط ممنوعة من القاعدة نفسها (مبلغ صفر/سالب، عملة غريبة)
