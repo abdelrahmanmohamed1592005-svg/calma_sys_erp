@@ -38,6 +38,11 @@ jobs:
         run: |
           createdb -h localhost -U postgres calma_test
           npm run test:db
+      - name: Randomized simulation + concurrency + permission matrix (real Postgres)
+        run: npm run test:sim
+        env:
+          SIM_SEEDS: "12"
+          SIM_OPS: "150"
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Browser + real-database integration tests

@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:db": "bash supabase/tests/run.sh",
-    "test:video": "playwright test -c playwright.video.config.js"
+    "test:video": "playwright test -c playwright.video.config.js",
+    "test:sim": "vitest run -c vitest.sim.config.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
