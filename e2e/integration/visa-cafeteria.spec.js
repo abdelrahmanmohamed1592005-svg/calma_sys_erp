@@ -99,6 +99,16 @@ test.describe("الفيزا: كل دفعة بوسيلتها وتفاصيلها",
     ]);
     // مجموع الصفوف = مجموع المدفوع بالظبط
     expect(rows.reduce((s, r) => s + Number(r.collectionAmt), 0)).toBe(300);
+    // بطاقة الغرفة بتبيّن المدفوع بالوسيلة وتفاصيلها (من اليومية): مفيش لخبطة
+    const pb = page.getByTestId("pay-breakdown");
+    await expect(pb).toContainText("كاش"); await expect(pb).toContainText("****1111"); await expect(pb).toContainText("****2222");
+    await expect(pb).toContainText("Mohamed");
+    expect(digits(await pb.innerText())).toContain("120");
+    // نفس التفصيل في قايمة الحجوزات
+    await goTab(page, "الحجوزات");
+    const lb = page.locator(".cx-card", { hasText: "Mixed Pay" }).last().getByTestId("pay-breakdown");
+    await expect(lb).toContainText("****1111"); await expect(lb).toContainText("فودافون كاش");
+    await goTab(page, "لوحة الغرف"); await openRoom(page, 602);
     // الحالة تلقائية: الغرفة بقت متحصّلة
     await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();
   });

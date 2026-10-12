@@ -23,7 +23,7 @@ function CurrencyPicker({ value, onChange, disabled, width }) {
 // (عشان اليومية ماتبقاش ١٦ صف فاضي) ويتضافوا بالاختيار من القايمة أو "عرض كل الغرف".
 const rowHasData = (r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || !!r.expenseDesc || !!r.collectionDesc || !!r.notes || !!r.bookingId;
 
-function LedgerTable({ record, rooms, locked, onUpdateRow, onUpdateCafeteria }) {
+function LedgerTable({ record, rooms, locked, onUpdateRow }) {
   const [shown, setShown] = useState(() => new Set());
   const [all, setAll] = useState(false);
   const visible = (r) => all || shown.has(r.room) || rowHasData(r);
@@ -76,31 +76,6 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, onUpdateCafeteria }) 
               <td><input className="cx-input" disabled={locked} value={row.notes} onChange={(e) => updateRow(idx, { notes: e.target.value })} /></td>
             </tr>
           )))}
-          <tr>
-            <td style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff" }}>كافيتيريا</td>
-            <td>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={record.cafeteria.expenseCategory} onChange={(e) => onUpdateCafeteria({ expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                <input className="cx-input" placeholder="البيان" disabled={locked} value={record.cafeteria.expenseDesc} onChange={(e) => onUpdateCafeteria({ expenseDesc: e.target.value })} />
-                <div style={{ display: "flex", gap: 3 }}>
-                  <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={record.cafeteria.expenseAmt} onChange={(e) => onUpdateCafeteria({ expenseAmt: e.target.value })} style={{ flex: 1 }} />
-                  <CurrencyPicker value={record.cafeteria.expenseCurrency} disabled={locked} onChange={(v) => onUpdateCafeteria({ expenseCurrency: v })} />
-                </div>
-              </div>
-            </td>
-            <td>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <select className="cx-select" disabled={locked} value={record.cafeteria.collectionMethod} onChange={(e) => onUpdateCafeteria({ collectionMethod: e.target.value })}>{methodOptionsFor(record.cafeteria.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                <input className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={record.cafeteria.collectionDesc} onChange={(e) => onUpdateCafeteria({ collectionDesc: e.target.value })} />
-                <div style={{ display: "flex", gap: 3 }}>
-                  <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={record.cafeteria.collectionAmt} onChange={(e) => onUpdateCafeteria({ collectionAmt: e.target.value })} style={{ flex: 1 }} />
-                  <CurrencyPicker value={record.cafeteria.collectionCurrency} disabled={locked} onChange={(v) => onUpdateCafeteria({ collectionCurrency: v })} />
-                </div>
-              </div>
-            </td>
-            <td><PaymentDetailsInline method={record.cafeteria.collectionMethod} details={record.cafeteria.paymentDetails} disabled={locked} onChange={(d) => onUpdateCafeteria({ paymentDetails: d })} /></td>
-            <td><input className="cx-input" disabled={locked} value={record.cafeteria.notes} onChange={(e) => onUpdateCafeteria({ notes: e.target.value })} /></td>
-          </tr>
         </tbody>
       </table>
     </div>
@@ -549,8 +524,8 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
               <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>الاسم</label><div style={{ fontSize: 13, padding: "6px 2px" }}>{record.staffName}</div></div>
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
-            <LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} onUpdateCafeteria={updateCafeteria} />
-            <CafeteriaSection record={record} rooms={rooms} bookings={bookings} locked={locked} readOnly={!perms.editLedger} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={flushNow} onRecordUpdated={(r) => setRecord(r)} onLog={onLog} showToast={showToast} />
+            <LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} />
+            <CafeteriaSection record={record} rooms={rooms} bookings={bookings} onUpdateCafeteria={updateCafeteria} locked={locked} readOnly={!perms.editLedger} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={flushNow} onRecordUpdated={(r) => setRecord(r)} onLog={onLog} showToast={showToast} />
             <HotelRowsTable record={record} locked={locked} onUpdateRow={updateHotelRow} onAddRow={addHotelRow} onRemoveRow={removeHotelRow} />
             <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -587,8 +562,8 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
                   )}
                 </div>
               )}
-              <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
-              <CafeteriaSection record={histRecord} rooms={rooms} bookings={bookings} locked={true} readOnly={true} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={async () => {}} onRecordUpdated={() => {}} onLog={onLog} showToast={showToast} />
+              <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} />
+              <CafeteriaSection record={histRecord} rooms={rooms} bookings={bookings} onUpdateCafeteria={() => {}} locked={true} readOnly={true} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={async () => {}} onRecordUpdated={() => {}} onLog={onLog} showToast={showToast} />
               {(histRecord.hotelRows || []).some((r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || r.expenseDesc || r.collectionDesc) && <HotelRowsTable record={histRecord} locked={true} onUpdateRow={() => {}} onAddRow={() => {}} onRemoveRow={() => {}} />}
               <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}

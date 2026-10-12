@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails } from "../domain/money";
+import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { roomLabel } from "../domain/constants";
 
 export function GlobalStyle() {
@@ -153,6 +153,20 @@ export function MoneyBox({ b }) {
       {cells.map(([label, val, color]) => (
         <div key={label}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>{label}</div><div style={{ fontWeight: 800, color: color || "inherit" }}>{val} {b.currency}</div></div>
       ))}
+    </div>
+  );
+}
+
+/* المدفوع على الحجز مقسّم بالوسيلة وتفاصيلها (فيزا ****1234 / فودافون باسم المحوِّل...) - من اليومية نفسها */
+export function PayBreakdown({ payments, currency }) {
+  if (!payments || payments.length === 0) return null;
+  return (
+    <div data-testid="pay-breakdown" style={{ fontSize: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <span style={{ color: "var(--muted)" }}>اتدفع بـ:</span>
+      {payments.map((p, i) => {
+        const d = describePaymentDetails(p.method, p.details);
+        return <span key={i} className="cx-pill" style={{ background: "#fff", border: "1px solid var(--hair)", fontWeight: 600 }}>{p.method}{d ? <b dir="ltr" style={{ marginInlineStart: 6 }}>{d}</b> : null} · {fmt(p.amount)} {currency}</span>;
+      })}
     </div>
   );
 }

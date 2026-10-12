@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Plus, Check } from "lucide-react";
 import { PaymentDetailsInline } from "./shared";
-import { COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstanding, fmt } from "../domain/money";
+import { COMMON_CURRENCIES, PAYMENT_METHODS, EXPENSE_CATEGORIES, methodOptionsFor, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstanding, fmt } from "../domain/money";
 import { roomLabel } from "../domain/constants";
 import { insertStaffCafeteria, payStaffCafeteria, staffOwed } from "../data/staffCafeteria";
 import { appendStaffCafeteriaCollection } from "../data/shifts";
@@ -13,7 +13,7 @@ const keyOf = (name, username) => (username || String(name || "").trim().toLower
 
 /* تحصيل الكافيتيريا التلقائي (خدمات نزلاء اتحصّلت + سداد استاف) + خدمات
    النزلاء اللي لسه عليهم فلوس + كافيتيريا الاستاف (مين أخد ومين دفع ومين عليه فلوس). */
-export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, profile, profiles, staffEntries, onReload, flushNow, onRecordUpdated, onLog, showToast }) {
+export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, locked, readOnly, profile, profiles, staffEntries, onReload, flushNow, onRecordUpdated, onLog, showToast }) {
   const rows = (record.cafeteriaRows || []).filter((r) => (Number(r.collectionAmt) || 0) !== 0);
   const guestOutstanding = (bookings || []).filter((b) => b.status !== "ملغي" && cafeteriaOutstanding(b) > 0);
   const entries = staffEntries || [];
@@ -104,7 +104,9 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
     });
   }
 
-  const hasAnything = rows.length > 0 || guestOutstanding.length > 0 || open.length > 0 || thisShift.length > 0 || canWrite;
+  const dc = record.cafeteria || {};
+  const directHasData = (Number(dc.expenseAmt) || 0) !== 0 || (Number(dc.collectionAmt) || 0) !== 0 || !!dc.expenseDesc || !!dc.collectionDesc || !!dc.notes;
+  const hasAnything = directHasData || rows.length > 0 || guestOutstanding.length > 0 || open.length > 0 || thisShift.length > 0 || canWrite;
   if (!hasAnything) return null;
 
   return (
@@ -112,6 +114,35 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
       <div style={{ fontWeight: 800, marginBottom: 2 }}>الكافيتيريا</div>
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>خدمات الكافيتيريا اللي بتتحصّل من النزلاء وسداد الاستاف بيتسجّلوا هنا لوحدهم بوسيلة الدفع وتفاصيلها، وبيدخلوا إجمالي اليومية وعهدة الفيزا والتقرير.</div>
 
+
+      {(canWrite || directHasData) && (
+        <div data-testid="cafeteria-direct" style={{ marginBottom: 12, paddingBottom: 10, borderBottom: "1px dashed var(--hair)" }}>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>مبيعات ومصاريف الكافيتيريا المباشرة</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>اللي بيتباع في الكافيتيريا لنزيل خارجي أو بيتصرف عليها (خامات...) - مش المرتبط بحجز ولا باستاف.</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>مصروف</div>
+              <select className="cx-select" style={{ fontSize: 11 }} disabled={!canWrite} value={dc.expenseCategory || "أخرى"} onChange={(e) => onUpdateCafeteria({ expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              <input className="cx-input" placeholder="البيان" disabled={!canWrite} value={dc.expenseDesc || ""} onChange={(e) => onUpdateCafeteria({ expenseDesc: e.target.value })} />
+              <div style={{ display: "flex", gap: 3 }}>
+                <input className="cx-input" type="number" placeholder="المبلغ" disabled={!canWrite} value={dc.expenseAmt ?? ""} onChange={(e) => onUpdateCafeteria({ expenseAmt: e.target.value })} style={{ flex: 1 }} />
+                <select className="cx-select" disabled={!canWrite} value={dc.expenseCurrency || "EGP"} onChange={(e) => onUpdateCafeteria({ expenseCurrency: e.target.value })} style={{ width: 72, fontSize: 12 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>تحصيل (مبيعات)</div>
+              <select className="cx-select" disabled={!canWrite} value={dc.collectionMethod || "كاش"} onChange={(e) => onUpdateCafeteria({ collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(dc.collectionMethod || "كاش").map((m) => <option key={m} value={m}>{m}</option>)}</select>
+              <input className="cx-input" placeholder="بيان التحصيل" disabled={!canWrite} value={dc.collectionDesc || ""} onChange={(e) => onUpdateCafeteria({ collectionDesc: e.target.value })} />
+              <div style={{ display: "flex", gap: 3 }}>
+                <input className="cx-input" type="number" placeholder="المبلغ" disabled={!canWrite} value={dc.collectionAmt ?? ""} onChange={(e) => onUpdateCafeteria({ collectionAmt: e.target.value })} style={{ flex: 1 }} />
+                <select className="cx-select" disabled={!canWrite} value={dc.collectionCurrency || "EGP"} onChange={(e) => onUpdateCafeteria({ collectionCurrency: e.target.value })} style={{ width: 72, fontSize: 12 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              </div>
+              <PaymentDetailsInline compact={false} testid="cafe-direct" method={dc.collectionMethod || "كاش"} details={dc.paymentDetails} disabled={!canWrite} onChange={(d) => onUpdateCafeteria({ paymentDetails: d })} />
+            </div>
+          </div>
+          <input className="cx-input" placeholder="ملاحظات الكافيتيريا" disabled={!canWrite} value={dc.notes || ""} onChange={(e) => onUpdateCafeteria({ notes: e.target.value })} style={{ marginTop: 6 }} />
+        </div>
+      )}
       {rows.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 10 }}>
           <table className="cx-table" data-testid="cafeteria-rows" style={{ fontSize: 12, minWidth: 620 }}>

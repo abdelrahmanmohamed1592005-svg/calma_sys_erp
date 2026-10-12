@@ -187,6 +187,40 @@ export async function appendStaffCafeteriaCollection(date, shiftKey, profile, ro
   return { error: "تعارض متكرر على سجل اليومية - حاول تاني" };
 }
 
+/* المدفوع الفعلي على حجز مقسّم بالوسيلة (وبتفاصيلها: الكارت/المحفظة) من اليومية نفسها - صافي
+   التحصيل ناقص أي رد فلوس. بيتعرض في بطاقة الغرفة عشان واضح الفلوس اتدفعت إزاي من غير لخبطة. */
+function paymentsFromRecords(recs, bookings) {
+  const cur = new Map(bookings.map((b) => [b.id, b.currency]));
+  const per = new Map();
+  recs.forEach((r) => [...(r.rows || []), ...(r.cafeteriaRows || [])].forEach((x) => {
+    if (!x.bookingId || !cur.has(x.bookingId)) return;
+    const amt = Number(x.collectionAmt) || 0;
+    if (!amt || (x.collectionCurrency || "EGP") !== cur.get(x.bookingId)) return;
+    const d = x.paymentDetails || {};
+    const key = [x.collectionMethod, d.senderName || "", d.senderNumber || ""].join("|");
+    const m = per.get(x.bookingId) || new Map();
+    const e = m.get(key) || { method: x.collectionMethod, details: d, amount: 0 };
+    e.amount += amt; m.set(key, e); per.set(x.bookingId, m);
+  }));
+  const out = new Map();
+  per.forEach((m, id) => out.set(id, Array.from(m.values()).filter((p) => Math.abs(p.amount) > 0.004)));
+  return out;
+}
+const earliest = (d) => (d < "2000-01-01" ? "2000-01-01" : d);
+export async function getBookingPayments(booking) {
+  const recs = await getShiftRecordsInRange(earliest(addDays(booking.checkin, -1)), addDays(shiftDayNow(), 1));
+  if (!recs) return null;
+  return paymentsFromRecords(recs, [booking]).get(booking.id) || [];
+}
+/* نفس الحساب لقايمة حجوزات كاملة باستعلام واحد: Map(bookingId -> [{method, details, amount}]) */
+export async function getPaymentsIndex(bookings) {
+  const list = (bookings || []).filter((b) => b.checkin);
+  if (!list.length) return new Map();
+  const from = list.reduce((m, b) => (b.checkin < m ? b.checkin : m), list[0].checkin);
+  const recs = await getShiftRecordsInRange(earliest(addDays(from, -1)), addDays(shiftDayNow(), 1));
+  return recs ? paymentsFromRecords(recs, list) : null;
+}
+
 /* كل أرقام الحجوزات اللي تحصيلها اتسجّل في أي يومية شيفت (أي تاريخ) - التقارير
    بتستخدمها عشان تحصيل نفس الحجز مايتحسبش مرتين: مرة من اليومية (في تاريخها)
    ومرة تاني من قيمة amountPaid على الحجز في تاريخ تاني. بترجع null لو القراءة فشلت. */

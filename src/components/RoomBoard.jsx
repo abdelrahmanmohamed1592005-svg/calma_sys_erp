@@ -4,9 +4,9 @@ import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGran
 import { todayStr, shiftDayNow, nightsBetween, addDays, uid } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
-import { getShiftRecord, appendBookingCollection } from "../data/shifts";
+import { getShiftRecord, appendBookingCollection, getBookingPayments } from "../data/shifts";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline } from "./shared";
+import { GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
@@ -38,6 +38,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   const [ecNote, setEcNote] = useState("");
   const [ecCollect, setEcCollect] = useState(true);
   const [codesDraft, setCodesDraft] = useState([]);
+  const [payBreakdown, setPayBreakdown] = useState(null);
   const date = todayStr();
   const room = rooms.find((r) => r.number === selected);
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date) : null;
@@ -46,6 +47,16 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   useEffect(() => { setPay({ amount: "", method: "كاش", details: emptyPaymentDetails() }); }, [selected, status?.booking?.id]);
   useEffect(() => { setExtendNights(1); setEcFee(""); setEcNote(""); setEcCollect(true); setEpay({ method: "كاش", details: emptyPaymentDetails() }); }, [selected, status?.booking?.id]);
   useEffect(() => { if (status?.booking) setCodesDraft(normalizeGuestCodes(status.booking.guestCodes, status.booking.pax)); else setCodesDraft([]); }, [selected, status?.booking?.id, status?.booking?.pax, JSON.stringify(status?.booking?.guestCodes || [])]);
+
+  // المدفوع على الحجز مقسّم بالوسيلة (من اليومية) - بيتحدّث مع أي تحصيل/رد
+  useEffect(() => {
+    const bk = status?.booking;
+    if (!bk) { setPayBreakdown(null); return undefined; }
+    let cancelled = false;
+    (async () => { const r = await getBookingPayments(bk); if (!cancelled) setPayBreakdown(r); })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.booking?.id, status?.booking?.amountPaid, dataVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,6 +125,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
       note: "تحصيل", at: Date.now(),
     });
     if (ledgerRes?.error) ledgerWarning = " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
+    getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); });     // تفصيل المدفوع بالوسيلة بعد ما اليومية اتحدّثت
     const left = Math.max(0, due - amount);
     showToast(`تم تسجيل ${fmt(amount)} ${booking.currency} (${method}${detailsText ? " " + detailsText : ""})${split.cafeteria > 0 ? ` - منها ${fmt(split.cafeteria)} كافيتيريا` : ""} - ${left > 0 ? `المتبقي ${fmt(left)} ${booking.currency}` : "الحجز مدفوع بالكامل"}` + ledgerWarning);
   }
@@ -140,10 +152,11 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
           amount: fee, currency: booking.currency, method: epay.method, details, note: "رسم دخول مبكر", at: Date.now(),
         });
         if (ledgerRes?.error) warn = " — لكن تعذر تسجيله تلقائيًا في اليومية، سجّليه يدويًا: " + ledgerRes.error;
+        getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); });
       } else warn = " — ⚠ مفيش شيفتك شغال فالمبلغ ماتسجّلش في اليومية تلقائيًا";
     }
     setEcFee(""); setEcNote("");
-    showToast(`تم تسجيل الدخول المبكر (${fmt(fee)} ${booking.currency})${collectNow ? " واتحصّل" : " - لسه متبقي على النزيل، حصّله من زرار التحصيل"}` + warn);
+    showToast(`تم تسجيل الدخول المبكر (${fmt(fee)} ${booking.currency})${collectNow ? " واتحصّل" : " - لسه متبقي على النزيل، سجّله من خانة (تسجيل دفعة)"}` + warn);
   }
   // غادر مبكرًا: بيقصّر الإقامة لحد النهارده (الحد الأدنى ليلة)، والزيادة اللي كان النزيل دافعها عن ليالي
   // ماقعدهاش بتتحوّل لطلب رد فلوس لمدير الحجوزات (قاعدة البيانات هي اللي بتفتحه).
@@ -285,7 +298,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
         const due = b ? bookingAmountDue(b) : 0;
         const extrasList = b ? [
           b.extras?.laundry > 0 && ["غسيل", b.extras.laundry],
-          b.extras?.cafeteria > 0 && ["كافيتيريا", b.extras.cafeteria],
+          b.extras?.cafeteria > 0 && [Number(b.extras.cafeteriaPaid) > 0 ? `كافيتيريا (اتسدّد ${fmt(b.extras.cafeteriaPaid)})` : "كافيتيريا", b.extras.cafeteria],
           b.extras?.tours > 0 && ["جولات", b.extras.tours],
           b.extras?.pickup > 0 && ["بيك أب", b.extras.pickup],
           b.earlyCheckin?.applied && ["دخول مبكر", b.earlyCheckin.fee || 0],
@@ -325,6 +338,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
               </div>
 
               <MoneyBox b={b} />
+              <PayBreakdown payments={payBreakdown} currency={b.currency} />
               <RefundBox b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
 
               {offShift && (perms.markPaymentReceived || perms.editBookings) && <div style={{ fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعمل أي حاجة هنا." : "مش شيفتك دلوقتي - التحصيل والتعديل مش متاحين غير وقت شيفتك اللي حاجزه."}</div>}

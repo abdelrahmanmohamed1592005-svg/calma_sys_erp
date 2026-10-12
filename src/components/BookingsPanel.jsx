@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock } from "lucide-react";
-import { TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox } from "./shared";
+import { TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, splitPaymentForCafeteria, bookingGrandTotal, bookingHotelTotal, refundStatusOf } from "../domain/money";
 import { todayStr, shiftDayNow, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { appendBookingCollection } from "../data/shifts";
+import { appendBookingCollection, getPaymentsIndex } from "../data/shifts";
 import { guarded } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
 
@@ -22,6 +22,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");      // all | active | cancelled
+  const [payIndex, setPayIndex] = useState(null);                // المدفوع بالوسيلة لكل حجز (من اليومية)
   // نفس هوك شيفت موظف الشيفت المستخدم في RoomBoard.jsx بالظبط - عشان لو
   // شيفته مش حاجزه دلوقتي أو شيفته مقفول، ميعرفش يضيف أو يعدّل أي حجز من هنا
   // برده (مش بس من بلوك الغرف)، ومن غير أي تضارب بين الشاشتين.
@@ -34,6 +35,13 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
       onConsumeEditRequest();
     }
   }, [pendingEditId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => { const idx = await getPaymentsIndex(bookings); if (!cancelled && idx) setPayIndex(idx); })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion, bookings.length, JSON.stringify(bookings.map((b) => b.amountPaid))]);
 
   function startNew() { setForm(emptyBooking()); }
   function formFromBooking(b) { return { ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails(), payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } }; }
@@ -164,7 +172,6 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
     // الجزء اللي بيسدّد خدمات كافيتيريا (لو الحجز عليه) بيروح لصف الكافيتيريا في اليومية
     const split = advance > 0 ? splitPaymentForCafeteria(cleaned, advance) : { cafeteria: 0, rest: 0 };
     if (split.cafeteria > 0) cleaned = { ...cleaned, extras: { ...cleaned.extras, cafeteriaPaid: (Number(cleaned.extras?.cafeteriaPaid) || 0) + split.cafeteria } };
-    const reopenedDue = 0;
     // "تسكين مكرر" (الخطة اتأكدت فوق إنها سليمة): لكل حجز قديم متعارض -
     // - بدأ قبل الجديد: نقصّر تاريخ خروجه لتاريخ دخول الجديد ونعلّمه "غادر مبكرًا"
     //   (مش "ملغي"؛ بيتحاسب على الليالي اللي قعدها والزيادة المدفوعة طلب رد).
@@ -477,6 +484,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
               </div>
             </div>
             <MoneyBox b={b} />
+            <PayBreakdown payments={payIndex?.get(b.id)} currency={b.currency} />
             <RefundBox b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
           </div>
         ); })}
