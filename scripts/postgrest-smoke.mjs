@@ -4,6 +4,7 @@
 import { createClient } from "@supabase/supabase-js";
 class NoWS { close() {} }
 import crypto from "node:crypto";
+import { fetchAll } from "../src/data/page.js";
 const secret = "super-secret-jwt-token-with-at-least-32-characters-long";
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const jwt = (sub) => { const h = b64({ alg: "HS256", typ: "JWT" }), p = b64({ sub, role: "authenticated", exp: Math.floor(Date.now() / 1000) + 3600 }); return `${h}.${p}.${crypto.createHmac("sha256", secret).update(`${h}.${p}`).digest("base64url")}`; };
@@ -42,3 +43,16 @@ const led = await st.from("shift_records").select("rows,cafeteria_rows").single(
 const sum = (a) => a.reduce((x, y) => x + (Number(y.collectionAmt) || 0), 0);
 
 console.log("ledger", JSON.stringify(led.data ? { room: sum(led.data.rows), cafe: sum(led.data.cafeteria_rows) } : led.error));
+
+// حد Supabase (db-max-rows = 1000): ٢٥٠٠ حجز لازم يتجابوا كلهم بالصفحات، والاستعلام العادي بيتقصّ عند ١٠٠٠ من غير خطأ
+{
+  const { Client } = (await import("pg")).default;
+  const admin = new Client({ connectionString: process.env.SMOKE_DB_URL }); await admin.connect();
+  await admin.query(`insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency)
+    select 601 + (g % 16), 'Bulk ' || g, date '2020-01-01' + (g / 16), date '2020-01-01' + (g / 16) + 1, 10, 10, 'USD' from generate_series(0, 2499) g`);
+  await admin.end();
+  const plain = await st.from("bookings").select("id");
+  ok(!plain.error && plain.data.length === 1000, "plain select is silently capped at 1000 (proves the cap is active)", plain.data?.length);
+  const all = await fetchAll(() => st.from("bookings").select("*", { count: "exact" }).order("checkin", { ascending: false }).order("id"));
+  ok(!all.error && all.data.length === 2500 + 1 && new Set(all.data.map((r) => r.id)).size === all.data.length, "fetchAll returns all 2501 rows with no duplicates", all.error || all.data?.length);
+}

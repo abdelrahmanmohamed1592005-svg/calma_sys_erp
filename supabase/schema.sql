@@ -1282,7 +1282,7 @@ begin
   grand := booking_grand_total(b);
   amount := case when b.status = 'ملغي' then coalesce(b.amount_paid, 0) else greatest(coalesce(b.amount_paid, 0) - grand, 0) end;
   meth := coalesce(nullif(trim(coalesce(p_method, '')), ''), b.payment_method);
-  if char_length(meth) > 40 then raise exception 'وسيلة الدفع غير صالحة'; end if;
+  if not calma_valid_method(meth) then raise exception 'وسيلة الدفع غير صالحة - اختار وسيلة من القايمة'; end if;
   perform set_config('calma.refund_rpc', '1', true);
 
   if p_decision = 'keep' or amount <= 0 then
@@ -1308,7 +1308,7 @@ begin
   for i in 0 .. jsonb_array_length(v_rows) - 1 loop
     el := v_rows -> i;
     if (el ->> 'room') = b.room::text then
-      cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+      cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
       if (cur_amt <> 0 or coalesce(el ->> 'collectionDesc', '') <> '')
          and el ->> 'collectionMethod' = meth and el ->> 'collectionCurrency' = b.currency then
         idx := i; exit;
@@ -1325,7 +1325,7 @@ begin
       'notes', ''));
   else
     el := v_rows -> idx;
-    cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+    cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
     cur_desc := coalesce(el ->> 'collectionDesc', '');
     v_rows := jsonb_set(v_rows, array[idx::text], el || jsonb_build_object(
       'collectionAmt', cur_amt - amount, 'collectionMethod', meth, 'collectionCurrency', b.currency,
@@ -1769,7 +1769,7 @@ begin
   grand := booking_grand_total(b);
   amount := case when b.status = 'ملغي' then coalesce(b.amount_paid, 0) else greatest(coalesce(b.amount_paid, 0) - grand, 0) end;
   meth := coalesce(nullif(trim(coalesce(p_method, '')), ''), b.payment_method);
-  if char_length(meth) > 40 then raise exception 'وسيلة الدفع غير صالحة'; end if;
+  if not calma_valid_method(meth) then raise exception 'وسيلة الدفع غير صالحة - اختار وسيلة من القايمة'; end if;
   perform set_config('calma.refund_rpc', '1', true);
 
   if p_decision = 'keep' or amount <= 0 then
@@ -1804,7 +1804,7 @@ begin
     for i in 0 .. jsonb_array_length(v_rows) - 1 loop
       el := v_rows -> i;
       if (el ->> 'room') = b.room::text and coalesce(el ->> 'bookingId', '') = '' then
-        cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+        cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
         if (cur_amt <> 0 or coalesce(el ->> 'collectionDesc', '') <> '')
            and el ->> 'collectionMethod' = meth and el ->> 'collectionCurrency' = b.currency then
           idx := i; exit;
@@ -1822,7 +1822,7 @@ begin
       'notes', ''));
   else
     el := v_rows -> idx;
-    cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+    cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
     cur_desc := coalesce(el ->> 'collectionDesc', '');
     -- صف فاضي بيتربط بالحجز ده من أول رد/تحصيل عليه
     if cur_amt = 0 and cur_desc = '' and coalesce(el ->> 'bookingId', '') = '' then
@@ -2110,7 +2110,7 @@ begin
   grand := booking_grand_total(b);
   amount := case when b.status = 'ملغي' then coalesce(b.amount_paid, 0) else greatest(coalesce(b.amount_paid, 0) - grand, 0) end;
   meth := coalesce(nullif(trim(coalesce(p_method, '')), ''), b.payment_method);
-  if char_length(meth) > 40 then raise exception 'وسيلة الدفع غير صالحة'; end if;
+  if not calma_valid_method(meth) then raise exception 'وسيلة الدفع غير صالحة - اختار وسيلة من القايمة'; end if;
   perform set_config('calma.refund_rpc', '1', true);
 
   if p_decision = 'keep' or amount <= 0 then
@@ -2136,7 +2136,7 @@ begin
   delete from _refund_bal;
   insert into _refund_bal(m, n, p, bal)
   select e ->> 'collectionMethod', coalesce(e #>> '{paymentDetails,senderName}', ''), coalesce(e #>> '{paymentDetails,senderNumber}', ''),
-         sum(case when trim(coalesce(e ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(e ->> 'collectionAmt')::numeric else 0 end)
+         sum(case when trim(coalesce(e ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(e ->> 'collectionAmt')::numeric else 0 end)
   from (
     select x as e from shift_records s, jsonb_array_elements(coalesce(s.rows, '[]'::jsonb)) x
     union all
@@ -2183,7 +2183,7 @@ begin
       for i in 0 .. jsonb_array_length(v_rows) - 1 loop
         el := v_rows -> i;
         if (el ->> 'room') = b.room::text and coalesce(el ->> 'bookingId', '') = '' then
-          cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+          cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
           if (cur_amt <> 0 or coalesce(el ->> 'collectionDesc', '') <> '') and el ->> 'collectionMethod' = alloc.m and el ->> 'collectionCurrency' = b.currency then
             idx := i; exit;
           end if;
@@ -2199,7 +2199,7 @@ begin
         'paymentDetails', det, 'notes', ''));
     else
       el := v_rows -> idx;
-      cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+      cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
       cur_desc := coalesce(el ->> 'collectionDesc', '');
       if cur_amt = 0 and cur_desc = '' and coalesce(el ->> 'bookingId', '') = '' then
         el := el || jsonb_build_object('bookingId', b.id) || jsonb_build_object('paymentDetails', det);
@@ -2261,7 +2261,7 @@ $$ select right(regexp_replace(translate(coalesce(t, ''), '٠١٢٣٤٥٦٧٨٩'
 create or replace function calma_phone(t text) returns text language sql immutable as
 $$ select left(regexp_replace(translate(coalesce(t, ''), '٠١٢٣٤٥٦٧٨٩', '0123456789'), '[^0-9+]', '', 'g'), 20) $$;
 create or replace function calma_num(t text) returns numeric language sql immutable as
-$$ select case when trim(coalesce(t, '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(t)::numeric else 0 end $$;
+$$ select case when trim(coalesce(t, '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(t)::numeric else 0 end $$;
 create or replace function calma_clean_details(m text, d jsonb) returns jsonb language sql immutable as $$
   select case
     when m = 'فيزا' then jsonb_build_object('senderName', '', 'senderNumber', calma_last4(d ->> 'senderNumber'), 'ref', '', 'onlinePaid', false)
@@ -2462,3 +2462,60 @@ end;
 $$;
 revoke all on function settle_staff_cafeteria(text, text, text, numeric, text, jsonb) from public, anon;
 grant execute on function settle_staff_cafeteria(text, text, text, numeric, text, jsonb) to authenticated;
+
+-- --------------------------------------------------------------------------
+-- 34) تقوية بعد مراجعة شاملة للكود (كل نقطة اتأكدت بتجربة على قاعدة حقيقية):
+--   (أ) مدير الحجوزات كان يقدر يعدّل محتوى يومية مقفولة (صفوف/رصيد) وهو بيعيد فتحها في نفس الـ UPDATE.
+--       دلوقتي إعادة الفتح بتغيّر حالة القفل بس؛ تعديل المحتوى للمدير العام/الحسابات بس.
+--   (ب) تغيير عملة حجز عليه مدفوع كان مسموح لمدير الحجوزات (١٠٠٠ جنيه تتقلب ١٠٠٠ دولار) - ممنوع لأي حد.
+--   (ج) حجز مدفوع أونلاين (amount_paid = 0) كان ينفع يتمسح فيضيع أثره - دلوقتي زي أي حجز عليه فلوس.
+--   (د) وسيلة الرد بتتحقق من القايمة (كانت أي نص: رد ٧٠٠ على وسيلة "xyz" من غير ما ينقص رصيد الفيزا/الكاش الحقيقي).
+--   (هـ) calma_num بيقرا كمان ".5" و"1e3" (حقل الرقم في المتصفح بيكتبهم) - كانوا بيتقروا صفر فيتمسح تحصيل موجود.
+-- --------------------------------------------------------------------------
+create or replace function prevent_closed_shift_edit()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare skip text[] := array['closed', 'closed_by', 'closed_at', 'updated_at'];
+begin
+  if old.closed = true then
+    if new.closed = false then
+      if not is_gm_or_reservations() then
+        raise exception 'إعادة فتح شيفت مقفول من صلاحية المدير العام أو مدير الحجوزات بس';
+      end if;
+      -- إعادة الفتح لوحدها: أي تغيير في المحتوى معاها (صفوف/أرصدة/إجماليات) للمدير العام/الحسابات بس
+      if not can_manage_financials() and (to_jsonb(new) - skip) is distinct from (to_jsonb(old) - skip) then
+        raise exception 'إعادة فتح الشيفت المقفول مينفعش تتغيّر معاها بياناته - التعديل من المدير العام أو الحسابات';
+      end if;
+    else
+      -- الشيفت فاضل مقفول وبيتم تعديل محتواه (تصحيح): المدير العام/الحسابات بس
+      if not can_manage_financials() then
+        raise exception 'لا يمكن تعديل شيفت مقفول إلا من المدير العام أو الحسابات';
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function prevent_currency_change_when_paid()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.currency is distinct from old.currency and (coalesce(old.amount_paid, 0) <> 0 or coalesce(old.refunded_amount, 0) <> 0) then
+    raise exception 'مينفعش تغيّر عملة حجز عليه فلوس متحصّلة أو مردودة (المدفوع بعملة الحجز الأصلية) - الغي الحجز واعمل حجز جديد بالعملة الصح';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists bookings_currency_guard on bookings;
+create trigger bookings_currency_guard before update on bookings
+  for each row execute function prevent_currency_change_when_paid();
+
+create or replace function prevent_delete_booking_with_money()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(old.amount_paid, 0) > 0 or coalesce(old.refund_pending, false) or coalesce(old.refunded_amount, 0) > 0
+     or coalesce((old.payment_details ->> 'onlinePaid')::boolean, false) then
+    raise exception 'الحجز ده عليه حركة فلوس (مدفوع أو رد أو مدفوع أونلاين) - استخدم حالة "ملغي" بدل الحذف';
+  end if;
+  return old;
+end;
+$$;

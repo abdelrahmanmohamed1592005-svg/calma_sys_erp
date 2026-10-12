@@ -30,7 +30,7 @@ export const test = base.extend({
       await ctx.routeWebSocket(/fake-supabase\.test/, (ws) => { ws.close(); });
       await ctx.route("http://fake-supabase.test/**", async (route) => {
         const req = route.request();
-        const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" };
+        const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*", "access-control-expose-headers": "content-range" };
         if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
         let body = null;
         try { body = req.postData() ? JSON.parse(req.postData()) : null; } catch { body = null; }

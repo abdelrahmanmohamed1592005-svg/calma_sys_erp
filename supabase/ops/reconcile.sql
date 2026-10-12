@@ -7,7 +7,7 @@ with ledger as (        -- كل تحصيل في اليومية مربوط بحج
   select (x ->> 'bookingId') as booking_id,
          coalesce(nullif(x ->> 'collectionCurrency', ''), 'EGP') as cur,
          coalesce(x ->> 'collectionMethod', '') as method,
-         case when trim(coalesce(x ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(x ->> 'collectionAmt')::numeric else 0 end as amt
+         case when trim(coalesce(x ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(x ->> 'collectionAmt')::numeric else 0 end as amt
   from shift_records s, lateral (select jsonb_array_elements(coalesce(s.rows, '[]'::jsonb)) union all select jsonb_array_elements(coalesce(s.cafeteria_rows, '[]'::jsonb))) e(x)
   where coalesce(x ->> 'bookingId', '') <> ''
 ),

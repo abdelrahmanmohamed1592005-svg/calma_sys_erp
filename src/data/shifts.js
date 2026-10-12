@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
+import { fetchAll } from "./page";
 import { freshShiftRecord, applyCollectionToRows, applyCafeteriaCollection } from "../domain/money";
 import { prevShiftOf, shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
 import { SHIFTS } from "../domain/constants";
@@ -60,8 +61,8 @@ export async function updateShiftRecordIfUnchanged(date, shiftKey, expectedUpdat
 /* كل سجلات اليومية في فترة (استعلام واحد بدل استعلام لكل شيفت في كل يوم -
    تقرير فترة سنة كان بيبعت أكتر من ١٠٠٠ طلب). بترجع null لو القراءة فشلت. */
 export async function getShiftRecordsInRange(fromDate, toDate) {
-  const { data, error } = await supabase.from("shift_records").select("*")
-    .gte("date", fromDate).lte("date", toDate).order("date", { ascending: true });
+  const { data, error } = await fetchAll(() => supabase.from("shift_records").select("*", { count: "exact" })
+    .gte("date", fromDate).lte("date", toDate).order("date", { ascending: true }).order("shift_key"));
   if (error || !data) return null;
   const order = { morning: 0, evening: 1, night: 2 };
   return data.map(shiftFromRow).sort((a, b) => (a.date === b.date ? order[a.shiftKey] - order[b.shiftKey] : a.date < b.date ? -1 : 1));
@@ -225,7 +226,7 @@ export async function getPaymentsIndex(bookings) {
    بتستخدمها عشان تحصيل نفس الحجز مايتحسبش مرتين: مرة من اليومية (في تاريخها)
    ومرة تاني من قيمة amountPaid على الحجز في تاريخ تاني. بترجع null لو القراءة فشلت. */
 export async function getJournaledBookingIds() {
-  const { data, error } = await supabase.from("shift_records").select("booking_collections");
+  const { data, error } = await fetchAll(() => supabase.from("shift_records").select("date,shift_key,booking_collections", { count: "exact" }).order("date").order("shift_key"));
   if (error || !data) return null;
   const set = new Set();
   data.forEach((r) => (r.booking_collections || []).forEach((e) => { if (e.bookingId) set.add(e.bookingId); }));

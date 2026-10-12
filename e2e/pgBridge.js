@@ -168,9 +168,17 @@ export function makeBridge(pool, { log } = {}) {
         if (where.length) sql += " where " + where.join(" and ");
         const order = url.searchParams.get("order");
         if (order) sql += " order by " + order.split(",").map((o) => { const [c, d] = o.split("."); return `${ident(c)} ${d === "desc" ? "desc" : "asc"}`; }).join(", ");
-        const lim = Number(url.searchParams.get("limit"));
-        if (lim > 0) sql += ` limit ${Math.floor(lim)}`;
-        const r = await inTx(sub, (c) => c.query(sql, vals));
+        // زي Supabase المستضاف: حد أقصى للصفوف في الرد (db-max-rows) من غير أي خطأ - E2E_MAX_ROWS لتصغيره في الاختبارات
+        const maxRows = Number(process.env.E2E_MAX_ROWS) || 1000;
+        const lim = Math.min(Number(url.searchParams.get("limit")) > 0 ? Math.floor(Number(url.searchParams.get("limit"))) : maxRows, maxRows);
+        const off = Math.max(0, Math.floor(Number(url.searchParams.get("offset")) || 0));
+        let total = null;
+        if (prefer.includes("count=exact")) {
+          const cq = `select count(*)::int n from public.${ident(table)}` + (where.length ? " where " + where.join(" and ") : "");
+          total = (await inTx(sub, (c) => c.query(cq, vals))).rows[0].n;
+        }
+        const r = await inTx(sub, (c) => c.query(sql + ` limit ${lim} offset ${off}`, vals));
+        if (total != null && !wantsObject) return json(200, r.rows, { "content-range": `${r.rows.length ? `${off}-${off + r.rows.length - 1}` : "*"}/${total}` });
         return respondRows(r.rows);
       }
       if (method === "POST") {
