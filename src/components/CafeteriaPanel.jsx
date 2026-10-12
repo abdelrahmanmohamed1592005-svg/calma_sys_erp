@@ -140,7 +140,7 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
 
       <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>كافيتيريا الاستاف</div>
       {canWrite && (
-        <div data-testid="staff-cafe-form" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 }}>
+        <div data-testid="staff-cafe-form" className="cx-no-print" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 }}>
           <select className="cx-select" data-testid="staff-cafe-who" style={{ width: 150 }} value={who} onChange={(e) => setWho(e.target.value)}>
             <option value="">مين أخد؟</option>
             {staffList.map((p) => <option key={p.username} value={p.username}>{p.name || p.username}</option>)}
@@ -181,11 +181,11 @@ export function CafeteriaSection({ record, rooms, bookings, locked, readOnly, pr
                   <span><b>{g.name}</b> <span style={{ color: "var(--muted)", fontSize: 11 }}>({g.entries.length} استهلاك: {g.entries.map((e) => e.description || e.day).slice(0, 3).join("، ")})</span></span>
                   <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <b style={{ color: "var(--rust)" }}>{fmt(owed)} {g.currency}</b>
-                    {canWrite && <button className="cx-btn cx-btn-outline" data-testid="staff-cafe-settle-open" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => { setPayFor(payFor === k ? null : k); setPayAmt(""); }}>تسديد</button>}
+                    {canWrite && <button className="cx-btn cx-btn-outline cx-no-print" data-testid="staff-cafe-settle-open" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => { setPayFor(payFor === k ? null : k); setPayAmt(""); }}>تسديد</button>}
                   </span>
                 </div>
                 {payFor === k && canWrite && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start", marginTop: 6 }}>
+                  <div className="cx-no-print" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start", marginTop: 6 }}>
                     <input className="cx-input" data-testid="staff-cafe-pay-amount" type="number" min="0" style={{ width: 110 }} placeholder={`المبلغ (${fmt(owed)})`} value={payAmt} onChange={(e) => setPayAmt(e.target.value)} />
                     <select className="cx-select" data-testid="staff-cafe-pay-method" style={{ width: 140 }} value={payMethod} onChange={(e) => { setPayMethod(e.target.value); setPayDetails(emptyPaymentDetails()); }}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
                     <PaymentDetailsInline compact={false} testid="staff-cafe-pay" method={payMethod} details={payDetails} onChange={setPayDetails} />

@@ -60,7 +60,11 @@ export function GlobalStyle() {
         .cx-report-grid{ grid-template-columns:repeat(4,1fr) !important; gap:8px !important; }
         table.cx-table{ font-size:10.5px; }
         table.cx-table thead{ display:table-header-group; }
-        table.cx-table th.cx-th{ background:#F0EDE2 !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+        table.cx-table th.cx-th{ background:#F0EDE2 !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; position:static !important; }
+        /* الـ sticky في الطباعة بيزحزح ترويسة الجدول وبيغطي الصفوف */
+        ::placeholder{ color:transparent !important; }
+        td[style*="sticky"]{ position:static !important; }
+        table.cx-table{ min-width:0 !important; width:100% !important; }
         table.cx-table tr{ break-inside:avoid; page-break-inside:avoid; }
         * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 

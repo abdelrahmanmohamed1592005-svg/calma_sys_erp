@@ -152,7 +152,7 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
           </tbody>
         </table>
       </div>
-      {!locked && <button className="cx-btn cx-btn-outline" data-testid="hotel-row-add" style={{ marginTop: 8, fontSize: 12 }} onClick={onAddRow}><Plus size={13} /> إضافة بند مصاريف/إيرادات فندق</button>}
+      {!locked && <button className="cx-btn cx-btn-outline cx-no-print" data-testid="hotel-row-add" style={{ marginTop: 8, fontSize: 12 }} onClick={onAddRow}><Plus size={13} /> إضافة بند مصاريف/إيرادات فندق</button>}
     </div>
   );
 }

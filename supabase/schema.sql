@@ -2075,3 +2075,147 @@ do $$ begin
   begin execute 'alter publication supabase_realtime add table staff_cafeteria';
   exception when duplicate_object then null; when others then null; end;
 end $$;
+
+-- --------------------------------------------------------------------------
+-- 31) رد الفلوس بيتقسّم على وسائل الدفع الأصلية (من غير لخبطة كاش/فيزا):
+--     المدفوع الفعلي لكل وسيلة (وكارت/محفظة) بيتحسب من اليومية نفسها (صفوف الحجز
+--     وصفوف الكافيتيريا المربوطة بيه، عبر كل الشيفتات). الرد بيبدأ بالوسيلة اللي
+--     مدير الحجوزات اختارها (لحد رصيدها بس)، والباقي على باقي الوسائل بالأكبر رصيد -
+--     فيزا ١٠٠ + كاش ٥٠ والرد ١٥٠ يرجّع الفيزا ١٠٠ والكاش ٥٠، ورد الفيزا بيتسجّل على
+--     نفس الكارت (****١٢٣٤). لو الوسيلة المختارة معاهاش رصيد (مثلاً دفع كاش والرد
+--     بتحويل) قرار المدير هو اللي بيمشي والرد كله عليها. لو اليومية مفيهاش تحصيل
+--     لحجز قديم، بيتسجّل الرد كله على الوسيلة المختارة زي الأول.
+-- --------------------------------------------------------------------------
+create or replace function decide_booking_refund(p_booking uuid, p_decision text, p_expected timestamptz default null, p_method text default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  b bookings%rowtype;
+  sr shift_records%rowtype;
+  v_rows jsonb; el jsonb; i int; idx int;
+  amount numeric; grand numeric; uname text; meth text; remaining numeric; take numeric;
+  alloc record; chosen_bal numeric := 0; splits jsonb := '[]'::jsonb;
+  cur_amt numeric; cur_desc text; label text; det jsonb; online_m boolean; empty_idx int;
+begin
+  if not is_reservations_manager() then
+    raise exception 'قرار رد الفلوس من صلاحية مدير الحجوزات بس';
+  end if;
+  if p_decision not in ('refund','keep') then raise exception 'قرار غير معروف'; end if;
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if not b.refund_pending then raise exception 'مفيش طلب رد فلوس معلّق على الحجز ده (اتقرر قبل كده)'; end if;
+  if p_expected is not null and b.updated_at is distinct from p_expected then
+    raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وراجع الطلب';
+  end if;
+  select username into uname from profiles where id = auth.uid();
+  grand := booking_grand_total(b);
+  amount := case when b.status = 'ملغي' then coalesce(b.amount_paid, 0) else greatest(coalesce(b.amount_paid, 0) - grand, 0) end;
+  meth := coalesce(nullif(trim(coalesce(p_method, '')), ''), b.payment_method);
+  if char_length(meth) > 40 then raise exception 'وسيلة الدفع غير صالحة'; end if;
+  perform set_config('calma.refund_rpc', '1', true);
+
+  if p_decision = 'keep' or amount <= 0 then
+    update bookings set refund_pending = false,
+      refund_decision = case when amount <= 0 then refund_decision else 'kept' end,
+      refunded_by = case when amount <= 0 then refunded_by else uname end,
+      refunded_at = case when amount <= 0 then refunded_at else now() end
+      where id = p_booking;
+    perform set_config('calma.refund_rpc', '', true);
+    return jsonb_build_object('decision', case when amount <= 0 then 'none' else 'kept' end, 'amount', 0);
+  end if;
+
+  select * into sr from shift_records
+    where closed = false and date >= hotel_today() - 1
+    order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc
+    limit 1 for update;
+  if not found then
+    raise exception 'مفيش شيفت مفتوح دلوقتي في اليومية - الرد بيتسجّل في يومية شيفت مفتوح، استنى لما موظف يفتح شيفته وجرّب تاني';
+  end if;
+
+  -- رصيد كل وسيلة (وتفاصيلها) من تحصيل هذا الحجز في اليومية بعملة الحجز
+  create temporary table if not exists _refund_bal (m text, n text, p text, bal numeric, ord int) on commit drop;
+  delete from _refund_bal;
+  insert into _refund_bal(m, n, p, bal)
+  select e ->> 'collectionMethod', coalesce(e #>> '{paymentDetails,senderName}', ''), coalesce(e #>> '{paymentDetails,senderNumber}', ''),
+         sum(case when trim(coalesce(e ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(e ->> 'collectionAmt')::numeric else 0 end)
+  from (
+    select x as e from shift_records s, jsonb_array_elements(coalesce(s.rows, '[]'::jsonb)) x
+    union all
+    select x as e from shift_records s, jsonb_array_elements(coalesce(s.cafeteria_rows, '[]'::jsonb)) x
+  ) q
+  where q.e ->> 'bookingId' = b.id::text and q.e ->> 'collectionCurrency' = b.currency
+  group by 1, 2, 3;
+  delete from _refund_bal where bal <= 0;
+  select coalesce(sum(bal), 0) into chosen_bal from _refund_bal where m = meth;
+  -- ترتيب الرد: الوسيلة المختارة الأول، وبعدها الأكبر رصيد
+  update _refund_bal set ord = case when m = meth then 0 else 1 end;
+  if chosen_bal = 0 then
+    -- الوسيلة المختارة معاهاش رصيد: قرار المدير بيمشي والرد كله عليها (زي الأول)
+    delete from _refund_bal;
+    insert into _refund_bal values (meth, '', '', amount, 0);
+  end if;
+
+  v_rows := coalesce(sr.rows, '[]'::jsonb);
+  remaining := amount;
+  for alloc in select * from _refund_bal order by ord, bal desc loop
+    exit when remaining <= 0;
+    take := least(remaining, alloc.bal);
+    if alloc.bal = amount and chosen_bal = 0 then take := remaining; end if;
+    remaining := remaining - take;
+    online_m := alloc.m in ('فيزا', 'تحويل بنكي / انستاباي', 'فودافون كاش', 'انستاباي', 'تحويل بنكي');
+    det := jsonb_build_object('senderName', alloc.n, 'senderNumber', alloc.p, 'ref', '', 'onlinePaid', false);
+    label := 'رد فلوس - ' || b.guest_name || ' (-' || take || ' ' || b.currency || ')';
+    idx := null; empty_idx := null;
+    for i in 0 .. jsonb_array_length(v_rows) - 1 loop
+      el := v_rows -> i;
+      if (el ->> 'bookingId') = b.id::text and el ->> 'collectionMethod' = alloc.m and el ->> 'collectionCurrency' = b.currency
+         and (not online_m or (coalesce(el #>> '{paymentDetails,senderName}', '') = alloc.n and coalesce(el #>> '{paymentDetails,senderNumber}', '') = alloc.p)) then
+        idx := i; exit;
+      end if;
+    end loop;
+    if idx is null and not online_m then
+      -- تحصيل قديم من غير ربط بحجز: صف الغرفة اللي مش تابع لحجز تاني (أو صف فاضي)
+      for i in 0 .. jsonb_array_length(v_rows) - 1 loop
+        el := v_rows -> i;
+        if (el ->> 'room') = b.room::text and coalesce(el ->> 'bookingId', '') = '' then
+          cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+          if (cur_amt <> 0 or coalesce(el ->> 'collectionDesc', '') <> '') and el ->> 'collectionMethod' = alloc.m and el ->> 'collectionCurrency' = b.currency then
+            idx := i; exit;
+          end if;
+          if empty_idx is null and cur_amt = 0 and coalesce(el ->> 'collectionDesc', '') = '' then empty_idx := i; end if;
+        end if;
+      end loop;
+      if idx is null then idx := empty_idx; end if;
+    end if;
+    if idx is null then
+      v_rows := v_rows || jsonb_build_array(jsonb_build_object(
+        'room', b.room, 'bookingId', b.id, 'expenseDesc', '', 'expenseAmt', '', 'expenseCategory', 'أخرى', 'expenseCurrency', 'EGP',
+        'collectionDesc', label, 'collectionAmt', -take, 'collectionMethod', alloc.m, 'collectionCurrency', b.currency,
+        'paymentDetails', det, 'notes', ''));
+    else
+      el := v_rows -> idx;
+      cur_amt := case when trim(coalesce(el ->> 'collectionAmt', '')) ~ '^-?[0-9]+(\.[0-9]+)?$' then trim(el ->> 'collectionAmt')::numeric else 0 end;
+      cur_desc := coalesce(el ->> 'collectionDesc', '');
+      if cur_amt = 0 and cur_desc = '' and coalesce(el ->> 'bookingId', '') = '' then
+        el := el || jsonb_build_object('bookingId', b.id) || jsonb_build_object('paymentDetails', det);
+      end if;
+      v_rows := jsonb_set(v_rows, array[idx::text], el || jsonb_build_object(
+        'collectionAmt', cur_amt - take, 'collectionMethod', alloc.m, 'collectionCurrency', b.currency,
+        'collectionDesc', case when cur_desc <> '' then cur_desc || ' / ' || label else label end));
+    end if;
+    splits := splits || jsonb_build_array(jsonb_build_object('method', alloc.m, 'amount', take, 'details', det));
+  end loop;
+  update shift_records set rows = v_rows,
+    booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
+    where date = sr.date and shift_key = sr.shift_key;
+
+  update bookings set
+    amount_paid = coalesce(amount_paid, 0) - amount,
+    refund_pending = false, refund_decision = 'refunded',
+    refunded_amount = coalesce(refunded_amount, 0) + amount, refunded_by = uname, refunded_at = now()
+    where id = p_booking;
+  perform set_config('calma.refund_rpc', '', true);
+  return jsonb_build_object('decision', 'refunded', 'amount', amount, 'currency', b.currency, 'method', meth, 'splits', splits, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
+end;
+$$;
+revoke all on function decide_booking_refund(uuid, text, timestamptz, text) from public, anon;
+grant execute on function decide_booking_refund(uuid, text, timestamptz, text) to authenticated;
