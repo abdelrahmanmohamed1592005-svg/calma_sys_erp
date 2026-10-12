@@ -1,6 +1,8 @@
 /* اختبار دخان على الطريق الحقيقي: supabase-js ← PostgREST ← Postgres بـ JWT حقيقي (auth.uid() من الـ claims).
    بيتشغّل بـ scripts/postgrest-smoke.sh اللي بيجهّز القاعدة وPostgREST وبوابة /rest/v1 زي Supabase. */
-import { createClient } from "@supabase/supabase-js";
+// Node 20 (CI) مفيهوش WebSocket مدمج وrealtime-js بيطلبه عند إنشاء الـ client؛ الاختبار ده مابيستخدمش realtime فبنحط بديل فاضي
+globalThis.WebSocket ??= class { close() {} };
+const { createClient } = await import("@supabase/supabase-js");
 import crypto from "node:crypto";
 const secret = "super-secret-jwt-token-with-at-least-32-characters-long";
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
