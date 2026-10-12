@@ -17,7 +17,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
 const near = (a, b, t = 0.011) => Math.abs(a - b) <= t;
 const SHIFT = "morning";
 const STAFF = ["st1"];
-const RPC = !process.env.SIM_CLIENT;   // الافتراضي: العمليات المالية عن طريق الـ RPC الذرية؛ SIM_CLIENT=1 بيرجّع خوارزمية الواجهة القديمة (للمقارنة)
+const RPC = true;   // العمليات المالية بالدوال الذرية بس: الجلسات مقفولة على الكتابة المباشرة للفلوس (قسم ٣٥)، فالمسار القديم (تحديث مباشر) مابقاش ممكن
 
 const toB = (r) => ({ id: r.id, room: r.room, guestName: r.guest_name, checkin: r.checkin, checkout: r.checkout, priceNight: r.price_night, totalRoom: r.total_room, currency: r.currency, extras: r.extras, earlyCheckin: r.early_checkin, paymentMethod: r.payment_method, paymentDetails: r.payment_details, amountPaid: r.amount_paid, status: r.status, leftEarly: r.left_early, refundPending: r.refund_pending, settled: r.settled, notes: r.notes || "", updatedAt: r.updated_at });
 const COLS = "id, room, guest_name, checkin::text checkin, checkout::text checkout, price_night::float price_night, total_room::float total_room, currency, extras, early_checkin, payment_method, payment_details, amount_paid::float amount_paid, status, left_early, refund_pending, settled, notes, updated_at";

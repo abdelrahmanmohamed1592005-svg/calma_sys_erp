@@ -83,6 +83,40 @@ describe.skipIf(!enabled)("إصلاحات المراجعة الكاملة", () =
     await db.q("delete from shift_records"); await db.q("delete from shift_claims");
   });
 
+  it("قفل الكتابة المباشرة: مفيش دور بيغيّر amount_paid ولا ديون الكافيتيريا بتحديث/إضافة مباشرة، والدوال الذرية شغّالة، والصيانة (من غير مستخدم) مسموحة", async () => {
+    await db.q("insert into shift_claims(date, shift_key, username, name) values ($1,'morning','st1','st1') on conflict do nothing", [today]);
+    await db.q("insert into shift_records(date, shift_key, staff_name, staff_username, rows) values ($1,'morning','st1','st1','[]'::jsonb) on conflict do nothing", [today]);
+    const id = (await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency) values (607,'Lock',$1,$2,100,200,'EGP') returning id", [today, addDays(today, 2)]))[0].id;
+    const paid = async () => Number((await db.q("select amount_paid::float p from bookings where id = $1", [id]))[0].p);
+    for (const u of ["st1", "st2", "res1", "gm1", "acc1"]) {
+      const r = await db.tx(u, (c) => c.query("update bookings set amount_paid = 50 where id = $1", [id]));
+      expect(await paid(), `${u} كتب amount_paid مباشرة`).toBe(0);
+      if (r.ok === false) expect(String(r.err?.message), u).toMatch(/مش بتعديل مباشر/);
+    }
+    // إنشاء حجز بمدفوع مباشرة ممنوع برضه
+    const ins = await db.tx("st1", (c) => c.query("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency, amount_paid) values (608,'PaidAtBirth',$1,$2,100,200,'EGP',100)", [today, addDays(today, 2)]));
+    expect(ins.ok).toBe(false);
+    // الدالة الذرية شغّالة
+    expect((await db.tx("st1", (c) => c.query("select record_booking_payment($1, 80, 'كاش', '{}'::jsonb, null, 'تحصيل') r", [id]))).ok).toBe(true);
+    expect(await paid()).toBe(80);
+    // تعديل عادي على الحجز (بدون تغيير المدفوع) شغّال
+    expect((await db.tx("res1", (c) => c.query("update bookings set notes = 'ملاحظة' where id = $1", [id]))).ok).toBe(true);
+    // ديون الكافيتيريا
+    const r2 = await db.tx("st1", (c) => c.query("select record_staff_cafeteria('Omar', null, 'tea', 30, 'EGP') r"));
+    expect(r2.ok, String(r2.err?.message)).toBe(true);
+    for (const u of ["st1", "st2", "gm1", "acc1"]) {
+      await db.tx(u, (c) => c.query("update staff_cafeteria set paid_amount = amount, payments = '[{\"fake\":1}]'::jsonb where consumer_name = 'Omar'"));
+      await db.tx(u, (c) => c.query("update staff_cafeteria set amount = 1 where consumer_name = 'Omar'"));
+      expect((await db.q("select paid_amount::float p, amount::float a from staff_cafeteria where consumer_name = 'Omar'"))[0], u).toEqual({ p: 0, a: 30 });
+    }
+    expect((await db.tx("st1", (c) => c.query("insert into staff_cafeteria(consumer_name, amount, paid_amount, payments) values ('X', 50, 50, '[{\"x\":1}]'::jsonb)"))).ok).toBe(false);
+    expect((await db.tx("st2", (c) => c.query("select settle_staff_cafeteria('Omar', null, 'EGP', 10, 'كاش', '{}'::jsonb) r"))).ok).toBe(false);   // st2 مفيش شيفتها مفتوح - بس الدالة هي الطريق الوحيد
+    // الصيانة (محرر SQL: من غير مستخدم) لسه تقدر تصحّح
+    await db.q("update bookings set amount_paid = 90 where id = $1", [id]);
+    expect(await paid()).toBe(90);
+    await db.q("delete from shift_records"); await db.q("delete from shift_claims");
+  });
+
   it("calma_num بيقرا .5 و 1e3 و 5. زي المتصفح (كانت صفر فبيتمسح تحصيل موجود)", async () => {
     const r = await db.q("select calma_num('.5')::float a, calma_num('1e3')::float b, calma_num('5.')::float c, calma_num('-2.50')::float d, calma_num('abc')::float e, calma_num('')::float f, calma_num(null)::float g");
     expect(r[0]).toEqual({ a: 0.5, b: 1000, c: 5, d: -2.5, e: 0, f: 0, g: 0 });

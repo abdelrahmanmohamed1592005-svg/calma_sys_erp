@@ -2408,10 +2408,12 @@ begin
     if err is not null then raise exception '%', err; end if;
     det := calma_clean_details(p_method, coalesce(p_details, '{}'::jsonb));
   end if;
+  perform set_config('calma.staff_rpc', '1', true);
   insert into staff_cafeteria(day, shift_key, consumer_username, consumer_name, description, amount, currency, paid_amount, payments)
   values (sr.date, sr.shift_key, nullif(btrim(coalesce(p_username, '')), ''), nm, left(coalesce(p_desc, ''), 300), amt, p_currency, case when paid then amt else 0 end,
           case when paid then jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'at', (extract(epoch from now()) * 1000)::bigint, 'amount', amt, 'method', p_method, 'details', det, 'day', sr.date, 'shiftKey', sr.shift_key)) else '[]'::jsonb end)
   returning id into v_id;
+  perform set_config('calma.staff_rpc', '', true);
   if paid then
     update shift_records set cafeteria_rows = calma_apply_cafe_collection(coalesce(cafeteria_rows, '[]'::jsonb), 'staff', coalesce(nullif(btrim(coalesce(p_username, '')), ''), lower(nm)), nm, null, p_method, p_currency, det, amt,
       'كافيتيريا استاف - ' || nm || ' (+' || trim_scale(amt) || ' ' || p_currency || ')')
@@ -2445,6 +2447,7 @@ begin
   if owed <= 0 then raise exception 'مفيش مديونية على الموظف ده'; end if;
   if amt > owed then raise exception 'المبلغ أكبر من المديونية (%)', trim_scale(owed); end if;
   left_amt := amt;
+  perform set_config('calma.staff_rpc', '1', true);
   for e in select id, amount, paid_amount from staff_cafeteria
            where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount
            order by created_at, id for update loop
@@ -2455,6 +2458,7 @@ begin
       where id = e.id;
     left_amt := left_amt - part;
   end loop;
+  perform set_config('calma.staff_rpc', '', true);
   if left_amt > 0 then raise exception 'المديونية اتغيّرت - حدّث وجرّب تاني'; end if;
   update shift_records set cafeteria_rows = calma_apply_cafe_collection(coalesce(cafeteria_rows, '[]'::jsonb), 'staff', k, nm, null, p_method, p_currency, det, amt,
     'كافيتيريا استاف - ' || nm || ' (+' || trim_scale(amt) || ' ' || p_currency || ')')
@@ -2540,3 +2544,51 @@ $$;
 drop trigger if exists bookings_keep_cafeteria_paid on bookings;
 create trigger bookings_keep_cafeteria_paid before insert or update on bookings
   for each row execute function keep_cafeteria_paid();
+
+-- --------------------------------------------------------------------------
+-- 35) قفل الكتابة المباشرة على الفلوس: من أي جلسة مستخدم حقيقي (واجهة/API) amount_paid بيتغيّر من دوال التحصيل والرد بس،
+--     ومبلغ/مدفوع/دفعات ديون كافيتيريا الاستاف من record_staff_cafeteria / settle_staff_cafeteria بس.
+--     قبل كده موظف الشيفت كان يقدر (بالـ API مباشرة) يكتب amount_paid أو يمسح دين استاف من غير ما يتسجّل في اليومية.
+--     محرر SQL/الصيانة (من غير مستخدم، auth.uid() فاضي) لسه مسموح عشان التصحيح اليدوي - و reconcile.sql بيكشف أي رقم مش مطابق.
+-- --------------------------------------------------------------------------
+create or replace function lock_booking_payments()
+returns trigger language plpgsql as $$
+begin
+  if auth.uid() is null
+     or coalesce(current_setting('calma.pay_rpc', true), '') = '1'
+     or coalesce(current_setting('calma.refund_rpc', true), '') = '1' then
+    return new;
+  end if;
+  if TG_OP = 'INSERT' then
+    if coalesce(new.amount_paid, 0) <> 0 then
+      raise exception 'المدفوع بيتسجّل بعد حفظ الحجز من خانة تسجيل دفعة (مش وقت الإنشاء مباشرة)';
+    end if;
+  elsif new.amount_paid is distinct from old.amount_paid then
+    raise exception 'المدفوع على الحجز بيتغيّر من تسجيل دفعة أو قرار رد الفلوس بس - مش بتعديل مباشر';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists bookings_lock_payments on bookings;
+create trigger bookings_lock_payments before insert or update on bookings
+  for each row execute function lock_booking_payments();
+
+create or replace function lock_staff_cafeteria_money()
+returns trigger language plpgsql as $$
+begin
+  if auth.uid() is null or coalesce(current_setting('calma.staff_rpc', true), '') = '1' then
+    return new;
+  end if;
+  if TG_OP = 'INSERT' then
+    raise exception 'استهلاك الاستاف بيتسجّل من خانة كافيتيريا الاستاف في اليومية (مش بإضافة مباشرة)';
+  elsif new.amount is distinct from old.amount
+     or new.paid_amount is distinct from old.paid_amount
+     or new.payments is distinct from old.payments then
+    raise exception 'مبلغ ومدفوع ودفعات كافيتيريا الاستاف بتتغيّر من تسجيل الاستهلاك أو السداد بس';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists staff_cafeteria_lock_money on staff_cafeteria;
+create trigger staff_cafeteria_lock_money before insert or update on staff_cafeteria
+  for each row execute function lock_staff_cafeteria_money();

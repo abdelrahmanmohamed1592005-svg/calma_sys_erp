@@ -94,14 +94,13 @@ describe.skipIf(!enabled)("حمل وتحمّل", () => {
           const t0 = performance.now();
           const res = await db.tx("st1", async (c) => {
             if (kind < 0.55) {
-              // تحصيل: الحجز + اليومية في نفس المعاملة (نفس الترتيب في كل مكان: الحجز ثم اليومية)
-              const { rows: [b] } = await c.query("select amount_paid::float p, room from bookings where id = $1 for update", [id]);
+              // تحصيل بالدالة الذرية (الحجز + اليومية في معاملة واحدة، والجلسات مقفولة على الكتابة المباشرة - قسم ٣٥)
+              const { rows: [b] } = await c.query("select amount_paid::float p from bookings where id = $1 for update", [id]);
               if (b.p >= 300) return "skip";
-              const amt = 10 + Math.floor(rnd() * 40);
-              await c.query("update bookings set amount_paid = amount_paid + $2, payment_method = 'فيزا' where id = $1", [id, Math.min(amt, 300 - b.p)]);
-              await c.query(`update shift_records set rows = jsonb_set(rows, array[($2::int - 601)::text, 'collectionAmt'], to_jsonb(coalesce(nullif(rows -> ($2::int - 601) ->> 'collectionAmt', '')::numeric, 0) + $3::numeric)) where date = $1 and shift_key = 'morning'`, [today, b.room, Math.min(amt, 300 - b.p)]);
+              const amt = Math.min(10 + Math.floor(rnd() * 40), 300 - b.p);
+              await c.query("select record_booking_payment($1, $2, 'فيزا', '{\"senderNumber\":\"4242\"}'::jsonb, null, 'تحصيل')", [id, amt]);
             } else if (kind < 0.8) {
-              await c.query("insert into staff_cafeteria(consumer_name, amount, currency) values ($1, $2, 'EGP')", [`w${w}`, 10 + Math.floor(rnd() * 30)]);
+              await c.query("select record_staff_cafeteria($1, null, 'x', $2, 'EGP')", [`w${w}`, 10 + Math.floor(rnd() * 30)]);
             } else {
               await c.query("update bookings set extras = jsonb_set(extras, '{tours}', to_jsonb($2::int)) where id = $1", [id, Math.floor(rnd() * 20)]);
             }
