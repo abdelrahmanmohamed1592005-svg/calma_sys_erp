@@ -143,6 +143,9 @@ test.describe("الرسوم وطرق الدفع", () => {
     await expect(roomCard(page)).toContainText("مدفوع أونلاين");
     expect(digits(await roomCard(page).innerText())).not.toMatch(/المتبقي\d/);
     await goTab(page, "التقارير");
+    // الحجز تاريخ دخوله تاريخ التقويم، والتقرير بيفتح على يوم الشيفت (قبل ٨ الصبح = امبارح): نفتح يوم الدخول صراحةً
+    await page.locator('input[type="date"]').first().fill(cairoDate(0));
+    await expect(page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last()).toContainText("BK-777");
     const online = digits(await page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last().innerText());
     expect(online).toContain("إجماليالحجوزاتالأونلاين200$");
     expect(online).not.toContain("العمولة");
