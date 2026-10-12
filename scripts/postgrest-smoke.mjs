@@ -1,13 +1,13 @@
 /* اختبار دخان على الطريق الحقيقي: supabase-js ← PostgREST ← Postgres بـ JWT حقيقي (auth.uid() من الـ claims).
    بيتشغّل بـ scripts/postgrest-smoke.sh اللي بيجهّز القاعدة وPostgREST وبوابة /rest/v1 زي Supabase. */
 // Node 20 (CI) مفيهوش WebSocket مدمج وrealtime-js بيطلبه عند إنشاء الـ client؛ الاختبار ده مابيستخدمش realtime فبنحط بديل فاضي
-globalThis.WebSocket ??= class { close() {} };
-const { createClient } = await import("@supabase/supabase-js");
+import { createClient } from "@supabase/supabase-js";
+class NoWS { close() {} }
 import crypto from "node:crypto";
 const secret = "super-secret-jwt-token-with-at-least-32-characters-long";
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const jwt = (sub) => { const h = b64({ alg: "HS256", typ: "JWT" }), p = b64({ sub, role: "authenticated", exp: Math.floor(Date.now() / 1000) + 3600 }); return `${h}.${p}.${crypto.createHmac("sha256", secret).update(`${h}.${p}`).digest("base64url")}`; };
-const client = (sub) => createClient("http://localhost:3001", jwt(sub), { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${jwt(sub)}` } } });
+const client = (sub) => createClient("http://localhost:3001", jwt(sub), { realtime: { transport: NoWS }, auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${jwt(sub)}` } } });
 const st = client("11111111-1111-1111-1111-111111111111"), res = client("22222222-2222-2222-2222-222222222222");
 const ok = (c, m, extra) => { console.log(c ? "PASS" : "FAIL", m, c ? "" : JSON.stringify(extra)); if (!c) process.exitCode = 1; };
 const today = new Date().toISOString().slice(0, 10);
@@ -35,7 +35,7 @@ ok(!d.error && d.data.amount === 50, "refund via real PostgREST", d);
 // صلاحيات: الموظف مايقدرش يرد، anon مايقدرش ينادي الدوال
 let bad = await st.rpc("decide_booking_refund", { p_booking: id, p_decision: "refund", p_expected: null, p_method: "كاش" });
 ok(bad.error, "staff cannot decide refund", bad);
-const anon = createClient("http://localhost:3001", "anon", { auth: { persistSession: false } });
+const anon = createClient("http://localhost:3001", "anon", { realtime: { transport: NoWS }, auth: { persistSession: false } });
 const an = await fetch("http://localhost:3001/rest/v1/rpc/record_booking_payment", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ p_booking: id, p_amount: 1, p_method: "كاش" }) });
 ok(an.status === 401 || an.status === 403 || an.status === 404, "anon cannot call payment rpc (status " + an.status + ")", await an.text());
 const led = await st.from("shift_records").select("rows,cafeteria_rows").single();
