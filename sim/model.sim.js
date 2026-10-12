@@ -16,6 +16,8 @@ const ROOMS = [601, 602, 603, 604, 605];
 const r2 = (n) => Math.round(n * 100) / 100;
 const near = (a, b, t = 0.011) => Math.abs(a - b) <= t;
 const SHIFT = "morning";
+const STAFF = ["st1"];
+const RPC = !process.env.SIM_CLIENT;   // الافتراضي: العمليات المالية عن طريق الـ RPC الذرية؛ SIM_CLIENT=1 بيرجّع خوارزمية الواجهة القديمة (للمقارنة)
 
 const toB = (r) => ({ id: r.id, room: r.room, guestName: r.guest_name, checkin: r.checkin, checkout: r.checkout, priceNight: r.price_night, totalRoom: r.total_room, currency: r.currency, extras: r.extras, earlyCheckin: r.early_checkin, paymentMethod: r.payment_method, paymentDetails: r.payment_details, amountPaid: r.amount_paid, status: r.status, leftEarly: r.left_early, refundPending: r.refund_pending, settled: r.settled, notes: r.notes || "", updatedAt: r.updated_at });
 const COLS = "id, room, guest_name, checkin::text checkin, checkout::text checkout, price_night::float price_night, total_room::float total_room, currency, extras, early_checkin, payment_method, payment_details, amount_paid::float amount_paid, status, left_early, refund_pending, settled, notes, updated_at";
@@ -122,6 +124,7 @@ describe.skipIf(!enabled)("محاكي عشوائي على قاعدة حقيقي�
             const split = splitPaymentForCafeteria(b, amount);
             const extras = split.cafeteria > 0 ? { ...b.extras, cafeteriaPaid: (Number(b.extras.cafeteriaPaid) || 0) + split.cafeteria } : b.extras;
             record("pay", `${b.id.slice(0, 4)} ${amount}/${due} ${method}${describePaymentDetails(method, details) ? " " + describePaymentDetails(method, details) : ""} cafe${split.cafeteria}`);
+            if (RPC) { must(await db.tx(pick(STAFF), (c) => c.query("select record_booking_payment($1, $2, $3, $4::jsonb, null, 'تحصيل') r", [b.id, amount, method, JSON.stringify(details)])), "pay(rpc)"); return; }
             const res = await db.tx("st1", async (c) => {
               await c.query("update bookings set amount_paid = amount_paid + $2, payment_method = $3, extras = $4::jsonb where id = $1", [b.id, amount, method, JSON.stringify(extras)]);
               await ledgerApply(c, (rec) => {
@@ -145,13 +148,17 @@ describe.skipIf(!enabled)("محاكي عشوائي على قاعدة حقيقي�
             if (!bs.length) return;
             const b = pick(bs), fee = pick([20, 40]), collect = rnd() < 0.6, { method, details } = randomPayment();
             record("earlyCheckin", `${b.id.slice(0, 4)} ${fee} ${collect ? method : "later"}`);
-            must(await db.tx("st1", async (c) => {
+            const ecRes = await db.tx("st1", async (c) => {
               await c.query("update bookings set early_checkin = $2::jsonb where id = $1", [b.id, JSON.stringify({ applied: true, fee, note: "" })]);
-              if (collect) {
+              if (collect && RPC) {
+                await c.query("select record_booking_payment($1, $2, $3, $4::jsonb, null, 'رسم دخول مبكر')", [b.id, fee, method, JSON.stringify(details)]);
+              } else if (collect) {
                 await c.query("update bookings set amount_paid = amount_paid + $2, payment_method = $3 where id = $1", [b.id, fee, method]);
                 await ledgerApply(c, (rec) => ({ ...rec, rows: applyCollectionToRows(rec.rows, { id: `e${log.length}`, bookingId: b.id, room: b.room, guestName: b.guestName, amount: fee, currency: b.currency, method, details, note: "رسم دخول مبكر" }).rows, bookingCollections: [...rec.bookingCollections, { id: `e${log.length}`, bookingId: b.id }] }));
               }
-            }), "earlyCheckin");
+            });
+            // الحجز متدفوع زيادة (غادر مبكرًا / قُصّر) فمفيش متبقي يتحصّل عليه الرسم: الـ RPC بترفض والعملية كلها بتترجع (مفيش نص-نص)
+            allowedErr(ecRes, /أكبر من المتبقي/, "earlyCheckin");
           },
           async extend() {
             const bs = (await bookings()).filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout);
@@ -199,6 +206,7 @@ describe.skipIf(!enabled)("محاكي عشوائي على قاعدة حقيقي�
             const payNow = rnd() < 0.4, { method, details } = randomPayment();
             const consumer = pick(["سارة", "منى", "حسن"]);
             record("staffAdd", `${consumer} ${amount}${currency} ${payNow ? method : "later"}`);
+            if (RPC) { must(await db.tx(pick(STAFF), (c) => c.query("select record_staff_cafeteria($1, null, 'x', $2, $3, $4, $5::jsonb) r", [consumer, amount, currency, payNow ? method : null, JSON.stringify(details)])), "staffAdd(rpc)"); return; }
             must(await db.tx("st1", async (c) => {
               const payments = payNow ? [{ amount, method, details, day: today, shiftKey: SHIFT }] : [];
               await c.query("insert into staff_cafeteria(day, shift_key, consumer_name, description, amount, currency, paid_amount, payments) values ($1,$2,$3,'x',$4,$5,$6,$7::jsonb)", [today, SHIFT, consumer, amount, currency, payNow ? amount : 0, JSON.stringify(payments)]);
@@ -211,6 +219,7 @@ describe.skipIf(!enabled)("محاكي عشوائي على قاعدة حقيقي�
             const e = pick(es), owed = r2(e.amount - e.paid), amount = rnd() < 0.5 ? owed : Math.max(0.01, r2(owed * (0.2 + rnd() * 0.6)));
             const { method, details } = randomPayment();
             record("staffPay", `${e.consumer_name} ${amount}/${owed} ${method}`);
+            if (RPC) { must(await db.tx(pick(STAFF), (c) => c.query("select settle_staff_cafeteria($1, null, $2, $3, $4, $5::jsonb) r", [e.consumer_name, e.currency, amount, method, JSON.stringify(details)])), "staffPay(rpc)"); return; }
             must(await db.tx("st1", async (c) => {
               await c.query("update staff_cafeteria set paid_amount = paid_amount + $2, payments = payments || $3::jsonb where id = $1", [e.id, amount, JSON.stringify([{ amount, method, details, day: today, shiftKey: SHIFT }])]);
               await ledgerApply(c, (rec) => ({ ...rec, cafeteriaRows: applyCafeteriaCollection(rec.cafeteriaRows, { kind: "staff", consumerKey: e.consumer_name, who: e.consumer_name, amount, currency: e.currency, method, details, note: "كافيتيريا استاف" }).rows }));

@@ -2092,7 +2092,7 @@ declare
   b bookings%rowtype;
   sr shift_records%rowtype;
   v_rows jsonb; el jsonb; i int; idx int;
-  amount numeric; grand numeric; uname text; meth text; remaining numeric; take numeric;
+  amount numeric; grand numeric; uname text; meth text; remaining numeric; take numeric; tot_bal numeric;
   alloc record; chosen_bal numeric := 0; splits jsonb := '[]'::jsonb;
   cur_amt numeric; cur_desc text; label text; det jsonb; online_m boolean; empty_idx int;
 begin
@@ -2154,6 +2154,12 @@ begin
     insert into _refund_bal values (meth, '', '', amount, 0);
   end if;
 
+  -- بيانات قديمة: المدفوع على الحجز أكبر من اللي مسجّل في اليومية (حجز اتحصّل قبل ربط اليومية)؟ الفرق بيتحسب على أول وسيلة
+  -- في الترتيب (بتفاصيلها) عشان اليومية تتطابق مع المبلغ اللي اترد فعلًا من غير ما فلوس تفلت من التسجيل.
+  select coalesce(sum(bal), 0) into tot_bal from _refund_bal;
+  if tot_bal < amount then
+    update _refund_bal set bal = bal + (amount - tot_bal) where ctid = (select ctid from _refund_bal order by ord, bal desc limit 1);
+  end if;
   v_rows := coalesce(sr.rows, '[]'::jsonb);
   remaining := amount;
   for alloc in select * from _refund_bal order by ord, bal desc loop

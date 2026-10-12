@@ -131,6 +131,24 @@ describe.skipIf(!enabled)("تزامن حقيقي", () => {
     } finally { await db.close(); }
   });
 
+  it("رد فلوس لحجز المدفوع عليه أكبر من المسجّل في اليومية (بيانات قديمة): اليومية بتتطابق مع المبلغ اللي اترد، وقرارين متزامنين = رد واحد بس", async () => {
+    const { db, today } = await setup();
+    try {
+      const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency, amount_paid, payment_method) values (601, 'Legacy', $1, $2, 100, 200, 'USD', 150, 'كاش') returning id", [today, addDays(today, 2)]);
+      const row = { ...emptyRow(601), bookingId: id, collectionDesc: "تحصيل", collectionAmt: 100, collectionMethod: "كاش", collectionCurrency: "USD" };
+      await db.q("update shift_records set rows = $1::jsonb", [JSON.stringify([row, emptyRow(602)])]);
+      expect((await db.tx("res1", (c) => c.query("update bookings set status = 'ملغي' where id = $1", [id]))).ok).toBe(true);
+      const rs = await Promise.all(["res1", "gm1", "res1", "gm1"].map((u) => db.tx(u, (c) => c.query("select decide_booking_refund($1, 'refund', null, 'كاش') r", [id]))));
+      expect(rs.filter((r) => r.ok)).toHaveLength(1);
+      const [b] = await db.q("select amount_paid::float paid, refunded_amount::float ref from bookings where id = $1", [id]);
+      const [rec] = await db.q("select rows from shift_records");
+      const ledger = rec.rows.filter((x) => x.bookingId === id).reduce((a, x) => a + (Number(x.collectionAmt) || 0), 0);
+      expect(b.ref).toBe(150);
+      expect(b.paid).toBe(0);
+      expect(ledger).toBe(100 - 150); // المسجّل قبل الرد (١٠٠) ناقص كل اللي خرج فعلًا (١٥٠)
+    } finally { await db.close(); }
+  });
+
   it("موظفين بيختاروا نفس الشيفت في نفس اللحظة: واحد بس ياخده", async () => {
     const { db, today } = await setup();
     try {
