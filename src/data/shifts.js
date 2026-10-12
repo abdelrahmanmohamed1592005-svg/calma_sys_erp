@@ -1,12 +1,12 @@
 import { supabase } from "../lib/supabaseClient";
-import { freshShiftRecord, applyCollectionToRows } from "../domain/money";
+import { freshShiftRecord, applyCollectionToRows, applyCafeteriaCollection } from "../domain/money";
 import { prevShiftOf, shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
 import { SHIFTS } from "../domain/constants";
 
 function shiftFromRow(r) {
   return {
     date: r.date, shiftKey: r.shift_key, staffName: r.staff_name, staffUsername: r.staff_username,
-    handover: r.handover || { EGP: 0, USD: 0 }, methodHandover: r.method_handover || {}, rows: r.rows || [], cafeteria: r.cafeteria || {}, hotelRows: r.hotel_rows || [],
+    handover: r.handover || { EGP: 0, USD: 0 }, methodHandover: r.method_handover || {}, rows: r.rows || [], cafeteria: r.cafeteria || {}, hotelRows: r.hotel_rows || [], cafeteriaRows: r.cafeteria_rows || [],
     bookingCollections: r.booking_collections || [],
     shiftNotes: r.shift_notes || "", flagged: !!r.flagged, closed: !!r.closed, closedBy: r.closed_by,
     closedAt: r.closed_at ? new Date(r.closed_at).getTime() : null,
@@ -21,7 +21,7 @@ function shiftFromRow(r) {
 function shiftToRow(rec) {
   return {
     date: rec.date, shift_key: rec.shiftKey, staff_name: rec.staffName, staff_username: rec.staffUsername,
-    handover: rec.handover, method_handover: rec.methodHandover, rows: rec.rows, cafeteria: rec.cafeteria, hotel_rows: rec.hotelRows || [],
+    handover: rec.handover, method_handover: rec.methodHandover, rows: rec.rows, cafeteria: rec.cafeteria, hotel_rows: rec.hotelRows || [], cafeteria_rows: rec.cafeteriaRows || [],
     booking_collections: rec.bookingCollections || [], shift_notes: rec.shiftNotes,
     flagged: rec.flagged, closed: rec.closed, closed_by: rec.closedBy,
     closed_at: rec.closedAt ? new Date(rec.closedAt).toISOString() : null,
@@ -148,19 +148,43 @@ export async function appendBookingCollection(date, shiftKey, profile, rooms, en
     const rec = await ensureShiftRecord(date, shiftKey, profile, rooms);
     if (!rec) return { error: "تعذر الوصول ليومية الشيفت" };
     if (!(rec.rows || []).some((r) => r.room === entry.room)) return { error: "الغرفة دي غير موجودة في جدول اليومية" };
+    // جزء الدفعة اللي بيسدّد خدمات كافيتيريا النزيل بيروح لصف الكافيتيريا
+    // تلقائيًا (cafeteriaRows)، والباقي لصف الغرفة - بنفس الوسيلة والتفاصيل.
+    const cafePart = Math.max(0, Math.min(Number(entry.cafeteriaPart) || 0, Number(entry.amount) || 0));
+    const roomEntry = { ...entry, amount: (Number(entry.amount) || 0) - cafePart };
     // applyCollectionToRows بتجمع على نفس صف الغرفة لو نفس وسيلة الدفع والعملة،
     // وإلا بتضيف صف جديد لنفس الغرفة في نفس الجدول - عشان ماتتخلطش وسيلتين
     // أو عملتين في خانة واحدة.
-    const { rows } = applyCollectionToRows(rec.rows, entry);
+    const { rows } = applyCollectionToRows(rec.rows, roomEntry);
+    let cafeteriaRows = rec.cafeteriaRows || [];
+    if (cafePart > 0) {
+      cafeteriaRows = applyCafeteriaCollection(cafeteriaRows, { kind: "guest", bookingId: entry.bookingId, room: entry.room, who: `${entry.guestName || ""}`.trim(), amount: cafePart, currency: entry.currency, method: entry.method, details: entry.details, note: "خدمة كافيتيريا" }).rows;
+    }
     // تتبّع داخلي بس (مش ظاهر في أي شاشة) لمنع حساب نفس المبلغ مرتين في
     // التقارير - انظر الملاحظة على bookingCollections في domain/money.js.
     const bookingCollections = [...(rec.bookingCollections || []), { id: entry.id, bookingId: entry.bookingId }];
-    const res = await updateShiftRecordIfUnchanged(date, shiftKey, rec.updatedAt, { ...rec, rows, bookingCollections });
+    const res = await updateShiftRecordIfUnchanged(date, shiftKey, rec.updatedAt, { ...rec, rows, cafeteriaRows, bookingCollections });
     if (res.data) return { data: res.data };
     if (res.error) return res;
     // conflict - حد تاني عدّل نفس السجل في نفس اللحظة، نجرّب تاني بأحدث نسخة
   }
   return { error: "تعارض متكرر على سجل اليومية - التحصيل سُجّل على الحجز لكن محتاج يُضاف يدويًا في اليومية" };
+}
+
+/* سداد استاف لمشروباته/أكله (كافيتيريا الاستاف): بيتسجّل في صف الكافيتيريا في
+   يومية شيفت الموظف الحالي بنفس وسيلة الدفع وتفاصيلها (مثلاً ****1234 للفيزا)،
+   فيدخل التحصيل وعهدة الوسيلة والتقرير تلقائيًا. بيعيد المحاولة عند التعارض. */
+export async function appendStaffCafeteriaCollection(date, shiftKey, profile, rooms, entry) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const rec = await ensureShiftRecord(date, shiftKey, profile, rooms);
+    if (!rec) return { error: "تعذر الوصول ليومية الشيفت" };
+    if (rec.closed) return { error: "شيفتك مقفول - مينفعش يتسجّل فيه تحصيل جديد" };
+    const { rows } = applyCafeteriaCollection(rec.cafeteriaRows || [], { kind: "staff", consumerKey: entry.consumerKey, who: entry.who, amount: entry.amount, currency: entry.currency, method: entry.method, details: entry.details, note: entry.note || "كافيتيريا استاف" });
+    const res = await updateShiftRecordIfUnchanged(date, shiftKey, rec.updatedAt, { ...rec, cafeteriaRows: rows });
+    if (res.data) return { data: res.data };
+    if (res.error) return res;
+  }
+  return { error: "تعارض متكرر على سجل اليومية - حاول تاني" };
 }
 
 /* كل أرقام الحجوزات اللي تحصيلها اتسجّل في أي يومية شيفت (أي تاريخ) - التقارير

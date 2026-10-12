@@ -33,6 +33,46 @@ export function currencyKeysOf(...moneyObjects) {
   return Array.from(set).sort((a, b) => (a === "EGP" ? -1 : b === "EGP" ? 1 : a === "USD" ? -1 : b === "USD" ? 1 : a.localeCompare(b)));
 }
 export const emptyPaymentDetails = () => ({ senderName: "", senderNumber: "", ref: "", onlinePaid: false });
+
+/* تفاصيل الدفع المطلوبة لكل وسيلة (مفيش "رقم عملية" ولا "اسم صاحب الكارت" تاني):
+   - فيزا: آخر ٤ أرقام الكارت بس (بتتخزّن في senderNumber).
+   - فودافون كاش / انستاباي / تحويل بنكي: اسم المرسل + رقم التليفون.
+   - الكاش: مفيش تفاصيل.
+   نفس الشكل (senderName/senderNumber) اللي كان متخزن قبل كده، فمفيش تغيير في
+   قاعدة البيانات، والبيانات القديمة بتتعرض زي ما هي. */
+export const isVisaMethod = (m) => m === "فيزا";
+export const isTransferMethod = (m) => ONLINE_METHODS.includes(m) && m !== "فيزا";
+const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+export function toLatinDigits(v) { return String(v ?? "").replace(/[٠-٩]/g, (d) => String(ARABIC_DIGITS.indexOf(d))); }
+export function normalizeLast4(v) { return toLatinDigits(v).replace(/\D/g, "").slice(-4); }
+export function normalizePhone(v) { return toLatinDigits(v).replace(/[^\d+]/g, "").slice(0, 20); }
+const clip = (v, n) => String(v ?? "").replace(/[\u0000-\u001F\u007F]/g, "").trim().slice(0, n);
+
+/* بتنضّف تفاصيل الدفع حسب الوسيلة وبترجّع الشكل الثابت (من غير أي خانة زيادة) */
+export function cleanPaymentDetailsFor(method, d) {
+  const base = emptyPaymentDetails();
+  if (isVisaMethod(method)) return { ...base, senderNumber: normalizeLast4(d?.senderNumber) };
+  if (isTransferMethod(method)) return { ...base, senderName: clip(d?.senderName, 120), senderNumber: normalizePhone(d?.senderNumber) };
+  return base;
+}
+/* رسالة خطأ (نص) لو التفاصيل ناقصة/غلط لوسيلة الدفع دي، أو "" لو سليمة */
+export function validatePaymentDetailsFor(method, d) {
+  if (isVisaMethod(method)) return normalizeLast4(d?.senderNumber).length === 4 ? "" : "اكتب آخر ٤ أرقام من الكارت (٤ أرقام بالظبط)";
+  if (isTransferMethod(method)) return normalizePhone(d?.senderNumber).replace(/\D/g, "").length >= 6 ? "" : "اكتب رقم التليفون اللي اتحوّل منه";
+  return "";
+}
+/* نص مختصر لتفاصيل الدفع بيتعرض في اليومية والتقارير: ****1234 أو "الاسم · الرقم" */
+export function describePaymentDetails(method, d) {
+  if (!d) return "";
+  if (isVisaMethod(method)) { const n = normalizeLast4(d.senderNumber); return n ? `****${n}` : ""; }
+  if (ONLINE_METHODS.includes(method)) return [d.senderName, d.senderNumber].map((x) => String(x || "").trim()).filter(Boolean).join(" · ");
+  return "";
+}
+/* تفاصيل متطابقة؟ (بتفرّق بين كارتين أو محفظتين مختلفتين عشان ماتتدمجش في صف واحد) */
+export function sameDetails(method, a, b) {
+  if (!ONLINE_METHODS.includes(method)) return true;
+  return describePaymentDetails(method, a) === describePaymentDetails(method, b);
+}
 export const emptyLedgerRow = (room) => ({
   room, expenseDesc: "", expenseAmt: "", expenseCategory: "أخرى", expenseCurrency: "EGP",
   collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP",
@@ -57,6 +97,10 @@ export function freshShiftRecord(date, shiftKey, staffName, staffUsername, rooms
     methodHandover: (methodHandover && Object.keys(methodHandover).length > 0) ? methodHandover : {},
     rows: rooms.map((r) => emptyLedgerRow(r.number)),
     cafeteria: emptyLedgerRow("كافيتيريا"),
+    // تحصيل الكافيتيريا التلقائي: خدمات الكافيتيريا اللي اتحصّلت من نزلاء (من
+    // بلوك الغرف/الحجوزات) وسداد الاستاف لمشروباتهم/أكلهم - كل بند صف بنفس
+    // شكل صف اليومية، بيدخل في إجمالي التحصيل وطرق الدفع وعهدة الفيزا.
+    cafeteriaRows: [],
     // بنود "مصاريف وإيرادات الفندق": مش مرتبطة بغرفة (كهرباء، إيجار قاعة، مشتريات...) - الموظف
     // بيضيف منها بنود حسب الحاجة، وبتدخل في إجماليات اليومية والتقارير زي باقي الصفوف.
     hotelRows: [emptyLedgerRow(HOTEL_ROW_LABEL)],
@@ -85,7 +129,10 @@ export function applyCollectionToRows(rows, entry) {
   const label = `${entry.note || "تحصيل"}${entry.guestName ? " - " + entry.guestName : ""} (${amount > 0 ? "+" : ""}${amount} ${entry.currency})`;
   const isEmptyRow = (r) => (Number(r.collectionAmt) || 0) === 0 && !r.collectionDesc;
   const bid = entry.bookingId || null;
-  const sameMethod = (r) => r.collectionMethod === entry.method && r.collectionCurrency === entry.currency;
+  // تفاصيل الدفع (آخر ٤ أرقام الفيزا / اسم ورقم المحوِّل) بتتنقل مع التحصيل لصف
+  // اليومية نفسه - وكارتين أو محفظتين مختلفتين مابيتدمجوش في صف واحد.
+  const details = entry.details ? { ...emptyPaymentDetails(), ...entry.details } : null;
+  const sameMethod = (r) => r.collectionMethod === entry.method && r.collectionCurrency === entry.currency && (!details || sameDetails(entry.method, r.paymentDetails, details));
   // تحصيل كل حجز بيتسجّل في صف مستقل بتاعه (bookingId) - فتحصيل التسكين المكرر مابيتدمجش
   // مع تحصيل الحجز اللي كان قبله على نفس الغرفة، وبيبان لوحده في اليومية.
   let idx = -1;
@@ -95,10 +142,11 @@ export function applyCollectionToRows(rows, entry) {
   if (idx === -1) idx = rows.findIndex((r) => r.room === entry.room && isEmptyRow(r) && !r.bookingId);
   const out = rows.slice();
   if (idx === -1) {
-    out.push({ ...emptyLedgerRow(entry.room), ...(bid ? { bookingId: bid } : {}), collectionAmt: amount, collectionMethod: entry.method, collectionCurrency: entry.currency, collectionDesc: label });
+    out.push({ ...emptyLedgerRow(entry.room), ...(bid ? { bookingId: bid } : {}), collectionAmt: amount, collectionMethod: entry.method, collectionCurrency: entry.currency, collectionDesc: label, ...(details ? { paymentDetails: details } : {}) });
     return { rows: out, added: true };
   }
   const r = rows[idx];
+  const wasEmpty = isEmptyRow(r);
   out[idx] = {
     ...r,
     ...(bid && !r.bookingId ? { bookingId: bid } : {}),
@@ -106,12 +154,88 @@ export function applyCollectionToRows(rows, entry) {
     collectionMethod: entry.method,
     collectionCurrency: entry.currency,
     collectionDesc: r.collectionDesc ? `${r.collectionDesc} / ${label}` : label,
+    ...(details && wasEmpty ? { paymentDetails: details } : {}),
   };
   return { rows: out, added: false };
 }
 
+/* تحصيل الكافيتيريا التلقائي (cafeteriaRows): كل صف بنفس شكل صف اليومية، وبيتعلّم
+   بنوعه: kind = "guest" (خدمة كافيتيريا اتحصّلت من نزيل - مربوطة بالحجز) أو
+   "staff" (استاف سدّد مشروباته/أكله). نفس الجهة + الوسيلة + العملة + التفاصيل
+   بيتجمّعوا في صف واحد، وغير كده بيتضاف صف جديد (من غير ما نخلط وسايل دفع). */
+export const CAFETERIA_ROW_LABEL = "كافيتيريا";
+export function applyCafeteriaCollection(cafeteriaRows, entry) {
+  const amount = Number(entry.amount) || 0;
+  const list = cafeteriaRows || [];
+  if (amount === 0) return { rows: list, added: false };
+  const kind = entry.kind === "staff" ? "staff" : "guest";
+  const key = kind === "staff" ? (entry.consumerKey || "") : (entry.bookingId || "");
+  const details = entry.details ? { ...emptyPaymentDetails(), ...entry.details } : emptyPaymentDetails();
+  const label = `${entry.note || "كافيتيريا"}${entry.who ? " - " + entry.who : ""} (${amount > 0 ? "+" : ""}${amount} ${entry.currency})`;
+  const rowKey = (r) => (r.kind === "staff" ? (r.consumerKey || "") : (r.bookingId || ""));
+  const idx = list.findIndex((r) => (r.kind || "guest") === kind && rowKey(r) === key && r.collectionMethod === entry.method && r.collectionCurrency === entry.currency && sameDetails(entry.method, r.paymentDetails, details));
+  const out = list.slice();
+  if (idx === -1) {
+    out.push({
+      ...emptyLedgerRow(CAFETERIA_ROW_LABEL), kind, ...(kind === "staff" ? { consumerKey: key } : { bookingId: key || undefined, guestRoom: entry.room }),
+      who: entry.who || "", collectionAmt: amount, collectionMethod: entry.method, collectionCurrency: entry.currency, collectionDesc: label, paymentDetails: details,
+    });
+    return { rows: out, added: true };
+  }
+  const r = list[idx];
+  out[idx] = { ...r, collectionAmt: (Number(r.collectionAmt) || 0) + amount, collectionDesc: r.collectionDesc ? `${r.collectionDesc} / ${label}` : label };
+  return { rows: out, added: false };
+}
+
+/* توزيع دفعة على حجز: الأول بتسدّد خدمات الكافيتيريا اللي لسه عليه (extras.cafeteria
+   ناقص اللي اتسدّد منها extras.cafeteriaPaid)، والباقي لسعر الغرفة/باقي الرسوم.
+   الجزء الأول بيروح لصف الكافيتيريا في اليومية تلقائيًا والتاني لصف الغرفة. */
+export function splitPaymentForCafeteria(booking, amount) {
+  const amt = Number(amount) || 0;
+  if (amt <= 0) return { cafeteria: 0, rest: amt };
+  const ex = booking?.extras || {};
+  const outstanding = Math.max(0, (Number(ex.cafeteria) || 0) - (Number(ex.cafeteriaPaid) || 0));
+  const cafeteria = Math.min(amt, outstanding);
+  return { cafeteria, rest: amt - cafeteria };
+}
+export function cafeteriaOutstanding(booking) {
+  const ex = booking?.extras || {};
+  return Math.max(0, (Number(ex.cafeteria) || 0) - (Number(ex.cafeteriaPaid) || 0));
+}
+
+/* صفوف تحصيل (موجبة) بفيزا من غير آخر ٤ أرقام، أو بتحويل/فودافون من غير رقم - لازم
+   تتكمّل قبل إقفال الشيفت عشان كل عملية تتتبّع. رد الفلوس (سالب) مستثنى. */
+export function missingPaymentDetails(record) {
+  const out = [];
+  const check = (r, where) => {
+    if ((Number(r.collectionAmt) || 0) <= 0) return;
+    if (validatePaymentDetailsFor(r.collectionMethod, r.paymentDetails)) out.push({ where, method: r.collectionMethod });
+  };
+  (record.rows || []).forEach((r) => check(r, `غرفة ${r.room}`));
+  check(record.cafeteria || {}, "كافيتيريا");
+  (record.cafeteriaRows || []).forEach((r) => check(r, "كافيتيريا"));
+  (record.hotelRows || []).forEach((r) => check(r, "فندق"));
+  return out;
+}
+
+/* كل عمليات وسيلة دفع (غير الكاش) في سجل شيفت - بتتعرض في متابعة العهدة
+   (فيزا: ****1234، تحويل: اسم · رقم) عشان كل تحصيل يبان بتفاصيله كاملة. */
+export function methodTransactions(record, method) {
+  const out = [];
+  const take = (r, where) => {
+    const amt = Number(r.collectionAmt) || 0;
+    if (amt === 0 || r.collectionMethod !== method) return;
+    out.push({ where, label: r.collectionDesc || "", amount: amt, currency: r.collectionCurrency || "EGP", details: describePaymentDetails(method, r.paymentDetails) });
+  };
+  (record.rows || []).forEach((r) => take(r, `غرفة ${r.room}`));
+  take({ ...(record.cafeteria || {}) }, "كافيتيريا");
+  (record.cafeteriaRows || []).forEach((r) => take(r, "كافيتيريا"));
+  (record.hotelRows || []).forEach((r) => take(r, "فندق"));
+  return out;
+}
+
 export function computeShiftTotals(record) {
-  const allRows = [...record.rows, { ...record.cafeteria, room: "كافيتيريا" }, ...(record.hotelRows || [])];
+  const allRows = [...record.rows, { ...record.cafeteria, room: "كافيتيريا" }, ...(record.cafeteriaRows || []), ...(record.hotelRows || [])];
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
   const byMethodCurrency = {}, byCategory = {};
   allRows.forEach((r) => {
@@ -217,7 +341,7 @@ export function refundDueAmount(b) {
    فوق آخر نسخة من السيرفر (fresh). خانة هو ما لمسهاش بتتاخد من السيرفر زي ما هي. */
 export function rebaseShiftRecord(base, mine, fresh) {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  const skip = new Set(["rows", "hotelRows", "bookingCollections", "updatedAt", "closed", "closedBy", "closedAt"]);
+  const skip = new Set(["rows", "hotelRows", "cafeteriaRows", "bookingCollections", "updatedAt", "closed", "closedBy", "closedAt"]);
   const out = { ...fresh };
   Object.keys(mine).forEach((k) => { if (!skip.has(k) && !same(mine[k], base?.[k])) out[k] = mine[k]; });
   // الصفوف (الغرف وبنود الفندق): نطبّق بس الخانات اللي الموظف غيّرها فعلاً فوق نسخة السيرفر
@@ -235,6 +359,7 @@ export function rebaseShiftRecord(base, mine, fresh) {
   };
   out.rows = mergeRows(base?.rows, mine.rows, fresh.rows);
   out.hotelRows = mergeRows(base?.hotelRows, mine.hotelRows, fresh.hotelRows);
+  out.cafeteriaRows = mergeRows(base?.cafeteriaRows, mine.cafeteriaRows, fresh.cafeteriaRows);
   return out;
 }
 

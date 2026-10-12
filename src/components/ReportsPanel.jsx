@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer } from "lucide-react";
 import { Logo } from "./shared";
-import { emptyMoney, computeShiftTotals, bookingGrandTotal, refundDueAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
+import { emptyMoney, computeShiftTotals, methodTransactions, describePaymentDetails, bookingGrandTotal, refundDueAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getJournaledBookingIds, getShiftRecord, getShiftRecordsInRange } from "../data/shifts";
+import { listStaffCafeteria, staffOwed } from "../data/staffCafeteria";
 
 // أقصى مدة لتقرير الفترة - بيحمي الشاشة من فترة ضخمة (أو تاريخ غلط) تعلّقها.
 const MAX_RANGE_DAYS = 366;
@@ -140,6 +141,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   const [dayRecords, setDayRecords] = useState({});
   const [loading, setLoading] = useState(true);
   const [copyText, setCopyText] = useState("");
+  const [staffEntries, setStaffEntries] = useState([]);
 
   const effFrom = rangeMode === "day" ? date : fromDate;
   const effTo = rangeMode === "day" ? date : toDate;
@@ -160,6 +162,8 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
       }
       const recs = await getShiftRecordsInRange(effFrom, effTo);
       const gj = await getJournaledBookingIds();
+      const se = await listStaffCafeteria();
+      if (se && !cancelled) setStaffEntries(se);
       if (cancelled) return;
       // فشل القراءة (null) مايتحولش لتقرير فاضي مضلّل - بنسيب آخر بيانات سليمة
       if (recs) setRecords(recs);
@@ -171,6 +175,31 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   }, [rangeMode, date, fromDate, toDate, dataVersion]);
 
   const agg = useMemo(() => aggregateShifts(records), [records]);
+  // كل عمليات الفيزا/التحويلات في الفترة بتفاصيلها (آخر ٤ أرقام / اسم ورقم) من اليومية
+  const nonCashTx = useMemo(() => {
+    const out = [];
+    records.forEach((r) => {
+      const methods = new Set();
+      [...(r.rows || []), r.cafeteria || {}, ...(r.cafeteriaRows || []), ...(r.hotelRows || [])].forEach((x) => { if (x.collectionMethod && x.collectionMethod !== "كاش" && (Number(x.collectionAmt) || 0) !== 0) methods.add(x.collectionMethod); });
+      methods.forEach((m) => methodTransactions(r, m).forEach((t) => out.push({ ...t, method: m, date: r.date, shiftKey: r.shiftKey, staffName: r.staffName })));
+    });
+    return out;
+  }, [records]);
+  // تحصيل الكافيتيريا حسب المصدر (نزلاء / استاف / مبيعات مباشرة) من اليومية
+  const cafeBySource = useMemo(() => {
+    const out = { guest: emptyMoney(), staff: emptyMoney(), direct: emptyMoney() };
+    records.forEach((r) => {
+      (r.cafeteriaRows || []).forEach((x) => { const a = Number(x.collectionAmt) || 0; if (a) { const t = out[x.kind === "staff" ? "staff" : "guest"]; const c = x.collectionCurrency || "EGP"; t[c] = (t[c] || 0) + a; } });
+      const d = r.cafeteria || {}; const a = Number(d.collectionAmt) || 0; if (a) { const c = d.collectionCurrency || "EGP"; out.direct[c] = (out.direct[c] || 0) + a; }
+    });
+    return out;
+  }, [records]);
+  const staffOpen = useMemo(() => {
+    const g = {};
+    staffEntries.filter((e) => staffOwed(e) > 0).forEach((e) => { const k = e.consumerName + "|" + e.currency; (g[k] = g[k] || { name: e.consumerName, currency: e.currency, owed: 0, count: 0 }); g[k].owed += staffOwed(e); g[k].count += 1; });
+    return Object.values(g);
+  }, [staffEntries]);
+  const staffPeriod = useMemo(() => staffEntries.filter((e) => e.day >= effFrom && e.day <= effTo), [staffEntries, effFrom, effTo]);
   // أي حجز تحصيله اتسجل فعليًا في يومية شيفت ضمن السجلات دي (تلقائيًا من
   // بلوك الغرف/شاشة الحجوزات - انظر appendBookingCollection في data/shifts.js)
   // بنستبعده من "تحصيل الحجوزات المباشر" تحت عشان ميتحسبش مرتين (مرة من
@@ -231,6 +260,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     txt += `إجمالي التحصيل: ${moneyLine(combinedTotalCollections)}\nإجمالي المصاريف: ${moneyLine(agg.totalExpenses)}\nصافي التحصيل بعد المصاريف: ${moneyLine(agg.netCash)}\n`;
     allMethods.forEach((m) => { const obj = combinedByMethodCurrency[m]; if (obj && currencyKeysOf(obj).length) txt += `  - ${m}: ${moneyLine(obj)}\n`; });
     txt += `إيراد الحجوزات الأونلاين: ${moneyLine(bAgg.grossRevenue)}\nنسبة الإشغال: ${avgOccupancy}%`;
+    if (staffOpen.length) txt += `\nاستاف عليهم فلوس للكافيتيريا: ${staffOpen.map((g) => `${g.name} ${fmt(g.owed)} ${g.currency}`).join("، ")}`;
     return txt;
   }
   async function copySummary() { const t = buildSummaryText(); setCopyText(t); try { await navigator.clipboard.writeText(t); } catch (e) {} }
@@ -325,6 +355,46 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {nonCashTx.length > 0 && (
+            <div className="cx-card" data-testid="report-noncash-tx" style={{ padding: 12, marginBottom: 14 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>تفاصيل عمليات الفيزا والتحويلات</div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>كل عملية بتفاصيلها: الفيزا بآخر ٤ أرقام من الكارت، والتحويل (فودافون كاش / انستاباي / بنكي) باسم المرسل ورقمه.</div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="cx-table" style={{ fontSize: 12, minWidth: 640 }}>
+                  <thead><tr><th className="cx-th">التاريخ</th><th className="cx-th">الشيفت</th><th className="cx-th">الوسيلة</th><th className="cx-th">التفاصيل</th><th className="cx-th">الجهة</th><th className="cx-th">المبلغ</th></tr></thead>
+                  <tbody>{nonCashTx.map((t, i) => (
+                    <tr key={i}><td style={{ whiteSpace: "nowrap" }}>{t.date}</td><td>{SHIFTS.find((x) => x.key === t.shiftKey)?.label}</td><td>{t.method}</td><td dir="ltr" style={{ textAlign: "right" }}>{t.details || "—"}</td><td>{t.where}</td><td style={{ fontWeight: 700 }}>{fmt(t.amount)} {t.currency}</td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {(currencyKeysOf(cafeBySource.guest, cafeBySource.staff, cafeBySource.direct).length > 0 || staffPeriod.length > 0 || staffOpen.length > 0) && (
+            <div className="cx-card" data-testid="report-cafeteria" style={{ padding: 12, marginBottom: 14 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>الكافيتيريا</div>
+              <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 8 }}>
+                <div><div style={{ fontSize: 11, color: "var(--muted)" }}>تحصيل من النزلاء</div><div style={{ fontWeight: 800 }}>{moneyLine(cafeBySource.guest)}</div></div>
+                <div><div style={{ fontSize: 11, color: "var(--muted)" }}>سداد الاستاف</div><div style={{ fontWeight: 800 }}>{moneyLine(cafeBySource.staff)}</div></div>
+                <div><div style={{ fontSize: 11, color: "var(--muted)" }}>مبيعات مباشرة</div><div style={{ fontWeight: 800 }}>{moneyLine(cafeBySource.direct)}</div></div>
+              </div>
+              {staffPeriod.length > 0 && (
+                <div style={{ overflowX: "auto", marginBottom: 8 }}>
+                  <table className="cx-table" style={{ fontSize: 12, minWidth: 520 }}>
+                    <thead><tr><th className="cx-th">التاريخ</th><th className="cx-th">الموظف</th><th className="cx-th">البيان</th><th className="cx-th">المبلغ</th><th className="cx-th">اتدفع</th><th className="cx-th">الباقي</th></tr></thead>
+                    <tbody>{staffPeriod.map((e) => <tr key={e.id}><td>{e.day}</td><td>{e.consumerName}</td><td>{e.description || "—"}</td><td>{fmt(e.amount)} {e.currency}</td><td>{fmt(e.paidAmount)}</td><td style={{ fontWeight: 700, color: staffOwed(e) > 0 ? "var(--rust)" : "var(--sage)" }}>{staffOwed(e) > 0 ? fmt(staffOwed(e)) : "مسدّد"}</td></tr>)}</tbody>
+                  </table>
+                </div>
+              )}
+              {staffOpen.length > 0 && (
+                <div data-testid="report-staff-owed" style={{ border: "1px solid var(--rust)", borderRadius: 8, padding: 8 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--rust)", marginBottom: 4 }}>استاف عليهم فلوس للكافيتيريا (رصيد حالي)</div>
+                  {staffOpen.map((g) => <div key={g.name + g.currency} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "3px 0" }}><span>{g.name} <span style={{ color: "var(--muted)", fontSize: 10.5 }}>({g.count} استهلاك)</span></span><b style={{ color: "var(--rust)" }}>{fmt(g.owed)} {g.currency}</b></div>)}
+                </div>
+              )}
             </div>
           )}
 

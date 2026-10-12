@@ -133,14 +133,17 @@ values (hotel_today(), 'morning', 'st1', 'st1', jsonb_build_array(
 -- ======================================================================
 select t.pass('A1 موظف يضيف حجز ٣ ليالي', t.ins('st1', 'A1', 601, 0, 3, 100, 300));
 select t.pass('A2 موظف يحصّل كامل المبلغ ويعلّم متحصّل', t.upd('st1', 'A1', 'amount_paid = 300, settled = true'));
-select t.reject('A3 موظف يعلّم متحصّل والمدفوع أقل من الإجمالي', t.ins('st1', 'A3', 602, 0, 1, 100, 100, 50, true), 'مينفعش');
+select t.pass('A3 حجز مدفوع جزء منه: الحالة بتتحسب لوحدها (مش متحصّل)', t.ins('st1', 'A3', 602, 0, 1, 100, 100, 50, true));
+select t.eq('A3 العلامة اللي اتبعتت true اتتجاهلت: المدفوع أقل فالحالة false', t.f('A3', 'settled'), 'false');
 select t.reject('A4 مدير الحجوزات ميغيّرش المدفوع', t.upd('res1', 'A1', 'amount_paid = 100'), 'موظف الشيفت');
-select t.reject('A5 مدير الحجوزات ميشيلش علامة متحصّل بدون سبب (الإجمالي مغطّى)', t.upd('res1', 'A1', 'settled = false'), 'موظف الشيفت');
+select t.pass('A5 مدير الحجوزات يحاول يشيل العلامة يدويًا: بتتتجاهل (الإجمالي مغطّى فالحالة تفضل متحصّل)', t.upd('res1', 'A1', 'settled = false'));
+select t.eq('A5 الحالة لسه متحصّل بالكامل تلقائيًا', t.f('A1', 'settled'), 'true');
 select t.pass('A6 مدير الحجوزات يمدّد ليلة ويشيل علامة متحصّل (المتبقي ظاهر)', t.upd('res1', 'A1', 'checkout = hotel_today() + 4, total_room = 400, settled = false'));
 select t.eqn('A6 المدفوع ما اتغيّرش', t.fn('A1', 'amount_paid'), 300);
 select t.eq('A6 مفيش طلب رد فلوس بسبب تمديد', t.f('A1', 'refund_pending'), 'false');
 select t.pass('A7 موظف يحصّل الفرق ويعلّم متحصّل', t.upd('st1', 'A1', 'amount_paid = 400, settled = true'));
-select t.reject('A7 مدير الحجوزات يمدّد وعلامة متحصّل لسه true (متبقي جديد)', t.upd('res1', 'A1', 'checkout = hotel_today() + 5, total_room = 500'), 'مينفعش');
+select t.pass('A7 مدير الحجوزات يمدّد تاني: الحالة بتتحوّل لـ متبقي تلقائيًا', t.upd('res1', 'A1', 'checkout = hotel_today() + 5, total_room = 500'));
+select t.eq('A7 بقى فيه متبقي فالحالة false', t.f('A1', 'settled'), 'false');
 select t.pass('A8 موظف يضيف حجز', t.ins('st1', 'A8', 603, 0, 2, 100, 200));
 select t.reject('A8 تمديد مجاني (من غير زيادة السعر) مرفوض', t.upd('st1', 'A8', 'checkout = hotel_today() + 3'), 'تعديل بيانات الحجز الأساسية');
 select t.reject('A8 تمديد بسعر غلط مرفوض', t.upd('st1', 'A8', 'checkout = hotel_today() + 3, total_room = 350'), 'تعديل بيانات الحجز الأساسية');
@@ -289,17 +292,21 @@ select t.pass('D1 رد الزيادة', t.decide('res1', 'D1', 'refund'));
 select t.eqn('D1 المردود ٢٠٠', (current_setting('t.last_decision')::jsonb ->> 'amount')::numeric, 200);
 select t.eqn('D1 المدفوع = الإجمالي الجديد', t.fn('D1', 'amount_paid'), t.fn('D1', 'total_room'));
 select t.pass('D2 حجز متحصّل بالكامل', t.ins('st1', 'D2', 601, 10, 12, 100, 200, 200, true));
-select t.reject('D2 تخفيض السعر على حجز متحصّل مرفوض', t.upd('res1', 'D2', 'total_room = 100'), 'متحصّل بالكامل');
-select t.reject('D2 وتغيير سعر الليلة على حجز متحصّل مرفوض', t.upd('res1', 'D2', 'price_night = 10'), 'متحصّل بالكامل');
+select t.pass('D2 تخفيض السعر على حجز مدفوع: مسموح، والزيادة المدفوعة بتفتح طلب رد فلوس', t.upd('res1', 'D2', 'total_room = 100'));
+select t.eq('D2 طلب رد فلوس اتفتح للزيادة', t.f('D2', 'refund_pending'), 'true');
+select t.eq('D2 الحالة لسه مدفوع بالكامل (المدفوع أكبر من الإجمالي الجديد)', t.f('D2', 'settled'), 'true');
+select t.pass('D2 تغيير سعر الليلة: مسموح (مفيش قفل تاني)', t.upd('res1', 'D2', 'price_night = 10'));
 
 -- ======================================================================
 -- E) الرسوم الإضافية وقفل المتحصّل
 -- ======================================================================
 select t.pass('E1 حجز متحصّل', t.ins('st1', 'E1', 602, 10, 11, 100, 100, 100, true));
-select t.reject('E1 رسوم إضافية على حجز متحصّل مرفوضة', t.upd('st1', 'E1', 'extras = ''{"laundry":0,"cafeteria":0,"tours":20,"pickup":0}''::jsonb'), 'متحصّل بالكامل');
+select t.pass('E1 رسوم إضافية على حجز مدفوع: مسموحة والحالة بتتحوّل لمتبقي تلقائيًا', t.upd('st1', 'E1', 'extras = ''{"laundry":0,"cafeteria":0,"tours":20,"pickup":0}''::jsonb'));
+select t.eq('E1 بقى متبقي ٢٠ فالحالة false', t.f('E1', 'settled'), 'false');
 select t.pass('E1 إلغاء علامة التحصيل', t.upd('st1', 'E1', 'settled = false'));
 select t.pass('E1 إضافة رسوم بعد إلغاء العلامة', t.upd('st1', 'E1', 'extras = ''{"laundry":0,"cafeteria":0,"tours":20,"pickup":0}''::jsonb'));
-select t.reject('E1 تعليم متحصّل قبل تحصيل الرسوم مرفوض', t.upd('st1', 'E1', 'settled = true'), 'مينفعش');
+select t.pass('E1 محاولة تعليم متحصّل يدويًا قبل تحصيل الرسوم: بتتتجاهل', t.upd('st1', 'E1', 'settled = true'));
+select t.eq('E1 الحالة لسه متبقي', t.f('E1', 'settled'), 'false');
 select t.pass('E1 تحصيل الفرق وتعليم متحصّل', t.upd('st1', 'E1', 'amount_paid = 120, settled = true'));
 select t.reject('E2 رسوم سالبة مرفوضة', t.upd('st1', 'E1', 'settled = false, extras = ''{"laundry":-5,"cafeteria":0,"tours":0,"pickup":0}''::jsonb'), 'check constraint');
 select t.pass('E3 حجز جديد', t.ins('st1', 'E3', 603, 10, 11, 100, 100));
@@ -316,6 +323,7 @@ select t.eq('E4 مفيش طلب رد (مفيش مدفوع نقدي)', t.f('E4', 
 -- ======================================================================
 \ir more_flows.sql
 \ir guests_and_rows.sql
+\ir cafeteria_flows.sql
 
 create table t.reprice_cases (checkin date, checkout date, new_checkout date, total numeric, price numeric, expected numeric);
 \o

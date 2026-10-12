@@ -1922,3 +1922,156 @@ do $$ declare r record; begin
     update bookings set code = next_booking_code() where id = r.id;
   end loop;
 end $$;
+
+-- --------------------------------------------------------------------------
+-- 30) حالة التحصيل تلقائية + تحصيل الكافيتيريا + كافيتيريا الاستاف:
+--   (أ) علامة "متحصّل بالكامل" (settled) مابقاتش قرار حد: بتتحسب تلقائيًا في
+--       قاعدة البيانات من المدفوع والإجمالي (حجز ملغي = false). اتشالت قيود
+--       القفل القديمة (قسم ١٧ و٢٤) لأنها كانت مربوطة بعلامة بيعلّمها الموظف
+--       بإيده، وكمان اتشال شرط تعديل settled من قيد مدير الحجوزات (قسم ١٤).
+--       أي تعديل في الإجمالي أو المدفوع بيحدّث الحالة لوحده، وزيادة المدفوع
+--       عن الإجمالي بتفتح طلب رد فلوس زي ما كان (قسم ٢١).
+--   (ب) shift_records.cafeteria_rows: تحصيل الكافيتيريا التلقائي (خدمات نزلاء
+--       اتحصّلت + سداد الاستاف) - بنود بنفس شكل صفوف اليومية.
+--   (ج) staff_cafeteria: مشروبات/أكل الاستاف من الكافيتيريا ومين دفع ومين لسه
+--       عليه فلوس (المديونية بتفضل لحد ما تتسدّد حتى لو عدّت شيفتات كتير).
+-- --------------------------------------------------------------------------
+drop trigger if exists bookings_settled_charge_guard on bookings;
+drop trigger if exists bookings_settled_validity_guard on bookings;
+drop function if exists prevent_charge_edit_when_settled();
+drop function if exists prevent_invalid_settled();
+
+-- اللي الفندق نفسه مطلوب يحصّله: الإجمالي الكلي، أو (للحجز المدفوع أونلاين)
+-- الإجمالي ناقص سعر الغرفة اللي اتدفع للمنصة (نفس bookingHotelTotal في money.js)
+create or replace function booking_hotel_total(b bookings)
+returns numeric language sql immutable as $$
+  select case when coalesce((b.payment_details->>'onlinePaid')::boolean, false)
+              then greatest(0, booking_grand_total(b) - coalesce(b.total_room, 0))
+              else booking_grand_total(b) end;
+$$;
+
+create or replace function bookings_auto_settled()
+returns trigger language plpgsql as $$
+begin
+  new.settled := new.status is distinct from 'ملغي' and coalesce(new.amount_paid, 0) >= booking_hotel_total(new);
+  return new;
+end;
+$$;
+-- الاسم بيبدأ بـ zz عشان يشتغل آخر تريجر (بعد ما باقي القيود تخلص)
+drop trigger if exists bookings_zz_auto_settled on bookings;
+create trigger bookings_zz_auto_settled before insert or update on bookings
+  for each row execute function bookings_auto_settled();
+
+-- قيد مدير الحجوزات (قسم ١٤) من غير شرط settled: التحصيل (المدفوع) بس هو اللي
+-- مش من صلاحيته، والحالة بقت نتيجة تلقائية مش حاجة بيعدّلها.
+create or replace function prevent_reservations_collection_edit()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  old_paid numeric; old_tendered numeric;
+begin
+  if coalesce(current_setting('calma.refund_rpc', true), '') = '1' then
+    return new;
+  end if;
+  if is_reservations_manager() then
+    if TG_OP = 'INSERT' then
+      old_paid := 0; old_tendered := 0;
+    else
+      old_paid := old.amount_paid; old_tendered := old.amount_tendered;
+    end if;
+    if (new.amount_paid is distinct from old_paid)
+       or (new.amount_tendered is distinct from old_tendered) then
+      raise exception 'تسجيل التحصيل (المدفوع/المتحصّل) من صلاحية موظف الشيفت بس، مش مدير الحجوزات';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+-- حجوزات موجودة من قبل: نحسب الحالة لمرة واحدة (التريجر هو اللي بيحسبها)
+do $$ begin
+  update bookings set settled = settled;
+exception when others then raise notice 'تعذر إعادة حساب حالة التحصيل للحجوزات القديمة: %', sqlerrm;
+end $$;
+
+-- (ب) تحصيل الكافيتيريا التلقائي في اليومية
+alter table shift_records add column if not exists cafeteria_rows jsonb not null default '[]'::jsonb;
+do $$ begin
+  alter table shift_records add constraint shifts_cafeteria_rows_size_chk check (octet_length(cafeteria_rows::text) <= 200000) not valid;
+exception when duplicate_object then null; end $$;
+
+-- (ج) كافيتيريا الاستاف
+create table if not exists staff_cafeteria (
+  id uuid primary key default gen_random_uuid(),
+  day date not null default hotel_today(),
+  shift_key text check (shift_key in ('morning','evening','night')),
+  consumer_username text,
+  consumer_name text not null check (char_length(btrim(consumer_name)) between 1 and 120),
+  description text not null default '' check (char_length(description) <= 300),
+  amount numeric not null check (amount > 0 and amount <= 1000000),
+  currency text not null default 'EGP' check (currency in ('EGP','USD','EUR','SAR','GBP')),
+  paid_amount numeric not null default 0 check (paid_amount >= 0),
+  payments jsonb not null default '[]'::jsonb check (jsonb_typeof(payments) = 'array' and octet_length(payments::text) <= 20000),
+  recorded_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint staff_cafeteria_paid_le_amount check (paid_amount <= amount)
+);
+create index if not exists staff_cafeteria_day_idx on staff_cafeteria (day desc);
+create index if not exists staff_cafeteria_consumer_idx on staff_cafeteria (consumer_name);
+
+create or replace function staff_cafeteria_guard()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_username text;
+begin
+  select username into v_username from profiles where id = auth.uid();
+  if TG_OP = 'INSERT' then
+    new.recorded_by := coalesce(v_username, new.recorded_by);
+    new.created_at := now();
+    return new;
+  end if;
+  -- تعديل: المدير العام/الحسابات بس يقدروا يغيّروا أي حاجة. موظف الشيفت بيسدّد
+  -- بس (يزوّد paid_amount ويضيف في payments) - مايقدرش يعدّل المبلغ أو الاسم أو
+  -- يقلّل المدفوع.
+  if not can_manage_financials() then
+    if new.consumer_name is distinct from old.consumer_name
+       or new.consumer_username is distinct from old.consumer_username
+       or new.description is distinct from old.description
+       or new.amount is distinct from old.amount
+       or new.currency is distinct from old.currency
+       or new.day is distinct from old.day
+       or new.shift_key is distinct from old.shift_key
+       or new.recorded_by is distinct from old.recorded_by then
+      raise exception 'تعديل بيانات استهلاك الاستاف من المدير العام أو الحسابات بس - موظف الشيفت يسجّل السداد بس';
+    end if;
+    if new.paid_amount < old.paid_amount
+       or jsonb_array_length(new.payments) < jsonb_array_length(old.payments) then
+      raise exception 'مينفعش تقلّل المدفوع على استهلاك استاف';
+    end if;
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+drop trigger if exists staff_cafeteria_guard_trg on staff_cafeteria;
+create trigger staff_cafeteria_guard_trg before insert or update on staff_cafeteria
+  for each row execute function staff_cafeteria_guard();
+revoke all on function staff_cafeteria_guard() from public, anon, authenticated;
+
+alter table staff_cafeteria enable row level security;
+drop policy if exists "staff cafeteria select" on staff_cafeteria;
+create policy "staff cafeteria select" on staff_cafeteria for select using (is_active_user());
+drop policy if exists "staff cafeteria insert" on staff_cafeteria;
+create policy "staff cafeteria insert" on staff_cafeteria for insert with check (is_staff());
+drop policy if exists "staff cafeteria update" on staff_cafeteria;
+create policy "staff cafeteria update" on staff_cafeteria for update using (is_staff() or can_manage_financials()) with check (is_staff() or can_manage_financials());
+drop policy if exists "staff cafeteria delete" on staff_cafeteria;
+create policy "staff cafeteria delete" on staff_cafeteria for delete using (can_manage_financials());
+
+revoke all on staff_cafeteria from anon, authenticated;
+grant select, insert, update, delete on staff_cafeteria to authenticated;
+grant all on staff_cafeteria to service_role;
+
+do $$ begin
+  begin execute 'alter publication supabase_realtime add table staff_cafeteria';
+  exception when duplicate_object then null; when others then null; end;
+end $$;

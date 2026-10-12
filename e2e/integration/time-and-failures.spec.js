@@ -1,6 +1,6 @@
 // الوقت (الأوفر تايم، منتصف الليل، الشيفت الليلي) وأعطال الشبكة/السيرفر وسط العمليات.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, setCairoTime, SHIFT_LABEL, refresh, openRoom, showAllRooms } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, addBooking, setCairoTime, SHIFT_LABEL, refresh, openRoom, showAllRooms, payOnBoard, waitLedgerSaved } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -24,12 +24,12 @@ test.describe("الأوفر تايم", () => {
     await login(page, "ahmed");
     await goTab(page, "اليومية"); await showAllRooms(page);
     await page.locator("table.cx-table tbody tr", { hasText: "602" }).first().getByPlaceholder("المبلغ").nth(0).fill("15");
-    await page.waitForTimeout(1300);
+    await waitLedgerSaved(page);
     expect(Number((await rec(env, "ahmed")).rows.find((r) => r.room === 602).expenseAmt)).toBe(15);
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 601);
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     expect((await env.q("select closed from shift_records"))[0].closed).toBe(false);
 
     // ١٨:٣٠: الأوفر تايم خلص
@@ -58,8 +58,8 @@ test.describe("الأوفر تايم", () => {
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 602);
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     const r = await rec(env, "ahmed");
     expect(r).toMatchObject({ date: yesterday(), shift_key: "evening", closed: false });
     expect(Number(r.rows.find((x) => x.room === 602).collectionAmt)).toBe(100);
@@ -125,7 +125,7 @@ test.describe("أعطال الشبكة والسيرفر", () => {
       if (route.request().method() === "PATCH") return route.fulfill({ status: 500, headers: { "access-control-allow-origin": "*", "content-type": "application/json" }, body: JSON.stringify({ message: "boom", code: "XX000" }) });
       return route.fallback();
     });
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
+    await payOnBoard(page);
     await expect(toast(page)).toContainText("تعذر تسجيله تلقائيًا في اليومية");
     const [b] = await env.q("select amount_paid, settled from bookings where id = $1", [id]);
     expect(b).toEqual({ amount_paid: 100, settled: true });

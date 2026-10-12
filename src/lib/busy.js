@@ -5,3 +5,12 @@ export async function withBusy(fn) {
   window.__calmaBusyCount = (window.__calmaBusyCount || 0) + 1;
   try { return await fn(); } finally { window.__calmaBusyCount = Math.max(0, (window.__calmaBusyCount || 1) - 1); }
 }
+
+/* زي withBusy بس بيمنع نفس العملية (نفس المفتاح) تتنفّذ مرتين في نفس الوقت - دوسة
+   مزدوجة على "تسجيل التحصيل" أو "حفظ الحجز" ماتسجّلش المبلغ/الحجز مرتين. */
+const running = new Set();
+export async function guarded(key, fn) {
+  if (running.has(key)) return undefined;
+  running.add(key);
+  try { return await withBusy(fn); } finally { running.delete(key); }
+}

@@ -15,7 +15,7 @@ const prevOf = (day, key) => { const i = ORDER.indexOf(key); if (i > 0) return {
 const roomRow = (page, num) => page.locator("table.cx-table tbody tr", { hasText: String(num) }).first();
 const cafeRow = (page) => page.locator("table.cx-table tbody tr", { hasText: "كافيتيريا" }).last();
 const ledger = async (env) => (await env.q("select * from shift_records where staff_username = 'ahmed'"))[0];
-const waitSaved = async (page) => page.waitForTimeout(1300);   // التعديلات بتتبعت بعد ٧٠٠ms من آخر كتابة
+const waitSaved = async (page) => { await page.waitForFunction(() => !window.__calmaPendingWrites && !window.__calmaBusyCount, null, { timeout: 15000 }); await page.waitForTimeout(150); };   // استنى الكتابة المعلّقة تتبعت (مش وقت ثابت)
 // بلوك العملة/الوسيلة في ملخص اليومية (أعمق div فيه العنوان بالظبط)
 const block = (page, title) => page.locator(`xpath=//div[./div[normalize-space(.)='${title}']]`).last();
 
@@ -132,6 +132,7 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     // لوحة الغرف: التحصيل والمتابعة
     await goTab(page, "لوحة الغرف");
     await refresh(page);
+    await expect(page.locator(".cx-kpi", { hasText: "تحصيل اليوم" })).not.toContainText("…");   // استنى تحميل المؤشرات
     const kpi = digits(await page.locator(".cx-kpi", { hasText: "تحصيل اليوم" }).innerText());
     expect(kpi).toMatch(/300USD\+20EGP|20EGP\+300USD/);
     expect(digits(await page.locator(".cx-kpi", { hasText: "شيفتات تحتاج متابعة" }).innerText())).toContain("1");
@@ -182,6 +183,10 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     const rec = await ledger(env);
     expect(rec.method_handover).toEqual({ "فيزا": { EGP: 500 } });
     expect(digits(await block(page, "فيزا (EGP)").innerText())).toContain("الإجماليدلوقتي620");
+    // تحصيل الفيزا لازم يكون معاه آخر ٤ أرقام قبل الإقفال (كل عملية تتتبّع)
+    await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
+    await expect(toast(page)).toContainText("آخر ٤ أرقام");
+    await r603.locator('input[placeholder="آخر ٤ أرقام الكارت"]').fill("4321");
     await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
     await expect(page.getByText(/أُقفل بواسطة/)).toBeVisible();
     expect((await ledger(env)).method_closing).toEqual({ "فيزا": { EGP: 620 } });

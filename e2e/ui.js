@@ -58,7 +58,7 @@ export const toast = (page) => page.locator(".cx-toast");
 /* بيضيف حجز من شاشة الحجوزات: بيدخل غرفة، اسم، تواريخ (بالفرق من النهارده)، سعر الليلة،
    والمدفوع/الوسيلة لو متحددين (الموظف بس بيقدر يكتب المدفوع). */
 export async function addBooking(page, o) {
-  const { room, guest, price = 100, nights = 1, startOffset = 0, paid, method, currency, dup = false, expectSaved = true } = o;
+  const { room, guest, price = 100, nights = 1, startOffset = 0, paid, method, currency, dup = false, expectSaved = true, last4, senderName, phone } = o;
   await goTab(page, "الحجوزات");
   await page.getByRole("button", { name: /حجز جديد/ }).click();
   const form = page.locator(".cx-card[data-calma-editing]");
@@ -68,8 +68,12 @@ export async function addBooking(page, o) {
   await field(page, "تاريخ الخروج").fill(cairoDate(startOffset + nights));
   await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']").fill(String(price));
   if (currency) await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//select").selectOption(currency);
-  if (method) await page.locator("xpath=//label[contains(.,'طريقة الدفع')]/following-sibling::select").selectOption(method);
-  if (paid != null) await page.locator("xpath=//label[contains(.,'المدفوع حتى الآن')]/following-sibling::input").fill(String(paid));
+  // الدفعة المقدّمة (موظف الشيفت بس): مبلغ + وسيلة + تفاصيل الوسيلة (فيزا = آخر ٤ أرقام، تحويل = اسم + رقم)
+  if (paid != null) await page.getByTestId("advance-amount").fill(String(paid));
+  if (method) await page.getByTestId("advance-method").selectOption(method);
+  if (last4) await page.getByTestId("advance-last4").fill(String(last4));
+  if (senderName) await page.getByTestId("advance-name").fill(senderName);
+  if (phone) await page.getByTestId("advance-phone").fill(phone);
   await form.getByRole("button", { name: /حفظ الحجز/ }).click();
   if (expectSaved) {
     // الفورم بيتقفل بس بعد نجاح الحفظ (رسالة "تم الحفظ" ممكن تكون لسه ظاهرة من حفظة قبلها)
@@ -122,4 +126,30 @@ export async function showAllRooms(page) {
   await page.locator("table.cx-table").first().waitFor({ timeout: 5000 }).catch(() => {});
   const b = page.getByTestId("ledger-show-all");
   if (await b.count()) { if ((await b.innerText()).includes("عرض كل")) await b.click(); }
+}
+
+
+/* تسجيل دفعة من بطاقة الغرفة المفتوحة (لوحة الغرف): amount فاضي = كامل المتبقي.
+   method/last4/senderName/phone حسب الوسيلة. */
+export async function payOnBoard(page, o = {}) {
+  const { amount, method, last4, senderName, phone } = o;
+  const panel = page.getByTestId("pay-panel");
+  if (amount != null) await panel.getByTestId("pay-amount").fill(String(amount));
+  if (method) await panel.getByTestId("collect-method").selectOption(method);
+  if (last4) await panel.getByTestId("pay-last4").fill(String(last4));
+  if (senderName) await panel.getByTestId("pay-name").fill(senderName);
+  if (phone) await panel.getByTestId("pay-phone").fill(phone);
+  await panel.getByTestId("pay-record").click();
+  await waitIdle(page);                                    // استنى العملية تخلص (الحفظ + تسجيل اليومية)
+}
+
+// عدّاد العمليات الجارية في التطبيق (withBusy) لحد ما يبقى صفر
+export async function waitIdle(page) {
+  await page.waitForFunction(() => !window.__calmaBusyCount, null, { timeout: 15000 });
+}
+
+// استنى كتابات اليومية المعلّقة (debounce) تتبعت للقاعدة فعلاً بدل وقت ثابت
+export async function waitLedgerSaved(page) {
+  await page.waitForFunction(() => !window.__calmaPendingWrites && !window.__calmaBusyCount, null, { timeout: 15000 });
+  await page.waitForTimeout(150);
 }

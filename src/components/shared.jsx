@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt } from "../domain/money";
+import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails } from "../domain/money";
 import { roomLabel } from "../domain/constants";
 
 export function GlobalStyle() {
@@ -105,14 +105,26 @@ export function TwoStepButton({ label, confirmLabel = "تأكيد؟", onConfirm,
   return <button className={"cx-btn " + className} onClick={() => setConfirming(true)}>{icon}{label}</button>;
 }
 
-export function PaymentDetailsInline({ method, details, onChange, disabled }) {
-  if (!ONLINE_METHODS.includes(method)) return <span style={{ fontSize: 11, color: "var(--muted)" }}>—</span>;
-  const d = details || { senderName: "", senderNumber: "", ref: "" };
+/* خانات تفاصيل الدفع حسب الوسيلة (نفس الشكل في اليومية وبلوك الغرف وفورم الحجز):
+   - فيزا: آخر ٤ أرقام الكارت بس.
+   - فودافون كاش / انستاباي / تحويل بنكي: اسم المرسل + رقم التليفون.
+   - كاش: مفيش تفاصيل. */
+export function PaymentDetailsInline({ method, details, onChange, disabled, compact = true, testid }) {
+  if (!ONLINE_METHODS.includes(method)) return compact ? <span style={{ fontSize: 11, color: "var(--muted)" }}>—</span> : null;
+  const d = { ...emptyPaymentDetails(), ...(details || {}) };
+  const st = compact ? { fontSize: 11, padding: "4px 6px" } : undefined;
+  if (isVisaMethod(method)) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 110 }}>
+        <input className="cx-input" style={st} dir="ltr" inputMode="numeric" maxLength={4} placeholder="آخر ٤ أرقام الكارت" aria-label="آخر ٤ أرقام الكارت" data-testid={testid ? testid + "-last4" : undefined} disabled={disabled}
+          value={d.senderNumber} onChange={(e) => onChange({ ...d, senderName: "", ref: "", senderNumber: normalizeLast4(e.target.value) })} />
+      </div>
+    );
+  }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 120 }}>
-      <input className="cx-input" style={{ fontSize: 11, padding: "4px 6px" }} placeholder="اسم المرسل" disabled={disabled} value={d.senderName} onChange={(e) => onChange({ ...d, senderName: e.target.value })} />
-      <input className="cx-input" style={{ fontSize: 11, padding: "4px 6px" }} placeholder={method === "فيزا" ? "آخر ٤ أرقام الكارت" : "رقم المحفظة / الهاتف"} disabled={disabled} value={d.senderNumber} onChange={(e) => onChange({ ...d, senderNumber: e.target.value })} />
-      <input className="cx-input" style={{ fontSize: 11, padding: "4px 6px" }} placeholder="رقم العملية / ملاحظة" disabled={disabled} value={d.ref} onChange={(e) => onChange({ ...d, ref: e.target.value })} />
+      <input className="cx-input" style={st} placeholder="اسم المرسل" aria-label="اسم المرسل" data-testid={testid ? testid + "-name" : undefined} disabled={disabled} value={d.senderName} onChange={(e) => onChange({ ...d, ref: "", senderName: e.target.value })} />
+      <input className="cx-input" style={st} dir="ltr" inputMode="tel" placeholder="رقم التليفون" aria-label="رقم التليفون" data-testid={testid ? testid + "-phone" : undefined} disabled={disabled} value={d.senderNumber} onChange={(e) => onChange({ ...d, ref: "", senderNumber: normalizePhone(e.target.value) })} />
     </div>
   );
 }
@@ -123,13 +135,17 @@ export function MoneyBox({ b }) {
   const total = bookingGrandTotal(b), paid = Number(b.amountPaid) || 0, due = bookingAmountDue(b);
   const owed = refundDueAmount(b);
   const online = !!b.paymentDetails?.onlinePaid;
+  const cancelled = b.status === "ملغي";
+  // الحالة بتتحسب لوحدها من المدفوع والإجمالي (مفيش علامة بتتعلّم بالإيد)
+  const state = cancelled ? null : due > 0 ? { text: paid > 0 ? "دفع جزئي" : "لسه مدفعش", color: "var(--rust)" } : total > 0 || paid > 0 ? { text: "مدفوع بالكامل", color: "var(--sage)" } : null;
   const cells = [["الإجمالي", fmt(total), null]];
   if (online) cells.push(["مدفوع أونلاين (سعر الغرفة)", fmt(Number(b.totalRoom) || 0), "var(--sage)"]);
   if (!online || paid > 0 || due > 0) cells.push([online ? "المتحصّل في الفندق" : "المدفوع", fmt(paid), null]);
   if (b.status !== "ملغي" && (due > 0 || !online)) cells.push([online ? "المتبقي (خدمات/دخول مبكر)" : "المتبقي", fmt(due), due > 0 ? "var(--rust)" : "var(--sage)"]);
   if (owed > 0) cells.push(["مستحق رده للنزيل", fmt(owed), "var(--rust)"]);
   return (
-    <div data-testid="money-box" style={{ display: "flex", gap: 14, flexWrap: "wrap", background: "#fff", borderRadius: 8, padding: "8px 12px" }}>
+    <div data-testid="money-box" style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", background: "#fff", borderRadius: 8, padding: "8px 12px" }}>
+      {state && <span data-testid="pay-state" className="cx-pill" style={{ background: state.color === "var(--sage)" ? "#EAF2EC" : "#FBE2E4", color: state.color }}>{state.text}</span>}
       {cells.map(([label, val, color]) => (
         <div key={label}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>{label}</div><div style={{ fontWeight: 800, color: color || "inherit" }}>{val} {b.currency}</div></div>
       ))}

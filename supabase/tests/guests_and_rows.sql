@@ -86,8 +86,8 @@ select t.reject('EC1 الموظف مايعدّلش الرسم بعد ما اتس
 select t.reject('EC1 ولا يشيله', t.upd('st1', 'EC1', $u$early_checkin = '{"applied":false,"fee":0,"note":""}'::jsonb$u$), 'مش من صلاحية موظف الشيفت');
 select t.reject('EC1 ورسم سالب مرفوض', t.upd('res1', 'EC1', $u$early_checkin = '{"applied":true,"fee":-5,"note":""}'::jsonb$u$), 'check constraint');
 select t.pass('EC2 حجز تاني متحصّل بالكامل', t.ins('st1', 'EC2', 611, 200, 202, 100, 200, 200, true));
-select t.reject('EC2 تسجيل دخول مبكر على حجز متحصّل بالكامل من غير ما العلامة تتشال مرفوض', t.upd('st1', 'EC2', $u$early_checkin = '{"applied":true,"fee":50,"note":""}'::jsonb$u$), 'متحصّل بالكامل');
-select t.pass('EC2 لكن لو العلامة اتشالت في نفس التحديث (والمدفوع لسه أقل من الإجمالي الجديد) بيعدّي', t.upd('st1', 'EC2', $u$early_checkin = '{"applied":true,"fee":50,"note":""}'::jsonb, settled = false$u$));
+select t.pass('EC2 تسجيل دخول مبكر على حجز مدفوع بالكامل: مسموح والحالة بتتحوّل لمتبقي تلقائيًا', t.upd('st1', 'EC2', $u$early_checkin = '{"applied":true,"fee":50,"note":""}'::jsonb$u$));
+select t.eq('EC2 الحالة false (متبقي رسم الدخول المبكر)', t.f('EC2', 'settled'), 'false');
 select t.pass('EC2 وبعد تحصيل الرسم يرجع متحصّل بالكامل', t.upd('st1', 'EC2', 'amount_paid = 250, settled = true'));
 
 -- ======================================================================

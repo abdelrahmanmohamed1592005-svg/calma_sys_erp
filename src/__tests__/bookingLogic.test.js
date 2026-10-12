@@ -188,13 +188,13 @@ describe("findOverlappingBooking(s)", () => {
 });
 
 describe("earlyLeavePatch (nights stayed are billed, min 1 night)", () => {
-  it("same-day leave: left-early, checkout = checkin, total/paid/settled UNTOUCHED, never cancelled", () => {
+  it("same-day leave: left-early, checkout = checkin, paid UNTOUCHED, no settled flag, never cancelled", () => {
     const c = makeBooking({ checkin: "2026-09-07", checkout: "2026-09-08", priceNight: 1200, totalRoom: 1200, amountPaid: 1200, settled: true });
     const p = earlyLeavePatch(c, "2026-09-07");
     expect(p).toMatchObject({ checkout: "2026-09-07", status: "تم تسجيل الخروج", leftEarly: true });
     expect(p.status).not.toBe("ملغي");
     expect(p.totalRoom).toBe(1200); // minimum 1 night is charged
-    expect(p.settled).toBe(true);
+    expect(p.settled).toBeUndefined(); // الحالة بتتحسب تلقائيًا في قاعدة البيانات
     expect(p.amountPaid).toBeUndefined();
   });
   it("multi-night booking left same day: 1 night charged, rest reprices down", () => {

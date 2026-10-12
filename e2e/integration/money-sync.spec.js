@@ -1,7 +1,7 @@
 // أكواد الأفراد اللي المستخدم بيكتبها، إلغاء الحجز (بدل المسح) وحالة رد الفلوس، الدخول المبكر
 // (عادي وأونلاين) والمغادرة المبكرة وطلب الرد، وإن أي تحصيل بيتسمع في الحجز واليومية والتقرير بنفس الرقم.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh, openRoom, openSec, openMore } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh, openRoom, openSec, openMore, payOnBoard } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -180,8 +180,8 @@ test.describe("الدخول المبكر", () => {
     expect(digits(await roomCard(page).getByTestId("money-box").innerText())).toContain("200");
     await expect(page.getByTestId("early-checkin-panel")).toHaveCount(0);      // اتسجّل مرة واحدة بس
     // تحصيل الباقي
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     expect(await get(env, "Early Bird")).toMatchObject({ amount_paid: 250, settled: true });
     await expectSync(env, { USD: 250 });
     // اليومية: صفوف الحجز بتجمع ٢٥٠
@@ -224,8 +224,8 @@ test.describe("الدخول المبكر", () => {
     expect(await get(env, "Pay Later")).toMatchObject({ amount_paid: 100, settled: false });
     await expect(page.getByText(/مشغولة - متبقي فلوس 1/)).toBeVisible();
     await expectSync(env, { USD: 100 });
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     expect(await get(env, "Pay Later")).toMatchObject({ amount_paid: 140, settled: true });
     await expectSync(env, { USD: 140 });
   });
@@ -251,8 +251,8 @@ test.describe("الدخول المبكر", () => {
     await expect(toast(page)).toContainText("تم حفظ الرسوم الإضافية");
     await expect(page.getByText(/مشغولة - متبقي فلوس 1/)).toBeVisible();
     expect(digits(await roomCard(page).getByTestId("money-box").innerText())).toContain("30");
-    await roomCard(page).getByTestId("collect-extras").click();
-    await expect(toast(page)).toContainText("تم تسجيل تحصيل الخدمات");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     expect(await get(env, "Booking Dot Com")).toMatchObject({ amount_paid: 70 });
     await expectSync(env, { USD: 70 });
     await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();
@@ -286,8 +286,8 @@ test.describe("الدخول المبكر", () => {
     await login(page, "ahmed");
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 608);
-    await roomCard(page).getByRole("button", { name: /تسجيل تحصيل كامل المبلغ/ }).click();
-    await expect(toast(page)).toContainText("تم تسجيل التحصيل الكامل");
+    await payOnBoard(page);
+    await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     expect(await get(env, "Res Early")).toMatchObject({ amount_paid: 125, settled: true });
     await expectSync(env, { USD: 125 });
   });

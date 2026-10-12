@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen } from "lucide-react";
 import { Logo } from "./shared";
-import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL } from "../domain/money";
+import { CafeteriaSection } from "./CafeteriaPanel";
+import { listStaffCafeteria } from "../data/staffCafeteria";
+import { COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
@@ -43,7 +45,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, onUpdateCafeteria }) 
         </div>
       )}
       <table className="cx-table" style={{ fontSize: 12, minWidth: 860 }}>
-        <thead><tr><th className="cx-th" style={{ width: 60 }}>الغرفة</th><th className="cx-th">المصاريف</th><th className="cx-th">التحصيل</th><th className="cx-th">تفاصيل الدفع الأونلاين</th><th className="cx-th">ملاحظات</th></tr></thead>
+        <thead><tr><th className="cx-th" style={{ width: 60 }}>الغرفة</th><th className="cx-th">المصاريف</th><th className="cx-th">التحصيل</th><th className="cx-th">تفاصيل الدفع (فيزا / تحويل)</th><th className="cx-th">ملاحظات</th></tr></thead>
         <tbody>
           {record.rows.map((row, idx) => (!visible(row) ? null : (
             <tr key={row.room + "-" + idx}>
@@ -117,7 +119,7 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>بنود مش مرتبطة بغرفة (كهرباء، إيجار قاعة، مشتريات...). المصروف بيتخصم من الخزينة (كاش) والإيراد بيتضاف زي أي تحصيل، وبيدخلوا في إجماليات اليومية والتقارير.</div>
       <div style={{ overflowX: "auto" }}>
         <table className="cx-table" style={{ fontSize: 12, minWidth: 760 }}>
-          <thead><tr><th className="cx-th" style={{ width: 70 }}>البند</th><th className="cx-th">المصاريف</th><th className="cx-th">الإيرادات</th><th className="cx-th">تفاصيل الدفع الأونلاين</th><th className="cx-th">ملاحظات</th>{!locked && <th className="cx-th" style={{ width: 36 }} />}</tr></thead>
+          <thead><tr><th className="cx-th" style={{ width: 70 }}>البند</th><th className="cx-th">المصاريف</th><th className="cx-th">الإيرادات</th><th className="cx-th">تفاصيل الدفع (فيزا / تحويل)</th><th className="cx-th">ملاحظات</th>{!locked && <th className="cx-th" style={{ width: 36 }} />}</tr></thead>
           <tbody>
             {rows.map((row, idx) => (
               <tr key={idx} data-testid={"hotel-row-" + idx}>
@@ -214,6 +216,10 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
                       <input className="cx-input" type="number" disabled={locked} value={record.methodHandover?.[m]?.[cur] ?? 0} onChange={(e) => onChangeMethodHandover(m, cur, e.target.value)} />
                       {prevMethodClosing?.[m]?.[cur] != null && <div style={{ fontSize: 10, color: "var(--muted)" }}>مقترح: {money(prevMethodClosing[m], cur)}</div>}
                     </div>
+                    {(() => { const tx = methodTransactions(record, m).filter((t) => t.currency === cur); return tx.length > 0 && (
+                      <div data-testid="method-transactions" style={{ marginBottom: 6, fontSize: 11, background: "var(--paper2)", borderRadius: 6, padding: 6 }}>
+                        {tx.map((t, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 6 }}><span>{t.where}{t.details ? <b dir="ltr" style={{ marginInlineStart: 6 }}>{t.details}</b> : null}</span><b>{fmt(t.amount)}</b></div>)}
+                      </div>); })()}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12.5 }}>
                       <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>حصلت الشيفت ده</div><div style={{ fontWeight: 700 }}>{money(totals.byMethodCurrency?.[m], cur)}</div></div>
                       <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>الإجمالي دلوقتي</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(totals.methodClosing?.[m], cur)}</div></div>
@@ -260,7 +266,7 @@ function ShiftClaimPicker({ date, claims, onClaim }) {
   );
 }
 
-export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersion }) {
+export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, showToast, dataVersion }) {
   const [mode, setMode] = useState(perms.editLedger ? "live" : "history");
   const [claims, setClaims] = useState(null);
   const [myShiftKey, setMyShiftKey] = useState(null);
@@ -274,6 +280,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   const [histDate, setHistDate] = useState(shiftDayNow());
   const [histShift, setHistShift] = useState(defaultShiftForNow());
   const [histRecord, setHistRecord] = useState(null);
+  const [staffEntries, setStaffEntries] = useState(null);
 
   // حل مشكلة "العداد بيهيس وأنا بكتب": كل كتابة كانت بتبعت save فوري
   // للسيرفر، والـ realtime كان بيسمع صدى الحفظة دي ويعيد تحميل السجل من
@@ -351,6 +358,9 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataVersion]);
 
+  async function reloadStaffEntries() { const r = await listStaffCafeteria(); if (r) setStaffEntries(r); }
+  useEffect(() => { reloadStaffEntries(); }, [dataVersion, refreshKey]);
+
   // لو فيه تعديل لسه ماتبعتش للسيرفر (الـ debounce) والموظف قفل التاب أو عمل
   // ريفرش، المتصفح بيحذّره بدل ما التعديل يضيع من غير ما يحس.
   useEffect(() => {
@@ -414,6 +424,15 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     window.__calmaPendingWrites = !!pendingRef.current;
     if (res.conflict) { showToast("⚠ فيه تعديل حصل من مكان تاني على نفس الشيفت - جاري تحديث البيانات"); setRefreshKey((k) => k + 1); return; }
     if (res.error) { showToast(res.error); return; }
+    // الموظف كتب حاجة جديدة وقت ما الحفظة دي كانت بتتبعت: ماينفعش نكتب نسخة السيرفر فوق اللي كتبه
+    // (كانت بتخلّي الخانة تهيس وتضيع كتابته) - بنحدّث بس "نسخة الأساس" عشان الحفظة الجاية
+    // ماتتعارضش مع اللي لسه اتحفظ.
+    if (pendingRef.current) {
+      baseUpdatedAtRef.current = res.data.updatedAt;
+      baseRecordRef.current = res.data;
+      setRecord((cur) => (cur ? { ...cur, updatedAt: res.data.updatedAt } : cur));
+      return;
+    }
     setRecord(res.data);
   }
   function persist(next, { silent, immediate } = {}) {
@@ -425,6 +444,8 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
     if (immediate) { flushPending(); if (!silent) showToast("تم الحفظ"); return; }
     debounceTimer.current = setTimeout(flushPending, 700);
   }
+  // بيبعت أي كتابة معلّقة فورًا (قبل ما شاشة تانية تكتب على نفس السجل)
+  async function flushNow() { if (debounceTimer.current) clearTimeout(debounceTimer.current); await flushPending(); }
   function updateRow(idx, patch) { const rows = record.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)); persist({ ...record, rows }, { silent: true }); }
   function updateHotelRow(idx, patch) { const hotelRows = hotelRowsOf(record).map((r, i) => (i === idx ? { ...r, ...patch } : r)); persist({ ...record, hotelRows }, { silent: true }); }
   function addHotelRow() { persist({ ...record, hotelRows: [...hotelRowsOf(record), emptyLedgerRow(HOTEL_ROW_LABEL)] }, { silent: true, immediate: true }); }
@@ -445,6 +466,9 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
   const locked = !record || record.closed || !perms.editLedger || (!!myShiftKey && !isShiftActiveNow(myShiftKey));
 
   async function closeShift() {
+    // مفيش إقفال وفيه تحصيل فيزا من غير آخر ٤ أرقام (أو تحويل من غير رقم) - كل عملية لازم تتتبّع
+    const missing = missingPaymentDetails(pendingRef.current || record);
+    if (missing.length > 0) { showToast(`مينفعش تقفل الشيفت: ${missing.slice(0, 3).map((m) => `${m.where} (${m.method})`).join("، ")}${missing.length > 3 ? ` و${missing.length - 3} كمان` : ""} من غير ${missing[0].method === "فيزا" ? "آخر ٤ أرقام الكارت" : "رقم التليفون"} - اكتبها في عمود تفاصيل الدفع`); return; }
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     const mineRec = pendingRef.current || record;
     let base = mineRec;
@@ -526,6 +550,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
             <LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} onUpdateCafeteria={updateCafeteria} />
+            <CafeteriaSection record={record} rooms={rooms} bookings={bookings} locked={locked} readOnly={!perms.editLedger} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={flushNow} onRecordUpdated={(r) => setRecord(r)} onLog={onLog} showToast={showToast} />
             <HotelRowsTable record={record} locked={locked} onUpdateRow={updateHotelRow} onAddRow={addHotelRow} onRemoveRow={removeHotelRow} />
             <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -563,6 +588,7 @@ export function DailyLedger({ rooms, perms, profile, onLog, showToast, dataVersi
                 </div>
               )}
               <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} onUpdateCafeteria={() => {}} />
+              <CafeteriaSection record={histRecord} rooms={rooms} bookings={bookings} locked={true} readOnly={true} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={async () => {}} onRecordUpdated={() => {}} onLog={onLog} showToast={showToast} />
               {(histRecord.hotelRows || []).some((r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || r.expenseDesc || r.collectionDesc) && <HotelRowsTable record={histRecord} locked={true} onUpdateRow={() => {}} onAddRow={() => {}} onRemoveRow={() => {}} />}
               <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}

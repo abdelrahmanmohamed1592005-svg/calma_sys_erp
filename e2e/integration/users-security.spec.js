@@ -255,7 +255,9 @@ test.describe("هجمات مباشرة على الـ API (من غير الواج
     const A = (m, p, b) => env.api("rawan", m, p, b);
     expect(denied(await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { amount_paid: 0 }))).toBe(true);
     expect(denied(await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { amount_paid: 500 }))).toBe(true);
-    expect(denied(await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { settled: true }))).toBe(true);
+    // علامة "متحصّل" مابقتش حاجة بتتعلّم: حتى لو اتبعتت بالـ API بتتجاهلها قاعدة البيانات وبتحسبها من المدفوع (١٠٠ من ٢٠٠)
+    await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { settled: true });
+    expect((await env.q("select settled from bookings where id = $1", [id]))[0].settled).toBe(false);
     expect(denied(await A("DELETE", `/rest/v1/bookings?id=eq.${id}`))).toBe(true);        // عليه فلوس
     expect(denied(await A("DELETE", `/rest/v1/activity_log`))).toBe(true);
     expect(denied(await A("PATCH", `/rest/v1/shift_records`, { closed: true }))).toBe(true);
