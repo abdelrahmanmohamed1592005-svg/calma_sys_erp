@@ -310,7 +310,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 <b>{d.guestName}</b> - غادر النهارده ({d.checkin} → {d.checkout}){d.checkin === d.checkout ? " - دخل وخرج في نفس اليوم" : ""}{bookings.some((bk) => bk.room === selected && bk.duplicatePlacement && bk.id !== d.id && bk.checkin <= date && date < bk.checkout) ? " وحل مكانه نزيل جديد" : ""}
               </div>
               <MoneyBox b={d} />
-              <RefundBox key={booking.id} b={d} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
+              <RefundBox key={d.id} b={d} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
             </div>
           ))}
 
@@ -330,7 +330,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
 
               <MoneyBox b={b} />
               <PayBreakdown payments={payBreakdown} currency={b.currency} />
-              <RefundBox key={booking.id} b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
+              <RefundBox key={b.id} b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
 
               {offShift && (perms.markPaymentReceived || perms.editBookings) && <div style={{ fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعمل أي حاجة هنا." : "مش شيفتك دلوقتي - التحصيل والتعديل مش متاحين غير وقت شيفتك اللي حاجزه."}</div>}
 
