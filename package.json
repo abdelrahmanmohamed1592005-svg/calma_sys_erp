@@ -24,6 +24,7 @@
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "@vitejs/plugin-react": "^4.7.0",
+    "axe-core": "^4.10.2",
     "pg": "^8.23.1",
     "vite": "^7.1.0",
     "vite-plugin-pwa": "^1.0.0",

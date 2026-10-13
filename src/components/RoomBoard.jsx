@@ -11,6 +11,8 @@ import { GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, Paym
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
+// نص الأقراص على الخلفية الفاتحة: ألوان أغمق من ألوان المربعات عشان تحقق تباين WCAG AA (٤.٥:١)
+const STATUS_TEXT = { ...STATUS_COLORS, occupied_paid: "#6B5300", occupied_unpaid: "#B0222E", early_checkout: "#8F4A12" };
 const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#F5EFD6", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
 /* قسم مطوي في بطاقة الغرفة (برّه الـ component عشان الحقول اللي جواه ماتتفقدش الفوكس وقت الكتابة) */
@@ -261,13 +263,13 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
         <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>شيفتات تحتاج متابعة</div><div style={{ fontWeight: 800, fontSize: 20, color: kpis?.flagged ? "var(--rust)" : "var(--text)" }}>{kpis ? kpis.flagged : "…"}</div></div>
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, fontSize: 12.5 }}>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.available, color: STATUS_COLORS.available }}>متاحة {counts.available || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.occupied_paid, color: STATUS_COLORS.occupied_paid }}>مشغولة - متحصّلة {counts.occupied_paid || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.occupied_unpaid, color: STATUS_COLORS.occupied_unpaid }}>مشغولة - متبقي فلوس {counts.occupied_unpaid || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.reserved, color: STATUS_COLORS.reserved }}>قادمة قريبًا {counts.reserved || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.early_checkout, color: STATUS_COLORS.early_checkout }}>غادر مبكرًا {counts.early_checkout || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.maintenance, color: STATUS_COLORS.maintenance }}>صيانة {counts.maintenance || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.cleaning, color: STATUS_COLORS.cleaning }}>تحت التنظيف {counts.cleaning || 0}</span>
+        <span className="cx-pill" style={{ background: STATUS_TINTS.available, color: STATUS_TEXT.available }}>متاحة {counts.available || 0}</span>
+        <span className="cx-pill" style={{ background: STATUS_TINTS.occupied_paid, color: STATUS_TEXT.occupied_paid }}>مشغولة - متحصّلة {counts.occupied_paid || 0}</span>
+        <span className="cx-pill" style={{ background: STATUS_TINTS.occupied_unpaid, color: STATUS_TEXT.occupied_unpaid }}>مشغولة - متبقي فلوس {counts.occupied_unpaid || 0}</span>
+        <span className="cx-pill" style={{ background: STATUS_TINTS.reserved, color: STATUS_TEXT.reserved }}>قادمة قريبًا {counts.reserved || 0}</span>
+        <span className="cx-pill" style={{ background: STATUS_TINTS.early_checkout, color: STATUS_TEXT.early_checkout }}>غادر مبكرًا {counts.early_checkout || 0}</span>
+        <span className="cx-pill" style={{ background: STATUS_TINTS.maintenance, color: STATUS_TEXT.maintenance }}>صيانة {counts.maintenance || 0}</span>
+        <span className="cx-pill" style={{ background: STATUS_TINTS.cleaning, color: STATUS_TEXT.cleaning }}>تحت التنظيف {counts.cleaning || 0}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px,1fr))", gap: 10 }}>
         {rooms.map((r) => { const s = computeRoomStatus(r.number, bookings, overrides, date); return (
@@ -299,7 +301,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
         <div className="cx-card" style={{ marginTop: 16, padding: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div style={{ fontSize: 20, fontWeight: 800 }}>{roomLabel(rooms, room.number)} <span className="cx-pill" style={{ background: STATUS_TINTS[status.key], color: STATUS_COLORS[status.key], fontSize: 11.5, marginInlineStart: 6 }}>{status.label}</span></div>
-            <button className="cx-btn cx-btn-outline" onClick={() => setSelected(null)}><X size={14} /></button>
+            <button className="cx-btn cx-btn-outline" aria-label="إغلاق" onClick={() => setSelected(null)}><X size={14} /></button>
           </div>
 
           {/* نزيل غادر مبكرًا النهارده: بياناته وحسابه وحالة رد الفلوس بنفس الشكل في كل مكان */}
@@ -341,7 +343,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                     <div style={{ fontSize: 12, fontWeight: 700 }}>{online ? "تسجيل تحصيل الخدمات/الدخول المبكر" : "تسجيل دفعة"} <span style={{ fontWeight: 400, color: "var(--muted)" }}>(سيب المبلغ فاضي = كامل المتبقي {fmt(due)} {b.currency})</span></div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start" }}>
                       <input className="cx-input" data-testid="pay-amount" type="number" min="0" placeholder={`المبلغ (${fmt(due)})`} style={{ width: 120 }} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} />
-                      <select className="cx-select" data-testid="collect-method" style={{ fontSize: 12, width: 150 }} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                      <select className="cx-select" aria-label="وسيلة الدفع" data-testid="collect-method" style={{ fontSize: 12, width: 150 }} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
                       <PaymentDetailsInline compact={false} testid="pay" method={pay.method} details={pay.details} onChange={(d) => setPay({ ...pay, details: d })} />
                       <button className="cx-btn cx-btn-gold" data-testid="pay-record" style={{ fontSize: 12 }} onClick={() => recordPayment(b)}><Check size={13} /> تسجيل التحصيل</button>
                     </div>
@@ -361,11 +363,11 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                       <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (بتتضاف على طول من غير ما تفتح الحجز كامل)</div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
                         {profile?.role !== "reservations" && (<>
-                          <div><label style={{ fontSize: 10, color: "var(--muted)" }}>غسيل</label><input className="cx-input" type="number" min="0" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
-                          <div><label style={{ fontSize: 10, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" type="number" min="0" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
+                          <div><label style={{ fontSize: 10, color: "var(--muted)" }}>غسيل</label><input className="cx-input" aria-label="غسيل" type="number" min="0" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
+                          <div><label style={{ fontSize: 10, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" aria-label="كافيتيريا" type="number" min="0" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
                         </>)}
-                        <div><label style={{ fontSize: 10, color: "var(--muted)" }}>جولات</label><input className="cx-input" type="number" min="0" value={extrasDraft.tours} onChange={(e) => setExtrasDraft({ ...extrasDraft, tours: e.target.value })} /></div>
-                        <div><label style={{ fontSize: 10, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" type="number" min="0" value={extrasDraft.pickup} onChange={(e) => setExtrasDraft({ ...extrasDraft, pickup: e.target.value })} /></div>
+                        <div><label style={{ fontSize: 10, color: "var(--muted)" }}>جولات</label><input className="cx-input" aria-label="جولات" type="number" min="0" value={extrasDraft.tours} onChange={(e) => setExtrasDraft({ ...extrasDraft, tours: e.target.value })} /></div>
+                        <div><label style={{ fontSize: 10, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" aria-label="بيك أب" type="number" min="0" value={extrasDraft.pickup} onChange={(e) => setExtrasDraft({ ...extrasDraft, pickup: e.target.value })} /></div>
                       </div>
                       <button className="cx-btn cx-btn-gold" style={{ marginTop: 8, fontSize: 12 }} onClick={() => saveExtras(b)}><Check size={13} /> حفظ الرسوم</button>
                     </div>
@@ -381,7 +383,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                         <input className="cx-input" data-testid="early-note" placeholder="ملاحظة (اختياري)" value={ecNote} onChange={(e) => setEcNote(e.target.value)} style={{ width: 160 }} />
                         {perms.markPaymentReceived && (<>
                           <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}><input type="checkbox" data-testid="early-collect" checked={ecCollect} onChange={(e) => setEcCollect(e.target.checked)} /> حصّلته دلوقتي</label>
-                          {ecCollect && <><select className="cx-select" data-testid="early-method" style={{ fontSize: 12, width: 130 }} value={epay.method} onChange={(e) => setEpay({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select><PaymentDetailsInline compact={false} testid="early" method={epay.method} details={epay.details} onChange={(d) => setEpay({ ...epay, details: d })} /></>}
+                          {ecCollect && <><select className="cx-select" aria-label="وسيلة دفع رسم الدخول المبكر" data-testid="early-method" style={{ fontSize: 12, width: 130 }} value={epay.method} onChange={(e) => setEpay({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select><PaymentDetailsInline compact={false} testid="early" method={epay.method} details={epay.details} onChange={(d) => setEpay({ ...epay, details: d })} /></>}
                         </>)}
                         <button className="cx-btn cx-btn-gold" data-testid="early-apply" style={{ fontSize: 12 }} onClick={() => applyEarlyCheckin(b)}><Check size={13} /> تسجيل الدخول المبكر</button>
                       </div>
@@ -394,7 +396,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 <Sec id="sec-extend" title="تمديد الإقامة">
                   <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي بيتحدثوا لوحدهم (لو الغرفة محجوزة لحد تاني في التاريخ الجديد مش هيتسمحلك)</div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    <input className="cx-input" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
+                    <input className="cx-input" aria-label="عدد ليالي التمديد" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
                     <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
                     <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => extendBooking(b)}>تمديد الحجز</button>
                   </div>

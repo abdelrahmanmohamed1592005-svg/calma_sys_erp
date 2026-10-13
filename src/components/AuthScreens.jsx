@@ -28,12 +28,12 @@ export function SetupScreen({ onCreate }) {
         <label style={{ fontSize: 13, fontWeight: 700, display: "block", marginBottom: 4 }}>الاسم بالكامل</label>
         <input className="cx-input" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 12 }} />
         <label style={{ fontSize: 13, fontWeight: 700, display: "block", marginBottom: 4 }}>اسم المستخدم</label>
-        <input className="cx-input" value={username} onChange={(e) => setUsername(e.target.value)} style={{ marginBottom: 12 }} placeholder="بالإنجليزي، بدون مسافات" />
+        <input className="cx-input" aria-label="اسم المستخدم" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} style={{ marginBottom: 12 }} placeholder="بالإنجليزي، بدون مسافات" />
         <label style={{ fontSize: 13, fontWeight: 700, display: "block", marginBottom: 4 }}>كلمة المرور</label>
-        <input className="cx-input" type="password" value={pw} onChange={(e) => setPw(e.target.value)} style={{ marginBottom: 4 }} />
+        <input className="cx-input" aria-label="كلمة المرور الجديدة" autoComplete="new-password" type="password" value={pw} onChange={(e) => setPw(e.target.value)} style={{ marginBottom: 4 }} />
         <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>٨ حروف على الأقل، وفيها حرف ورقم</div>
         <label style={{ fontSize: 13, fontWeight: 700, display: "block", marginBottom: 4 }}>تأكيد كلمة المرور</label>
-        <input className="cx-input" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} style={{ marginBottom: 12 }} />
+        <input className="cx-input" aria-label="تأكيد كلمة المرور" autoComplete="new-password" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} style={{ marginBottom: 12 }} />
         {err && <div style={{ color: "var(--rust)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
         <button className="cx-btn cx-btn-gold" style={{ width: "100%", justifyContent: "center" }} disabled={busy} onClick={submit}>إنشاء الحساب والدخول</button>
       </div>
@@ -66,9 +66,9 @@ export function LoginScreen({ onLogin }) {
       <div className="cx-card" style={{ width: "100%", maxWidth: 380, padding: "28px 22px" }}>
         <div style={{ textAlign: "center", marginBottom: 20 }}><Logo /><div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>نظام إدارة الفندق</div></div>
         <label style={{ fontSize: 13, fontWeight: 700, display: "block", marginBottom: 4 }}>اسم المستخدم</label>
-        <input className="cx-input" value={username} onChange={(e) => setUsername(e.target.value)} style={{ marginBottom: 12 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+        <input className="cx-input" aria-label="اسم المستخدم" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} style={{ marginBottom: 12 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
         <label style={{ fontSize: 13, fontWeight: 700, display: "block", marginBottom: 4 }}>كلمة المرور</label>
-        <input className="cx-input" type="password" value={pw} onChange={(e) => setPw(e.target.value)} style={{ marginBottom: 12 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+        <input className="cx-input" aria-label="كلمة المرور" autoComplete="current-password" type="password" value={pw} onChange={(e) => setPw(e.target.value)} style={{ marginBottom: 12 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
         {err && <div style={{ color: "var(--rust)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
         <button className="cx-btn cx-btn-gold" style={{ width: "100%", justifyContent: "center" }} disabled={busy || !username || !pw} onClick={submit}>دخول</button>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 12, textAlign: "center" }}>ما فيش تسجيل حساب جديد من هنا. الحسابات بتتعمل من المدير العام فقط.</div>

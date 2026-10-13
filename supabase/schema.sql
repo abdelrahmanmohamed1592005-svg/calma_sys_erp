@@ -2631,6 +2631,59 @@ drop trigger if exists shift_records_claimant_guard on shift_records;
 create trigger shift_records_claimant_guard before update on shift_records
   for each row execute function shift_records_claimant_guard();
 
+-- (ب) سجل تدقيق على مستوى القاعدة (مش بيعتمد على الواجهة): أي تغيير في المدفوع/حالة/رد الحجز، ديون كافيتيريا الاستاف،
+--     دور أو تفعيل مستخدم، وإعادة فتح يومية مقفولة - بيتسجّل بـ trigger مهما كان الطريق (الواجهة، API مباشر، أو محرر SQL).
+--     قبل كده سجل الحركة بتكتبه الواجهة، فعملية API مباشرة (مثلًا دالة الدفع) ماكانتش بتسيب أثر في السجل. الجدول للقراءة بس
+--     (مدير عام/محاسبة/مدير حجوزات) ومفيش حد يقدر يعدّل أو يمسح منه من الـ API.
+create table if not exists money_audit (
+  id bigint generated always as identity primary key,
+  ts timestamptz not null default now(),
+  actor text,                      -- username من الجلسة؛ فاضي لو العملية من محرر SQL/الصيانة
+  tbl text not null,
+  row_id text,
+  action text not null,            -- insert / update / delete
+  old_val jsonb,
+  new_val jsonb
+);
+create index if not exists money_audit_ts_idx on money_audit (ts desc);
+create index if not exists money_audit_row_idx on money_audit (tbl, row_id);
+alter table money_audit enable row level security;
+revoke all on money_audit from public, anon, authenticated;
+grant select on money_audit to authenticated;
+drop policy if exists "money audit select" on money_audit;
+create policy "money audit select" on money_audit for select using (is_gm() or can_manage_financials() or is_gm_or_reservations());
+
+create or replace function calma_audit() returns trigger language plpgsql security definer set search_path = public as $$
+declare who text; o jsonb; n jsonb; keep text[]; rid text;
+begin
+  select username into who from profiles where id = auth.uid();
+  keep := case TG_TABLE_NAME
+    when 'bookings' then array['amount_paid','status','refund_pending','refund_decision','settled','currency','total_room','price_night','checkin','checkout','room']
+    when 'staff_cafeteria' then array['amount','paid_amount','consumer_name','currency']
+    when 'profiles' then array['username','role','active']
+    else array['closed','closed_by','date','shift_key','staff_username','total_collections','closing_cash'] end;
+  o := case when TG_OP = 'INSERT' then null else (select coalesce(jsonb_object_agg(k, v), '{}') from jsonb_each(to_jsonb(old)) e(k, v) where k = any(keep)) end;
+  n := case when TG_OP = 'DELETE' then null else (select coalesce(jsonb_object_agg(k, v), '{}') from jsonb_each(to_jsonb(new)) e(k, v) where k = any(keep)) end;
+  if TG_OP = 'UPDATE' and o is not distinct from n then return null; end if;
+  if TG_OP = 'INSERT' and TG_TABLE_NAME in ('bookings', 'staff_cafeteria') and coalesce((n ->> case TG_TABLE_NAME when 'bookings' then 'amount_paid' else 'paid_amount' end)::numeric, 0) = 0 then return null; end if;
+  rid := case when TG_OP = 'DELETE' then to_jsonb(old) ->> 'id' else to_jsonb(new) ->> 'id' end;
+  insert into money_audit(actor, tbl, row_id, action, old_val, new_val) values (who, TG_TABLE_NAME, rid, lower(TG_OP), o, n);
+  return null;
+end;
+$$;
+revoke all on function calma_audit() from public, anon, authenticated;
+drop trigger if exists bookings_audit on bookings;
+create trigger bookings_audit after insert or update or delete on bookings for each row execute function calma_audit();
+drop trigger if exists staff_cafeteria_audit on staff_cafeteria;
+create trigger staff_cafeteria_audit after insert or update or delete on staff_cafeteria for each row execute function calma_audit();
+drop trigger if exists profiles_audit on profiles;
+create trigger profiles_audit after insert or update or delete on profiles for each row execute function calma_audit();
+drop trigger if exists shift_records_audit on shift_records;
+create trigger shift_records_audit after update on shift_records for each row
+  when (old.closed is distinct from new.closed) execute function calma_audit();
+drop trigger if exists shift_records_audit_del on shift_records;
+create trigger shift_records_audit_del after delete on shift_records for each row execute function calma_audit();
+
 create or replace function calma_schema_version() returns int language sql immutable as $$ select 36 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
