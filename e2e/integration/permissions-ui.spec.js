@@ -139,7 +139,7 @@ test.describe("مدير الحجوزات", () => {
     await expect(page.getByTestId("advance-amount")).toHaveCount(0);       // مفيش تسجيل تحصيل لمدير الحجوزات
     await expect(page.getByTestId("payment-block")).toContainText("المدفوع حتى الآن");   // المدفوع للعرض بس
     await expect(page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']")).toBeDisabled();
-    await expect(page.getByText(/حجز قديم - أي حاجة فلوس فيه بقت مقفولة/)).toBeVisible();
+    await expect(page.getByText(/السعر والرسوم والمدفوع بيتقفلوا بعد حفظ الحجز/)).toBeVisible();
     await field(page, "اسم النزيل").fill("Res Edit Renamed");
     await openMore(page);
     await page.locator("xpath=//label[contains(.,'جهة الحجز')]/following-sibling::select").selectOption("Booking.com");

@@ -269,6 +269,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   const baseRecordRef = useRef(null);
   const debounceTimer = useRef(null);
   const retryRef = useRef(0);
+  const flushLatest = useRef(null);
 
   useEffect(() => {
     if (mode !== "live") return;
@@ -300,7 +301,17 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
         if (!rec) {
           const fresh = freshShiftRecord(day, sk, profile.name, profile.username, rooms, prev.data?.cash || undefined, prev.data?.method || undefined);
           const created = await createShiftRecord(fresh);
-          rec = created.data || fresh;
+          if (created.data) rec = created.data;
+          else {
+            // فشل الإنشاء (نت، أو جهاز تاني عمله في نفس اللحظة): نقرا الموجود بدل ما نكمّل على سجل محلي من غير updatedAt وتفشل كل حفظة بعده
+            const again = await getShiftRecordStrict(day, sk);
+            if (again.data) rec = again.data;
+            else {
+              showToast("⚠ تعذر إنشاء يومية الشيفت (مشكلة اتصال) - بنعيد المحاولة تلقائيًا");
+              setTimeout(() => { if (!cancelled) setRefreshKey((k) => k + 1); }, 5000);
+              return;
+            }
+          }
         }
         // انتهى هامش الأوفر تايم (ساعتين بعد نهاية معاد الشيفت) ولسه مقفول
         // لحد دلوقتي - نقفله تلقائيًا بنفس بيانات لحظة الدخول دي، عشان الشيفت
@@ -450,6 +461,17 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   }
   // بيبعت أي كتابة معلّقة فورًا (قبل ما شاشة تانية تكتب على نفس السجل)
   async function flushNow() { if (debounceTimer.current) clearTimeout(debounceTimer.current); await flushPending(); }
+  // الخروج أو الانتقال لتبويب تاني: أي كتابة معلّقة بتتبعت قبل ما الشاشة تتشال (الجلسة لسه شغّالة وقتها)
+  flushLatest.current = flushNow;
+  useEffect(() => {
+    if (mode !== "live") return undefined;
+    window.__calmaFlushLedger = () => flushLatest.current && flushLatest.current();
+    return () => {
+      window.__calmaFlushLedger = null;
+      if (pendingRef.current && flushLatest.current) flushLatest.current();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
   // بعد عملية ذرية على السيرفر (كافيتيريا استاف): نجيب السجل الجديد، ولو الموظف كتب حاجة في الأثناء نطبّقها فوقه
   async function reloadRecord() {
     const fresh = await getShiftRecord(today, myShiftKey);

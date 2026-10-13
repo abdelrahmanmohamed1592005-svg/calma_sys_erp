@@ -1,5 +1,6 @@
 import { supabase } from "../lib/supabaseClient";
 import { fetchAll } from "./page";
+import { isMissingFunctionError, OUTDATED_SCHEMA_MESSAGE } from "./schemaCheck";
 
 function bookingFromRow(r) {
   return {
@@ -111,7 +112,7 @@ export async function updateBookingIfUnchanged(id, expectedUpdatedAt, booking) {
    والفلوس تفضل متحصّلة). كله معاملة واحدة في قاعدة البيانات (decide_booking_refund). */
 export async function decideBookingRefund(id, decision, expectedUpdatedAt, method) {
   const { data, error } = await supabase.rpc("decide_booking_refund", { p_booking: id, p_decision: decision, p_expected: expectedUpdatedAt || null, p_method: method || null });
-  if (error) return { error: error.message };
+  if (error) return { error: isMissingFunctionError(error) ? OUTDATED_SCHEMA_MESSAGE + " (decide_booking_refund)" : error.message };
   return { data };
 }
 

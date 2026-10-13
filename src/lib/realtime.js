@@ -1,6 +1,8 @@
 import { supabase } from "./supabaseClient";
 
-const WATCHED_TABLES = ["rooms", "room_overrides", "bookings", "shift_records", "shift_claims", "activity_log", "profiles", "staff_cafeteria"];
+const WATCHED_TABLES = ["rooms", "room_overrides", "bookings", "shift_records", "shift_claims", "activity_log", "profiles"];
+// جدول اختياري: لو مش موجود/مش منشور (قاعدة لسه ماتحدّثتش) قناته لوحدها تفشل من غير ما تقتل التحديث اللحظي للباقي
+const OPTIONAL_TABLES = ["staff_cafeteria"];
 
 /*
   بث لحظي حقيقي: أي جهاز يعدّل أي جدول من الجداول دي، كل الأجهزة التانية المفتوحة
@@ -15,5 +17,11 @@ export function subscribeToAllChanges(onChange, onStatus) {
     channel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
   });
   channel.subscribe((status) => { if (onStatus) onStatus(status); });
-  return () => { supabase.removeChannel(channel); };
+  // قناة منفصلة للجداول الاختيارية: حالتها مش بتتبعت لـ onStatus (فشلها مايأثرش على باقي المزامنة)
+  const optional = supabase.channel("calma_live_opt_" + Math.random().toString(36).slice(2, 8));
+  OPTIONAL_TABLES.forEach((table) => {
+    optional.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => onChange(table, payload));
+  });
+  optional.subscribe();
+  return () => { supabase.removeChannel(channel); supabase.removeChannel(optional); };
 }

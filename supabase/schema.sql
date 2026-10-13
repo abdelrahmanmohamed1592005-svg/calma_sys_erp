@@ -1988,9 +1988,15 @@ end;
 $$;
 
 -- حجوزات موجودة من قبل: نحسب الحالة لمرة واحدة (التريجر هو اللي بيحسبها)
-do $$ begin
-  update bookings set settled = settled;
-exception when others then raise notice 'تعذر إعادة حساب حالة التحصيل للحجوزات القديمة: %', sqlerrm;
+do $$
+declare r record;
+begin
+  for r in select id from bookings b where b.settled is distinct from (b.status is distinct from 'ملغي' and coalesce(b.amount_paid, 0) >= booking_hotel_total(b)) loop
+    begin
+      update bookings set settled = settled where id = r.id;       -- التريجر هو اللي بيحسبها
+    exception when others then raise notice 'تعذر إعادة حساب حالة التحصيل للحجز %: %', r.id, sqlerrm;
+    end;
+  end loop;
 end $$;
 
 -- (ب) تحصيل الكافيتيريا التلقائي في اليومية
@@ -2592,3 +2598,41 @@ $$;
 drop trigger if exists staff_cafeteria_lock_money on staff_cafeteria;
 create trigger staff_cafeteria_lock_money before insert or update on staff_cafeteria
   for each row execute function lock_staff_cafeteria_money();
+
+-- --------------------------------------------------------------------------
+-- 36) نسخة مخطط قاعدة البيانات + إعادة تحميل cache الـ API.
+--     الواجهة بتسأل calma_schema_version() وتحذّر بوضوح لو القاعدة لسه ماتحدّثتش (بدل "Could not find the function ...
+--     in the schema cache" اللي بتظهر من غير ما حد يفهم إن المطلوب تشغيل schema.sql). كل مرة بتتضاف أقسام جديدة بنرفع الرقم هنا
+--     وفي REQUIRED_SCHEMA_VERSION (src/data/schemaCheck.js).
+-- --------------------------------------------------------------------------
+-- (أ) يومية شيفت بتتعدّل: اللي مش صاحب الشيفت (موظف بيستلم الشيفت اللي بعده) يقدر يقفله بس - ما يمسحش صفوفه ولا يعدّل أرصدته.
+--     قبل كده أي موظف يسجّل اختيار شيفت قريب كان يقدر يمسح تحصيل زميله وهو لسه مفتوح. واسم صاحب الشيفت ماينفعش يتغيّر من موظف.
+create or replace function shift_records_claimant_guard()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare me text; skip text[] := array['closed', 'closed_by', 'closed_at', 'updated_at', 'total_expenses', 'total_collections', 'closing_cash', 'cash_collections', 'by_method_currency', 'by_category', 'method_closing'];
+begin
+  if auth.uid() is null or is_gm_or_reservations() or can_manage_financials() then return new; end if;
+  select username into me from profiles where id = auth.uid();
+  if old.staff_username is distinct from me then
+    if old.closed or not new.closed then
+      raise exception 'مينفعش تعدّل يومية شيفت موظف تاني - تقدر تقفل الشيفت اللي قبلك بس لما تبدأ شيفتك';
+    end if;
+    if (to_jsonb(new) - skip) is distinct from (to_jsonb(old) - skip) then
+      raise exception 'إقفال شيفت موظف تاني مايغيّرش صفوفه ولا أرصدته - الإقفال بس';
+    end if;
+  end if;
+  if new.staff_name is distinct from old.staff_name then
+    raise exception 'مينفعش تغيّر اسم صاحب الشيفت';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists shift_records_claimant_guard on shift_records;
+create trigger shift_records_claimant_guard before update on shift_records
+  for each row execute function shift_records_claimant_guard();
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 36 $$;
+revoke all on function calma_schema_version() from public, anon;
+grant execute on function calma_schema_version() to authenticated;
+-- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart
+notify pgrst, 'reload schema';

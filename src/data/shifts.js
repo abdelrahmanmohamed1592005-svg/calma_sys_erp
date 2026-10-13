@@ -1,5 +1,6 @@
 import { supabase } from "../lib/supabaseClient";
 import { fetchAll } from "./page";
+import { friendlyDbError } from "./schemaCheck";
 import { freshShiftRecord, applyCollectionToRows, applyCafeteriaCollection } from "../domain/money";
 import { prevShiftOf, shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
 import { SHIFTS } from "../domain/constants";
@@ -41,13 +42,13 @@ export async function getShiftRecord(date, shiftKey) {
    اليومية مش موجودة - وإلا كان هيتعمل سجل جديد برصيد افتتاحي صفر وتتكتب فوق عهدة الشيفت اللي قبله. */
 export async function getShiftRecordStrict(date, shiftKey) {
   const { data, error } = await supabase.from("shift_records").select("*").eq("date", date).eq("shift_key", shiftKey).maybeSingle();
-  if (error) return { error: error.message };
+  if (error) return { error: friendlyDbError(error) };
   return { data: data ? shiftFromRow(data) : null };
 }
 
 export async function createShiftRecord(rec) {
   const { data, error } = await supabase.from("shift_records").insert(shiftToRow(rec)).select().maybeSingle();
-  if (error) return { error: error.message };
+  if (error) return { error: friendlyDbError(error) };
   if (!data) return { error: "تعذر إنشاء يومية الشيفت" };
   return { data: shiftFromRow(data) };
 }
@@ -61,7 +62,7 @@ export async function updateShiftRecordIfUnchanged(date, shiftKey, expectedUpdat
     .update(shiftToRow(patch))
     .eq("date", date).eq("shift_key", shiftKey).eq("updated_at", expectedUpdatedAt)
     .select().maybeSingle();
-  if (error) return { error: error.message };
+  if (error) return { error: friendlyDbError(error) };
   if (!data) return { conflict: true };
   return { data: shiftFromRow(data) };
 }
@@ -90,7 +91,7 @@ export async function claimShiftRow(date, shiftKey, username, name) {
   const { error } = await supabase.from("shift_claims").insert({ date, shift_key: shiftKey, username, name });
   if (error) {
     if (error.code === "23505") return { conflict: true }; // unique_violation
-    return { error: error.message };
+    return { error: friendlyDbError(error) };
   }
   return { success: true };
 }
@@ -117,83 +118,6 @@ export async function deleteShiftRecord(date, shiftKey) {
    زي ما هو، عشان موظف الشيفت يقدر يكمل/يصحح فيه. */
 export async function reopenShiftRecord(date, shiftKey, expectedUpdatedAt, record) {
   return updateShiftRecordIfUnchanged(date, shiftKey, expectedUpdatedAt, { ...record, closed: false, closedBy: null, closedAt: null });
-}
-
-/* بترجع سجل يومية الشيفت ده، وتنشئه أول مرة لو لسه معمول لو احتاج الأمر (نفس
-   منطق "لحظة فتح شاشة اليومية" في DailyLedger.jsx بالظبط - عهدة الكاش وعهدة
-   وسائل الدفع الأخرى بتتنقل تلقائيًا من إقفال آخر شيفت سابق لو كان مقفول).
-   مستخدمة من appendBookingCollection تحت عشان تحصيل حجز من بلوك الغرف أو
-   شاشة الحجوزات يتسجل في اليومية تلقائيًا حتى لو الموظف لسه مفتحش شاشة
-   اليومية نفسها أصلًا النهارده. */
-export async function ensureShiftRecord(date, shiftKey, profile, rooms) {
-  let rec = await getShiftRecord(date, shiftKey);
-  if (rec) return rec;
-  const prev = prevShiftOf(date, shiftKey);
-  const prevRec = await getShiftRecord(prev.date, prev.shiftKey);
-  const prevClosing = prevRec && prevRec.closed ? prevRec.closingCash : undefined;
-  const prevMethodClosing = prevRec && prevRec.closed ? prevRec.methodClosing : undefined;
-  const fresh = freshShiftRecord(date, shiftKey, profile.name, profile.username, rooms, prevClosing, prevMethodClosing);
-  const created = await createShiftRecord(fresh);
-  if (created.data) return created.data;
-  // فشل الإنشاء غالبًا لأن شاشة اليومية (أو جهاز تاني) أنشأت نفس السجل في نفس
-  // اللحظة - نقرأ السجل الموجود فعليًا بدل ما نكمل على نسخة محلية مالهاش
-  // updated_at (كانت هتخلي أي تعديل بعدها يفشل من غير سبب واضح).
-  return await getShiftRecord(date, shiftKey);
-}
-
-/* تسجيل تحصيل (أو رد فلوس - amount سالب) حصل على حجز من بلوك الغرف أو شاشة
-   الحجوزات تلقائيًا في يومية شيفت موظف الشيفت الحالي - بيضاف فعليًا لخانة
-   "التحصيل" (المبلغ/الوسيلة/العملة) الخاصة بصف غرفة الحجز في جدول اليومية
-   العادي نفسه - زي بالظبط لو الموظف كتبه بإيده - مش في جدول منفصل تاني.
-   عشان رصيد الخزينة/التحصيل حسب طريقة الدفع في اليومية والتقارير يعكسوا
-   الحقيقة من غير ما الموظف يحتاج يكتب نفس المبلغ تاني بنفسه (كان ده الفجوة
-   قبل كده: تحصيل الكاش خصوصًا من الحجز مباشرة كان مش بيظهر في رصيد الدرج
-   أصلًا إلا لو الموظف دخّله يدويًا تاني بنفسه في اليومية).
-   بتعيد المحاولة لو فيه تعارض (حد تاني عدّل نفس سجل اليومية في نفس اللحظة
-   بالظبط - نادر جدًا، أو الموظف كان بيكتب في اليومية في نفس الوقت) لحد ٤
-   مرات قبل ما ترجّع خطأ. */
-export async function appendBookingCollection(date, shiftKey, profile, rooms, entry) {
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const rec = await ensureShiftRecord(date, shiftKey, profile, rooms);
-    if (!rec) return { error: "تعذر الوصول ليومية الشيفت" };
-    if (!(rec.rows || []).some((r) => r.room === entry.room)) return { error: "الغرفة دي غير موجودة في جدول اليومية" };
-    // جزء الدفعة اللي بيسدّد خدمات كافيتيريا النزيل بيروح لصف الكافيتيريا
-    // تلقائيًا (cafeteriaRows)، والباقي لصف الغرفة - بنفس الوسيلة والتفاصيل.
-    const cafePart = Math.max(0, Math.min(Number(entry.cafeteriaPart) || 0, Number(entry.amount) || 0));
-    const roomEntry = { ...entry, amount: (Number(entry.amount) || 0) - cafePart };
-    // applyCollectionToRows بتجمع على نفس صف الغرفة لو نفس وسيلة الدفع والعملة،
-    // وإلا بتضيف صف جديد لنفس الغرفة في نفس الجدول - عشان ماتتخلطش وسيلتين
-    // أو عملتين في خانة واحدة.
-    const { rows } = applyCollectionToRows(rec.rows, roomEntry);
-    let cafeteriaRows = rec.cafeteriaRows || [];
-    if (cafePart > 0) {
-      cafeteriaRows = applyCafeteriaCollection(cafeteriaRows, { kind: "guest", bookingId: entry.bookingId, room: entry.room, who: `${entry.guestName || ""}`.trim(), amount: cafePart, currency: entry.currency, method: entry.method, details: entry.details, note: "خدمة كافيتيريا" }).rows;
-    }
-    // تتبّع داخلي بس (مش ظاهر في أي شاشة) لمنع حساب نفس المبلغ مرتين في
-    // التقارير - انظر الملاحظة على bookingCollections في domain/money.js.
-    const bookingCollections = [...(rec.bookingCollections || []), { id: entry.id, bookingId: entry.bookingId }];
-    const res = await updateShiftRecordIfUnchanged(date, shiftKey, rec.updatedAt, { ...rec, rows, cafeteriaRows, bookingCollections });
-    if (res.data) return { data: res.data };
-    if (res.error) return res;
-    // conflict - حد تاني عدّل نفس السجل في نفس اللحظة، نجرّب تاني بأحدث نسخة
-  }
-  return { error: "تعارض متكرر على سجل اليومية - التحصيل سُجّل على الحجز لكن محتاج يُضاف يدويًا في اليومية" };
-}
-
-/* سداد استاف لمشروباته/أكله (كافيتيريا الاستاف): بيتسجّل في صف الكافيتيريا في
-   يومية شيفت الموظف الحالي بنفس وسيلة الدفع وتفاصيلها (مثلاً ****1234 للفيزا)،
-   فيدخل التحصيل وعهدة الوسيلة والتقرير تلقائيًا. بيعيد المحاولة عند التعارض. */
-export async function appendStaffCafeteriaCollection(date, shiftKey, profile, rooms, entry) {
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const rec = await ensureShiftRecord(date, shiftKey, profile, rooms);
-    if (!rec) return { error: "تعذر الوصول ليومية الشيفت" };
-    if (rec.closed) return { error: "شيفتك مقفول - مينفعش يتسجّل فيه تحصيل جديد" };
-    const { rows } = applyCafeteriaCollection(rec.cafeteriaRows || [], { kind: "staff", consumerKey: entry.consumerKey, who: entry.who, amount: entry.amount, currency: entry.currency, method: entry.method, details: entry.details, note: entry.note || "كافيتيريا استاف" });
-    const res = await updateShiftRecordIfUnchanged(date, shiftKey, rec.updatedAt, { ...rec, cafeteriaRows: rows });
-    if (res.data) return { data: res.data };
-    if (res.error) return res;
-  }
-  return { error: "تعارض متكرر على سجل اليومية - حاول تاني" };
 }
 
 /* المدفوع الفعلي على حجز مقسّم بالوسيلة (وبتفاصيلها: الكارت/المحفظة) من اليومية نفسها - صافي

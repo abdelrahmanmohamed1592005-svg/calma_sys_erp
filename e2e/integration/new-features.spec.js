@@ -315,6 +315,7 @@ test.describe("الحجز الملغي وحالة الفلوس", () => {
     // رفض
     const r2 = guestCard(page, "Will Keep").getByTestId("refund-request");
     await r2.getByRole("button", { name: /رفض الرد/ }).click();
+    await r2.getByTestId("refund-reject-confirm").click();
     await expect(toast(page)).toContainText("تم رفض الرد");
     const s2 = guestCard(page, "Will Keep").getByTestId("refund-status");
     await expect(s2).toContainText("رُفض الرد");

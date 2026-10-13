@@ -23,35 +23,3 @@ export async function listStaffCafeteria() {
   return data.map(fromRow);
 }
 
-/* تسجيل استهلاك جديد. paid (اختياري) = دفعة فورية { amount, method, details, shiftKey, date } */
-export async function insertStaffCafeteria({ day, shiftKey, consumerUsername, consumerName, description, amount, currency, paid }) {
-  const paidAmount = paid ? Number(paid.amount) || 0 : 0;
-  const payments = paid && paidAmount > 0 ? [{ id: uid(), at: Date.now(), amount: paidAmount, method: paid.method, details: paid.details || null, shiftKey, day }] : [];
-  const { data, error } = await supabase.from("staff_cafeteria").insert({
-    day, shift_key: shiftKey, consumer_username: consumerUsername || null, consumer_name: consumerName, description: description || "",
-    amount, currency, paid_amount: paidAmount, payments,
-  }).select().maybeSingle();
-  if (error) return { error: error.message };
-  if (!data) return { error: "تعذر تسجيل الاستهلاك" };
-  return { data: fromRow(data) };
-}
-
-/* سداد (كامل أو جزئي) على استهلاك موجود - مشروط بإن الصف ماتغيّرش (تعارض). */
-export async function payStaffCafeteria(entry, payment) {
-  const amt = Number(payment.amount) || 0;
-  const payments = [...(entry.payments || []), { id: uid(), at: Date.now(), amount: amt, method: payment.method, details: payment.details || null, shiftKey: payment.shiftKey, day: payment.day }];
-  const { data, error } = await supabase.from("staff_cafeteria")
-    .update({ paid_amount: (Number(entry.paidAmount) || 0) + amt, payments })
-    .eq("id", entry.id).eq("updated_at", entry.updatedAt)
-    .select().maybeSingle();
-  if (error) return { error: error.message };
-  if (!data) return { conflict: true };
-  return { data: fromRow(data) };
-}
-
-export async function deleteStaffCafeteria(id) {
-  const { error, data } = await supabase.from("staff_cafeteria").delete().eq("id", id).select("id");
-  if (error) return { error: error.message };
-  if (!data || !data.length) return { error: "تعذر الحذف - مفيش صلاحية أو السجل اتحذف" };
-  return {};
-}

@@ -191,6 +191,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         await goTab(res, "الحجوزات");
         const req = res.locator(".cx-card", { hasText: b.guest_name }).last().getByTestId("refund-request");
         await req.getByRole("button", { name: refund ? "رد الفلوس" : /رفض الرد/ }).click();
+        if (!refund) await req.getByTestId("refund-reject-confirm").click();
         await expect(toast(res)).toContainText(refund ? "تم رد" : "تم رفض الرد");
       },
       async shorten() {

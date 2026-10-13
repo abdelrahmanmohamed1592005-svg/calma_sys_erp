@@ -36,3 +36,28 @@ describe("fetchAll - قراءة كل الصفوف على صفحات", () => {
     expect(r.data).toBeUndefined();
   });
 });
+
+describe("fetchAll - صف اتضاف أثناء القراءة", () => {
+  // استعلام وهمي: بعد أول صفحة بنضيف صف في الأول (زي حجز جديد في ترتيب checkin desc) فكل الصفحات بتتزحزح
+  const driftingQuery = (initial, insertAfterPage) => {
+    let rows = initial.slice(), calls = 0;
+    return () => ({
+      range: async (from, to) => {
+        calls++;
+        if (calls === insertAfterPage + 1) rows = [{ id: 1000 + calls }, ...rows];
+        return { data: rows.slice(from, to + 1), error: null, count: rows.length };
+      },
+    });
+  };
+  it("مفيش تكرار ومفيش صف ناقص: بيعيد القراءة ويطلع بالنتيجة الكاملة", async () => {
+    const { data } = await fetchAll(driftingQuery(mk(9), 1), 3);
+    const ids = data.map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length);                // مفيش تكرار
+    for (let i = 0; i < 9; i++) expect(ids).toContain(i);      // ولا صف قديم ضاع
+  });
+  it("تكرار صف على حدود الصفحة بيتشال حتى لو العدد ما اتغيّرش (خط دفاع أخير)", async () => {
+    const dup = () => ({ range: async (from) => ({ data: from === 0 ? [{ id: 1 }, { id: 2 }, { id: 3 }] : [{ id: 3 }, { id: 4 }], error: null, count: 5 }) });
+    const { data } = await fetchAll(dup, 3);
+    expect(data.map((r) => r.id)).toEqual([1, 2, 3, 4]);
+  });
+});

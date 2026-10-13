@@ -52,7 +52,7 @@ test("03 - الإلغاء ورد الفلوس المقسّم، المغادرة 
   await req.getByRole("button", { name: "رد الفلوس" }).click(); await expect(toast(page)).toContainText("تم رد"); await pause(page, 3200);
   await say(page, "٧) طلب رد المغادرة المبكرة (٢٠٠): نرفض الرد والفلوس تفضل متحصّلة", 1800);
   const req2 = page.locator(".cx-card", { hasText: "مغادرة مبكرة" }).last().getByTestId("refund-request");
-  await req2.getByRole("button", { name: /رفض الرد/ }).click(); await expect(toast(page)).toContainText("تم رفض الرد"); await pause(page, 3000);
+  await req2.getByRole("button", { name: /رفض الرد/ }).click(); await req2.getByTestId("refund-reject-confirm").click(); await expect(toast(page)).toContainText("تم رفض الرد"); await pause(page, 3000);
   await say(page, "٨) طلب رد النزيل القديم (التسكين المكرر): نرد كاش", 1800);
   const req3 = page.locator(".cx-card", { hasText: "نزيل قديم" }).last().getByTestId("refund-request");
   await req3.getByRole("button", { name: "رد الفلوس" }).click(); await expect(toast(page)).toContainText("تم رد"); await pause(page, 3000);

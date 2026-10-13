@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { GlobalStyle, LoadingScreen, ConfigWarningBanner, RefundBox } from "./components/shared";
+import { GlobalStyle, LoadingScreen, ConfigWarningBanner, RefundBox, SchemaOutdatedBanner } from "./components/shared";
+import { checkSchemaVersion, REQUIRED_SCHEMA_VERSION } from "./data/schemaCheck";
 import { Header, TabBar } from "./components/Header";
 import { SetupScreen, LoginScreen, LogoutReportScreen } from "./components/AuthScreens";
 import { RoomBoard } from "./components/RoomBoard";
@@ -18,7 +19,7 @@ import { getActivity, addActivity } from "./data/activity";
 
 import { PERMISSIONS, ROOMS_DEFAULT, roomLabel } from "./domain/constants";
 import { todayStr, isSameDay, uid } from "./domain/dates";
-import { refundDueAmount, fmt } from "./domain/money";
+import { refundDueAmount, fmt, describePaymentDetails } from "./domain/money";
 import { guarded } from "./lib/busy";
 
 export default function App() {
@@ -37,6 +38,17 @@ export default function App() {
   const [logoutGate, setLogoutGate] = useState(false);
   const [sessionExported, setSessionExported] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
+  const [schemaState, setSchemaState] = useState({ ok: null });
+  // فحص نسخة قاعدة البيانات بعد الدخول (وكل ما التاب يرجع ظاهر): لو أقدم من اللي الواجهة محتاجاه نحذّر بوضوح
+  useEffect(() => {
+    if (!currentProfile) return undefined;
+    let cancelled = false;
+    const run = async () => { const r = await checkSchemaVersion(); if (!cancelled) setSchemaState(r); };
+    run();
+    const onVis = () => { if (document.visibilityState === "visible") run(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { cancelled = true; document.removeEventListener("visibilitychange", onVis); };
+  }, [currentProfile?.id]);
 
   function requestEditBooking(id) { setPendingEditBookingId(id); setTab("bookings"); }
   // الرسالة بتفضل على الشاشة وقت يتناسب مع طولها (الرسائل الطويلة - زي تفاصيل
@@ -143,6 +155,14 @@ export default function App() {
   // أي قراءة فشلت (راجعة null) بنسيب آخر بيانات سليمة زي ما هي بدل ما نفضّي
   // الشاشة - خصوصًا الحجوزات، لأن فحص التعارض بيعتمد عليها. وأي تحميل أقدم
   // من تحميل أحدث (أو من كتابة حصلت في النص) مابيكتبش فوقهم.
+  // لما المستخدم يتغيّر (خروج/دخول بحساب تاني على نفس الجهاز) بنفضّي كل بياناته: من غير كده مستخدم جديد كان بيشوف لحظيًا
+  // حجوزات وحركات اللي قبله، ولو قراءاته فشلت أو اتفلترت بالصلاحيات كانت بتفضل ظاهرة
+  const loadedOnce = useRef(false);
+  useEffect(() => {
+    setBookings([]); setActivity([]); setOverrides({}); setAllProfiles([]); setLoadingData(true); setTab("board");
+    setSchemaState({ ok: null }); loadedOnce.current = false; prevRefundIds.current = null;
+  }, [currentProfile?.id]);
+
   useEffect(() => {
     if (!currentProfile) return undefined;
     let cancelled = false;
@@ -153,8 +173,15 @@ export default function App() {
       if (mutationSeq.current !== seqAtStart) { setDataVersion((v) => v + 1); return; }
       if (r) setRooms(r.length ? r : ROOMS_DEFAULT);
       if (o) setOverrides(o);
-      if (b) setBookings(b);
+      if (b) { setBookings(b); loadedOnce.current = true; }
       if (a) setActivity(a);
+      // أول تحميل والحجوزات ماتقرتش (نت/سيرفر): ماننزلش شاشة "فندق فاضي" ولا نمرّر فحص التعارض على قايمة فاضية؛
+      // بنفضل على التحميل ونعيد المحاولة تلقائيًا
+      if (!loadedOnce.current) {
+        showToast("⚠ تعذر تحميل الحجوزات (مشكلة اتصال) - بنعيد المحاولة تلقائيًا");
+        setTimeout(() => { if (!cancelled) setDataVersion((v) => v + 1); }, 4000);
+        return;
+      }
       setLoadingData(false);
     })();
     return () => { cancelled = true; };
@@ -216,8 +243,11 @@ export default function App() {
         showToast("تم رفض الرد - الفلوس فضلت متحصّلة على الحجز");
         return;
       }
-      logActivity(`رد فلوس - ${roomLabel(rooms, b.room)} - ${b.guestName} - ${fmt(amount)} ${b.currency} (${method})`);
-      showToast(`تم رد ${fmt(res?.data?.amount ?? amount)} ${b.currency} - اتشالت من التحصيل واليومية`);
+      // الرد بيتوزّع على وسائل الدفع الأصلية: نقول للريسيبشن بالظبط يسلّم النزيل كام بكل وسيلة (وسجل الحركة بنفس التفصيل)
+      const splits = (res?.data?.splits || []).filter((s) => Number(s.amount) > 0);
+      const splitText = splits.length ? splits.map((s) => { const d = describePaymentDetails(s.method, s.details); return `${fmt(s.amount)} ${s.method}${d ? " " + "\u2066" + d + "\u2069" : ""}`; }).join(" + ") : method;
+      logActivity(`رد فلوس - ${roomLabel(rooms, b.room)} - ${b.guestName} - ${fmt(res?.data?.amount ?? amount)} ${b.currency} (${splitText})`);
+      showToast(`تم رد ${fmt(res?.data?.amount ?? amount)} ${b.currency}: ${splitText} - اتشالت من التحصيل واليومية`);
     });
   }
 
@@ -232,7 +262,15 @@ export default function App() {
     setSessionExported(false);
     return {};
   }
-  async function doLogout() { await signOut(); setLogoutGate(false); setSessionExported(false); }
+  // قبل الخروج: أي كتابة معلّقة في اليومية (كتبها الموظف من أقل من ثانية أو لسه في إعادة محاولة) بتتبعت الأول، وبعدين بنخرج؛
+  // من غير كده الخروج كان بيقفل الجلسة قبل الحفظ فالكتابة بتتبخر
+  async function flushBeforeLeave() {
+    try {
+      if (window.__calmaFlushLedger) await window.__calmaFlushLedger();
+      for (let i = 0; i < 30 && window.__calmaBusyCount; i++) await new Promise((r) => setTimeout(r, 100));
+    } catch { /* مانمنعش الخروج */ }
+  }
+  async function doLogout() { await flushBeforeLeave(); await signOut(); setLogoutGate(false); setSessionExported(false); }
   function requestLogout() {
     const mine = activity.filter((a) => a.username === currentProfile?.username && isSameDay(a.ts, todayStr()));
     if (mine.length > 0 && !sessionExported) { setLogoutGate(true); } else { doLogout(); }
@@ -255,6 +293,7 @@ export default function App() {
   return (
     <div className="calma-app" dir="rtl">
       <GlobalStyle />
+      {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
       <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} />
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={perms.decideRefund ? { bookings: pendingRefunds.length } : {}} />
       {pendingRefunds.length > 0 && perms.tabs.includes("bookings") && activeTab !== "bookings" && (
