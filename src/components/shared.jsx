@@ -7,7 +7,7 @@ export function GlobalStyle() {
   return (
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Fraunces:ital,wght@1,500&display=swap');
-      .calma-app{ --ink:#161D27; --paper:#FBF9F4; --paper2:#F3EFE2; --gold:#B8912F; --teal:#1F4B4A; --sage:#3F7A5C; --rust:#A8503B; --slate:#3D5A73; --hair:#E4DCC9; --text:#23282E; --muted:#6B6357;
+      .calma-app{ --ink:#161D27; --paper:#FBF9F4; --paper2:#F3EFE2; --gold:#B8912F; --teal:#1F4B4A; --sage:#3F7A5C; --rust:#9C4733; --slate:#3D5A73; --hair:#E4DCC9; --text:#23282E; --muted:#6B6357;
         font-family:'Tajawal',sans-serif; background:var(--paper); color:var(--text); min-height:100vh; }
       .calma-app *{ box-sizing:border-box; }
       .cx-logo{ font-family:'Fraunces',serif; font-style:italic; }

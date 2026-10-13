@@ -1,6 +1,7 @@
 /*
   ثغرات لقيتها مراجعة الكود الكاملة (كل واحدة اتأكدت بتجربة على قاعدة حقيقية بهوية الدور الحقيقي) - لازم تفضل مقفولة.
 */
+import { REQUIRED_SCHEMA_VERSION } from "../src/data/schemaCheck.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { enabled, buildTemplate, dropTemplate, newDb } from "./helpers.js";
 import { addDays } from "../src/domain/dates.js";
@@ -142,7 +143,7 @@ describe.skipIf(!enabled)("إصلاحات المراجعة الكاملة", () =
   it("calma_schema_version: متاحة للمسجّلين بس (مش anon) وبترجّع الرقم اللي الواجهة محتاجاه", async () => {
     const ok = await db.tx("st1", (c) => c.query("select calma_schema_version() v"));
     expect(ok.ok).toBe(true);
-    expect(Number(ok.r.rows[0].v)).toBeGreaterThanOrEqual(36);
+    expect(Number(ok.r.rows[0].v)).toBe(REQUIRED_SCHEMA_VERSION);
     const c = await db.pool.connect();
     try {
       await c.query("begin"); await c.query("set local role anon");
