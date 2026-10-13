@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
-import { REQUIRED_SCHEMA_VERSION } from "../data/schemaCheck.js";
+import { REQUIRED_SCHEMA_VERSION } from "../data/schemaVersion.js";
 
 /* الرقم اللي الواجهة بتطلبه لازم يطابق اللي في آخر schema.sql، وإلا قاعدة قديمة تعدّي من غير بانر (حصل مع money_audit). */
 describe("نسخة المخطط", () => {

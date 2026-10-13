@@ -1,7 +1,7 @@
 import { supabase } from "../lib/supabaseClient";
 
-/* أقل نسخة مخطط (supabase/schema.sql) تشتغل معاها الواجهة دي. لازم تتطابق مع calma_schema_version() في آخر schema.sql. */
-export const REQUIRED_SCHEMA_VERSION = 37;
+export { REQUIRED_SCHEMA_VERSION } from "./schemaVersion";
+import { REQUIRED_SCHEMA_VERSION } from "./schemaVersion";
 
 // دالة (PostgREST) مش موجودة في الـ cache = القاعدة لسه ماتحدّثتش
 export const isMissingFunctionError = (e) => !!e && (e.code === "PGRST202" || /Could not find the function|schema cache/i.test(e.message || ""));

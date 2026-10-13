@@ -1,7 +1,7 @@
 /*
   ثغرات لقيتها مراجعة الكود الكاملة (كل واحدة اتأكدت بتجربة على قاعدة حقيقية بهوية الدور الحقيقي) - لازم تفضل مقفولة.
 */
-import { REQUIRED_SCHEMA_VERSION } from "../src/data/schemaCheck.js";
+import { REQUIRED_SCHEMA_VERSION } from "../src/data/schemaVersion.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { enabled, buildTemplate, dropTemplate, newDb } from "./helpers.js";
 import { addDays } from "../src/domain/dates.js";
