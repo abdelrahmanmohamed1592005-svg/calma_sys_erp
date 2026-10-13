@@ -121,7 +121,7 @@ EV1 دفعة صحيحة (toast + طلب RPC 200 + amount_paid=120 + صف الي�
 ## 10) الشروط الإلزامية قبل GO (مع المالك المسؤول)
 | # | الإجراء | المسؤول | الحالة |
 |---|---|---|---|
-| 1 | تطبيق `supabase/schema.sql` كامل على مشروع Supabase **staging** ثم الإنتاج، والتحقق `select calma_schema_version()` = 36 و`notify pgrst, 'reload schema'` | المالك/DBA | **مفتوح (D-06)** |
+| 1 | تطبيق `supabase/schema.sql` كامل على مشروع Supabase **staging** ثم الإنتاج، والتحقق `select calma_schema_version()` = 37 و`notify pgrst, 'reload schema'` | المالك/DBA | **مفتوح (D-06)** |
 | 2 | تشغيل `supabase/ops/reconcile_before.sql` قبل، و`reconcile.sql` بعد، وحفظ النتائج | المالك | مفتوح |
 | 3 | إغلاق **Allow new users to sign up** والتأكد بمحاولة تسجيل حقيقية | المالك | **BLOCKED (D-08)** |
 | 4 | تجربة الـ 4 أدوار بحسابات حقيقية على staging (دخول حقيقي، انتهاء جلسة، إعادة باسورد، إنشاء/إيقاف مستخدم عبر Edge Functions) | المالك + مطوّر | **NOT VERIFIED** |

@@ -24,3 +24,12 @@ test("لا مخالفات WCAG A/AA في الشاشات الحرجة، والص�
   await goTab(page, "اليومية"); expect(await scan(page), "ledger").toEqual([]);
   await goTab(page, "الحجوزات"); expect(await scan(page), "bookings").toEqual([]);
 });
+
+test("حالة 'مش في شيفتك' (رسائل التنبيه بالأحمر على خلفية فاتحة) كمان من غير مخالفات", async ({ page, env }) => {
+  await env.seedUser("ahmed", "staff", "أحمد");
+  await env.seedBooking({ room: 601, guest: "A11y Guest", nights: 2, price: 100, paid: 50 });       // من غير شيفت للموظف
+  await page.goto("/");
+  await login(page, "ahmed");
+  await goTab(page, "الحجوزات"); expect(await scan(page), "bookings off-shift").toEqual([]);
+  await goTab(page, "لوحة الغرف"); await openRoom(page, 601); expect(await scan(page), "room card off-shift").toEqual([]);
+});
