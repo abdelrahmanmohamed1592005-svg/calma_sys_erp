@@ -73,7 +73,7 @@
 | سرّيات | بحث regex في الملفات المتتبّعة + تاريخ git (JWT/`sbp_`/`ghp_`/`sb_secret_`/AWS/postgres URL) | **لا نتائج**؛ `.env` غير متتبّع؛ `.env.example` placeholders. (لا gitleaks متاح — فحص regex ≠ فحص كامل) |
 | bundle | بحث `service_role`/sourcemaps/`innerHTML`/`eval` | لا شيء |
 | ترقية المخطط | `schema.sql` مرتين + `pg_dump -s` diff | **متطابق** (الفرق الوحيد توكنات `\restrict` العشوائية) |
-| Lint | `npm run lint -- --quiet` | **0 أخطاء** (6 تحذيرات unused/hooks deps مسجّلة ومش مانعة) |
+| Lint | `npm run lint -- --quiet` | **0 أخطاء** (43 تحذير: متغيّرات/imports غير مستخدمة وdeps في hooks — مسجّلة ومش مانعة) |
 | Format / Typecheck | — | غير موجودة في المشروع → NOT VERIFIED |
 | أداء (محلي، Postgres 16) | `sim/load.sim.js` | 20k حجز: قراءة كل الحجوزات 417ms، يومية شيفت 4ms، تقرير سنة 86ms، إضافة حجز p95 7ms، رد فلوس وسط 3285 يومية 33ms؛ 40 اتصال متزامن 15ث: 25,089 عملية (1673/ث)، p95 33ms، **0 deadlock، 0 خطأ** |
 
