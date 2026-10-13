@@ -117,3 +117,18 @@ test("حجز ملغي بعد ما النزيل مشي (تم تسجيل الخر�
   await expect(card(page, "Left Already")).toBeVisible();
   await expect(card(page, "Left Already").getByTestId("cancel-booking")).toHaveCount(0);
 });
+
+test("اختيار المدير لوسيلة الرد مايتمسحش لو قراءة المدفوع وصلت متأخرة", async ({ page, env }) => {
+  await users(env);
+  const id = await env.seedBooking({ room: 607, guest: "Late Read", nights: 1, price: 100, paid: 100, method: "فيزا", status: "ملغي" });
+  await env.qRaw("update bookings set refund_pending = true where status = 'ملغي'");
+  await env.seedShift("ahmed", { rowsPatch: { 607: rowFor(607, id, 100, "فيزا", "4242") } });
+  await page.goto("/"); await login(page, "rawan");
+  await page.route(/fake-supabase\.test\/rest\/v1\/shift_records/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.fallback(); });
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("status-filter-all").click();
+  const sel = card(page, "Late Read").getByTestId("refund-request").locator("select");
+  await sel.selectOption("كاش");
+  await page.waitForTimeout(3000);                      // القراءة المتأخرة وصلت
+  await expect(sel).toHaveValue("كاش");
+});

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { getBookingPayments } from "../data/shifts";
 import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { roomLabel } from "../domain/constants";
@@ -188,6 +188,7 @@ export function RefundBox({ b, canDecide, onDecide }) {
   const [method, setMethod] = useState(b.paymentMethod);
   const [paid, setPaid] = useState(null);                 // اللي اتدفع فعلًا بكل وسيلة (من اليومية): [{ method, details, amount }]
   const [confirmKeep, setConfirmKeep] = useState(false);
+  const touched = useRef(false);                       // المدير اختار وسيلة بإيده: القراءة المتأخرة ماتغيّرهاش
   const rs = refundStatusOf(b);
   const pending = rs?.kind === "pending";
   // وسيلة الرد الافتراضية = الوسيلة اللي عليها أكبر رصيد من تحصيل الحجز ده (مش آخر وسيلة دفع بس)، وبنوري اتدفع بإيه فعلًا
@@ -198,7 +199,7 @@ export function RefundBox({ b, canDecide, onDecide }) {
       if (cancelled || !r) return;
       setPaid(r);
       const pos = r.filter((p) => p.amount > 0.004);
-      if (pos.length) setMethod(pos.reduce((a, c) => (c.amount > a.amount ? c : a)).method);
+      if (pos.length && !touched.current) setMethod(pos.reduce((a, c) => (c.amount > a.amount ? c : a)).method);
     });
     return () => { cancelled = true; };
   }, [b.id, b.updatedAt, pending, canDecide]);
@@ -221,7 +222,7 @@ export function RefundBox({ b, canDecide, onDecide }) {
       </span>
       {canDecide ? (
         <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <select className="cx-select" title="وسيلة رد الفلوس للنزيل (اللي هتتخصم من اليومية)" style={{ width: 130 }} value={method} onChange={(e) => setMethod(e.target.value)}>
+          <select className="cx-select" title="وسيلة رد الفلوس للنزيل (اللي هتتخصم من اليومية)" style={{ width: 130 }} value={method} onChange={(e) => { touched.current = true; setMethod(e.target.value); }}>
             {methodOptionsFor(method).map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
           <button className="cx-btn cx-btn-gold" data-testid="refund-approve" onClick={() => onDecide(b, "refund", method)}>رد الفلوس</button>
