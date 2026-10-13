@@ -1,5 +1,5 @@
 import { addDays, todayStr, nightsBetween } from "./dates";
-import { bookingGrandTotal, bookingAmountDue } from "./money";
+import { bookingAmountDue } from "./money";
 import { STATUS_LABELS } from "./constants";
 
 export function isOverrideStillActive(ov, dateStr) {
@@ -86,7 +86,6 @@ export function resolveDuplicateCheckin(clash, newCheckin, today = todayStr()) {
    بتتحوّل تلقائيًا لطلب رد فلوس لمدير الحجوزات (قاعدة البيانات بتفتحه). */
 export function earlyLeavePatch(clash, newCheckout, reason = "duplicate") {
   const totalRoom = repricedTotalRoom(clash, clash.checkin, newCheckout);
-  const next = { ...clash, checkout: newCheckout, totalRoom };
   const tail = reason === "duplicate" ? " - الغرفة اتسلمت لحجز تسكين مكرر جديد" : ` (قبل معاده ${clash.checkout})`;
   const note = newCheckout === clash.checkin
     ? `غادر مبكرًا في نفس يوم الدخول (${clash.checkin})${tail}`

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { GlobalStyle, LoadingScreen, ConfigWarningBanner, RefundBox, SchemaOutdatedBanner } from "./components/shared";
 import { checkSchemaVersion, REQUIRED_SCHEMA_VERSION } from "./data/schemaCheck";
 import { Header, TabBar } from "./components/Header";
@@ -48,6 +48,7 @@ export default function App() {
     const onVis = () => { if (document.visibilityState === "visible") run(); };
     document.addEventListener("visibilitychange", onVis);
     return () => { cancelled = true; document.removeEventListener("visibilitychange", onVis); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- بنعيد الفحص لما يتغيّر المستخدم (id) بس؛ كائن الـ profile بيتغيّر مرجعه كل تحديث
   }, [currentProfile?.id]);
 
   function requestEditBooking(id) { setPendingEditBookingId(id); setTab("bookings"); }
@@ -108,6 +109,7 @@ export default function App() {
       window.removeEventListener("online", bump);
       unsubscribe();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- مربوط بهوية المستخدم (id) عمدًا - الاشتراك اللحظي مايتعاد بتغيّر مرجع كائن الـ profile
   }, [currentProfile?.id]);
 
   // تحميل حالة تسجيل الدخول والاستماع لأي تغيير فيها
@@ -150,6 +152,7 @@ export default function App() {
   }, []);
 
   async function refreshProfiles() { const p = await listProfiles(); if (p) setAllProfiles(p); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- مربوط بهوية المستخدم وdataVersion عمدًا (قراءة قائمة المستخدمين)
   useEffect(() => { if (currentProfile) refreshProfiles(); }, [currentProfile?.id, dataVersion]);
 
   // أي قراءة فشلت (راجعة null) بنسيب آخر بيانات سليمة زي ما هي بدل ما نفضّي
@@ -185,6 +188,7 @@ export default function App() {
       setLoadingData(false);
     })();
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- مربوط بهوية المستخدم وdataVersion عمدًا - إضافة كائن الـ profile كانت هتعمل تحميل زيادة لكل تحديث ملف
   }, [currentProfile?.id, dataVersion]);
 
   function logActivity(action) {

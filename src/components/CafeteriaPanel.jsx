@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Plus, Check } from "lucide-react";
 import { PaymentDetailsInline } from "./shared";
 import { COMMON_CURRENCIES, PAYMENT_METHODS, EXPENSE_CATEGORIES, methodOptionsFor, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstanding, fmt } from "../domain/money";
@@ -81,7 +81,6 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       const r = await settleStaffCafeteria({ name: g.name, username: g.username, currency: g.currency, amount: amt, method: payMethod, details: det });
       if (r.error) { showToast(r.error); await onReload(); return; }
       onLog(`سداد كافيتيريا استاف - ${g.name}: ${fmt(amt)} ${g.currency} (${payMethod})`);
-      const usedMethod = payMethod;
       setPayFor(null); setPayAmt(""); setPayMethod("كاش"); setPayDetails(emptyPaymentDetails());
       await reloadRecord();
       await onReload();

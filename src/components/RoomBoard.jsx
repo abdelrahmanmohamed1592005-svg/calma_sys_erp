@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
-import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, refundDueAmount, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, splitPaymentForCafeteria, cafeteriaOutstanding, ONLINE_METHODS } from "../domain/money";
-import { todayStr, shiftDayNow, nightsBetween, addDays, uid } from "../domain/dates";
+import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, refundDueAmount, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
+import { todayStr, shiftDayNow, nightsBetween, addDays } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
@@ -46,9 +46,11 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   const room = rooms.find((r) => r.number === selected);
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date) : null;
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- مربوط بالغرفة وبقيم الرسوم المحفوظة عمدًا - إضافة كائن الحجز كانت هتمسح اللي الموظف بيكتبه مع كل تحديث
   useEffect(() => { if (status?.booking) setExtrasDraft({ laundry: status.booking.extras?.laundry || "", cafeteria: status.booking.extras?.cafeteria || "", tours: status.booking.extras?.tours || "", pickup: status.booking.extras?.pickup || "" }); else setExtrasDraft(null); if (status?.booking) extrasBaseRef.current = normExtras(status.booking.extras); }, [selected, status?.booking?.id]);
   useEffect(() => { setPay({ amount: "", method: "كاش", details: emptyPaymentDetails() }); }, [selected, status?.booking?.id]);
   useEffect(() => { setExtendNights(1); setEcFee(""); setEcNote(""); setEcCollect(true); setEpay({ method: "كاش", details: emptyPaymentDetails() }); }, [selected, status?.booking?.id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- مربوط بالغرفة/الحجز وعدد الأفراد وأكواده (JSON) عمدًا لنفس السبب
   useEffect(() => { if (status?.booking) setCodesDraft(normalizeGuestCodes(status.booking.guestCodes, status.booking.pax)); else setCodesDraft([]); }, [selected, status?.booking?.id, status?.booking?.pax, JSON.stringify(status?.booking?.guestCodes || [])]);
 
   // المدفوع على الحجز مقسّم بالوسيلة (من اليومية) - بيتحدّث مع أي تحصيل/رد
@@ -85,7 +87,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   // المستخدم في BookingsPanel.jsx عشان الاتنين يتفقوا على نفس القرار بدون
   // أي تضارب. باقي الأدوار (مدير الحجوزات/الحسابات/المدير العام) مش مربوطة
   // بشيفت أصلًا (roomStatusRestricted: false) فمش بيأثر عليهم.
-  const { offShift, shiftClosed, myActiveShiftKey, myActiveShiftDate } = useShiftGate(profile, perms, dataVersion);
+  const { offShift, shiftClosed, myActiveShiftKey } = useShiftGate(profile, perms, dataVersion);
 
 
   async function saveOverride(statusKey) {
@@ -136,7 +138,6 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     if (!(fee > 0)) { showToast("اكتب رسم الدخول المبكر (أكبر من صفر)"); return; }
     const collectNow = !!perms.markPaymentReceived && ecCollect;
     if (collectNow) { const detailsErr = validatePaymentDetailsFor(epay.method, epay.details); if (detailsErr) { showToast(detailsErr); return; } }
-    const details = cleanPaymentDetailsFor(epay.method, epay.details);
     const next = { ...booking, earlyCheckin: { applied: true, fee, note: sanitizeText(ecNote, 300) } };
     const res = await onUpdateBooking(booking.id, next);
     if (res?.error) { showToast(res.error); return; }

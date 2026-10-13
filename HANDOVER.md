@@ -81,4 +81,4 @@
 - تدريب الاسترجاع: `E2E_PG_ADMIN_URL=... node scripts/dr-drill.mjs` (محلي/CI) — بيتبع خطوات `docs/BACKUP.md` ويقارن الأرقام.
 - إمكانية الوصول: `e2e/integration/a11y.spec.js` (axe-core، WCAG A/AA).
 - الحالة الكاملة للجاهزية: `RELEASE_CERTIFICATION.md`.
-- الفحص الساكن: `npm run lint` (ESLint: no-undef وقواعد hooks)؛ الأخطاء بتفشّل CI، والتحذيرات للمراجعة.
+- الفحص الساكن: `npm run lint` (ESLint: no-undef وقواعد hooks)؛ أي خطأ أو تحذير بيفشّل CI (`--max-warnings 0`)؛ لو في deps في hook مقصود تتجاهلها اكتب السبب في تعليق `eslint-disable-next-line ... -- السبب`.

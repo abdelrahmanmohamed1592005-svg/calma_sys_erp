@@ -1,4 +1,3 @@
-import React from "react";
 import { ROLES } from "../domain/constants";
 
 export function ActivityPanel({ activity }) {

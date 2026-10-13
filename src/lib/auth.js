@@ -34,7 +34,6 @@ export async function signUpUser({ username, password, name, role }) {
     .insert({ id: userId, username: username.trim().toLowerCase(), name, role, active: true });
 
   if (profileError) {
-    // eslint-disable-next-line no-console
     console.error("[Calma] signUpUser profile insert error:", profileError);
     return { error: "تعذر إنشاء الحساب - اسم المستخدم ممكن يكون مستخدم بالفعل" };
   }
@@ -149,7 +148,7 @@ async function extractFunctionError(error) {
       const body = await error.context.clone().json();
       if (body?.error) return body.error;
     }
-  } catch (_) {
+  } catch {
     // تجاهل - هنرجع الرسالة العامة تحت
   }
   return error?.message || "حصل خطأ غير متوقع";
@@ -165,7 +164,6 @@ function mapAuthError(error) {
   if (msg.includes("email not confirmed")) return "لازم توقف خاصية Confirm Email من إعدادات Supabase Auth (README)";
   // رسالة غير متوقعة - نسجلها كاملة للمطوّر في الـ console، ونرجع للمستخدم
   // رسالة عامة آمنة بدل ما نكشفله تفاصيل داخلية ممكن تكون حساسة
-  // eslint-disable-next-line no-console
   console.error("[Calma] auth error:", error);
   return "حصل خطأ غير متوقع، حاول تاني";
 }
