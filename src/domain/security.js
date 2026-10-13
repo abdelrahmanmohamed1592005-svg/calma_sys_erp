@@ -36,7 +36,6 @@ export function validateUsername(username) {
 */
 export function sanitizeText(value, maxLen = 300) {
   const s = String(value ?? "");
-  // eslint-disable-next-line no-control-regex
   const stripped = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
   // trim قبل القص وبعده: المسافات الزايدة في الأول مايخسّرش حروف مفيدة من الحد الأقصى
   return stripped.trim().slice(0, maxLen).trim();

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { LogOut, Key } from "lucide-react";
 import { Logo } from "./shared";
 import { arabicWeekday, arabicDateLong, todayStr } from "../domain/dates";

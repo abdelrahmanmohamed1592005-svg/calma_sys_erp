@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getBookingPayments } from "../data/shifts";
 import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { roomLabel } from "../domain/constants";
@@ -202,6 +202,7 @@ export function RefundBox({ b, canDecide, onDecide }) {
       if (pos.length && !touched.current) setMethod(pos.reduce((a, c) => (c.amount > a.amount ? c : a)).method);
     });
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- بيتعاد لما الحجز نفسه يتغيّر (id/updatedAt) بس؛ إضافة b كانت هتعيد القراءة مع كل render
   }, [b.id, b.updatedAt, pending, canDecide]);
   if (!rs) return null;
   if (!pending) {

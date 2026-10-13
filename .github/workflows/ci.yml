@@ -27,8 +27,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: Lint (errors fail the build; warnings are reported)
-        run: npm run lint -- --quiet
+      - name: Lint (zero warnings allowed)
+        run: npm run lint -- --max-warnings 0
       - name: Unit tests
         run: npm test
       - name: Production build

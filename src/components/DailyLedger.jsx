@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen } from "lucide-react";
 import { Logo } from "./shared";
 import { guarded } from "../lib/busy";
@@ -470,7 +470,6 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
       window.__calmaFlushLedger = null;
       if (pendingRef.current && flushLatest.current) flushLatest.current();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
   // بعد عملية ذرية على السيرفر (كافيتيريا استاف): نجيب السجل الجديد، ولو الموظف كتب حاجة في الأثناء نطبّقها فوقه
   async function reloadRecord() {

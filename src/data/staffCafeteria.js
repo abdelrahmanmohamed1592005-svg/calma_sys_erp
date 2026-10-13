@@ -1,6 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
 import { fetchAll } from "./page";
-import { uid } from "../domain/dates";
 
 /* كافيتيريا الاستاف: استهلاك موظفين (مشروبات/أكل) من الكافيتيريا، مين دفع ومين
    لسه عليه فلوس. المديونية بتفضل مفتوحة (حتى عبر الشيفتات) لحد ما تتسدّد.

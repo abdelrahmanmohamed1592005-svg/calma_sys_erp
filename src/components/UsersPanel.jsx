@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Info, UserPlus, Key, Check, AlertTriangle } from "lucide-react";
 import { TwoStepButton } from "./shared";
 import { ROLES, SHIFTS } from "../domain/constants";
@@ -14,7 +14,7 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
   const [claims, setClaims] = useState(null);
   const today = shiftDayNow();
 
-  useEffect(() => { if (!readOnly) (async () => setClaims(await getClaimsForDate(today)))(); }, [readOnly, dataVersion]);
+  useEffect(() => { if (!readOnly) (async () => setClaims(await getClaimsForDate(today)))(); }, [readOnly, dataVersion, today]);
 
   // إلغاء اختيار شيفت غلط: بيمسح الاختيار نفسه + ورقة اليومية (shift_records)
   // المرتبطة بيه تحديدًا (دي ورقة تخص الاختيار الغلط ده بس، فمسحها كاملة

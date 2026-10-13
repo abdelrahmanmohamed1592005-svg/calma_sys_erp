@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer } from "lucide-react";
 import { Logo } from "./shared";
-import { emptyMoney, computeShiftTotals, methodTransactions, describePaymentDetails, bookingGrandTotal, refundDueAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
+import { emptyMoney, computeShiftTotals, methodTransactions, bookingGrandTotal, refundDueAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getJournaledBookingIds, getShiftRecord, getShiftRecordsInRange } from "../data/shifts";
@@ -270,7 +270,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     if (staffOpen.length) txt += `\nاستاف عليهم فلوس للكافيتيريا: ${staffOpen.map((g) => `${g.name} ${fmt(g.owed)} ${g.currency}`).join("، ")}`;
     return txt;
   }
-  async function copySummary() { const t = buildSummaryText(); setCopyText(t); try { await navigator.clipboard.writeText(t); } catch (e) {} }
+  async function copySummary() { const t = buildSummaryText(); setCopyText(t); try { await navigator.clipboard.writeText(t); } catch { /* مفيش clipboard */ } }
 
   return (
     <div style={{ padding: 14 }}>

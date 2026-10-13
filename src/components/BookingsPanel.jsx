@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock } from "lucide-react";
 import { TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
-import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, splitPaymentForCafeteria, bookingGrandTotal, bookingHotelTotal, refundStatusOf } from "../domain/money";
-import { todayStr, shiftDayNow, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
+import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHotelTotal, refundStatusOf } from "../domain/money";
+import { todayStr, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
@@ -63,7 +63,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
   // نفس هوك شيفت موظف الشيفت المستخدم في RoomBoard.jsx بالظبط - عشان لو
   // شيفته مش حاجزه دلوقتي أو شيفته مقفول، ميعرفش يضيف أو يعدّل أي حجز من هنا
   // برده (مش بس من بلوك الغرف)، ومن غير أي تضارب بين الشاشتين.
-  const { offShift, shiftClosed, myActiveShiftKey, myActiveShiftDate } = useShiftGate(profile, perms, dataVersion);
+  const { offShift, shiftClosed, myActiveShiftKey } = useShiftGate(profile, perms, dataVersion);
 
   useEffect(() => {
     if (pendingEditId) {
@@ -71,6 +71,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
       if (b) { const f = formFromBooking(b); formBaseRef.current = f; setForm(f); }
       onConsumeEditRequest();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- بيشتغل مرة لما يوصل طلب تعديل (pendingEditId) - إضافة bookings كانت هتعيد فتح الفورم مع كل تحديث
   }, [pendingEditId]);
 
   useEffect(() => {
