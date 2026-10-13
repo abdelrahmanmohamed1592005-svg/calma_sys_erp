@@ -109,7 +109,10 @@ Supabase Dashboard ← **Table Editor** ← اختار جدول (`bookings`, `sh
 1. اعمل مشروع جديد في Supabase.
 2. شغّل `supabase/schema.sql` كامل في SQL Editor (بيبني الجداول والصلاحيات).
 3. فك التشفير لو متشفّر: `gpg --decrypt backup.dump.gpg > backup.dump`
-4. استرجع **البيانات بس** فوق الهيكل الجاهز:
+4. استرجع **البيانات بس** فوق الهيكل الجاهز. الأول فضّي جدول الغرف (`schema.sql` بيحط غرف افتراضية، وبدون التفضية الاسترجاع بيفشل على جدول `rooms` بخطأ `duplicate key` وغرفك المعدّلة ماترجعش) - في SQL Editor:
+   ```sql
+   truncate table public.rooms cascade;   -- القاعدة الجديدة فاضية، فالـ cascade مابيمسحش بيانات
+   ```
    ```bash
    pg_restore --data-only --disable-triggers --no-owner \
      --dbname="postgresql://postgres.NEW-REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres" \

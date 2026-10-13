@@ -45,6 +45,10 @@ jobs:
           SIM_OPS: "150"
       - name: Real API path (supabase-js -> PostgREST -> Postgres, real JWT)
         run: npm run test:api
+      - name: Backup and restore drill (pg_dump -> fresh DB -> reconcile -> new payment)
+        run: node scripts/dr-drill.mjs
+      - name: Dependency audit (production dependencies, high+)
+        run: npm audit --omit=dev --audit-level=high
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Browser + real-database integration tests
