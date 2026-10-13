@@ -151,6 +151,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     : nightsBetween(effFrom, effTo) + 1 > MAX_RANGE_DAYS ? `أقصى فترة للتقرير ${MAX_RANGE_DAYS} يوم` : "";
 
   const loadedKeyRef = React.useRef(null);
+  const [loadFailed, setLoadFailed] = useState(false);   // أي قراءة فشلت: الأرقام ممكن تكون ناقصة (مثلًا تحصيلات مش محسوبة) - لازم نقول ده بدل ما نعرض تقرير يبان كامل
   useEffect(() => {
     if (rangeError) { setLoading(false); return undefined; }
     let cancelled = false;
@@ -172,6 +173,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
       // فشل القراءة (null) مايتحولش لتقرير فاضي مضلّل - بنسيب آخر بيانات سليمة
       if (recs) setRecords(recs);
       if (gj) setGlobalJournaled(gj);
+      setLoadFailed(!recs || !gj || !se);
       if (recs) loadedKeyRef.current = loadKey;
       setLoading(false);
     })();
@@ -286,6 +288,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
         <button className="cx-btn cx-btn-gold" onClick={() => window.print()}><Printer size={13} /> طباعة التقرير</button>
       </div>
 
+      {loadFailed && !rangeError && !loading && <div className="cx-no-print" data-testid="report-load-warning" style={{ background: "#FBE2E4", color: "var(--rust)", fontWeight: 700, fontSize: 12.5, padding: "8px 12px", borderRadius: 8, margin: "8px 0" }}>⚠ تعذر تحميل جزء من البيانات (مشكلة اتصال) - الأرقام دي ممكن تكون ناقصة. حدّث الصفحة قبل ما تعتمد عليها أو تطبعها.</div>}
       {rangeError ? <div style={{ padding: "2rem 1rem", textAlign: "center", color: "var(--rust)", fontSize: 13 }}>{rangeError}</div> : loading ? <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>جارِ التحميل...</div> : (
         <>
           {/* ترويسة التقرير المطبوع - بتظهر بس وقت الطباعة/التصدير كـ PDF،

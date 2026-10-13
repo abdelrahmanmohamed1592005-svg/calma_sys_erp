@@ -38,8 +38,8 @@ select 'خطأ', 'طلب رد فلوس معلّق على حجز مفيش علي�
 from bookings b
 where b.refund_pending and not (b.status = 'ملغي' and coalesce(b.amount_paid, 0) > 0) and not (coalesce(b.amount_paid, 0) > booking_grand_total(b))
 union all
-select 'تنبيه', 'رصيد وسيلة دفع سالب على حجز (رد أكبر من التحصيل بنفس الوسيلة)', booking_id, format('%s %s = %s', method, cur, sum(amt))
-from ledger group by booking_id, method, cur having sum(amt) < -0.005
+select 'تنبيه', 'رصيد وسيلة دفع سالب على حجز (رد أكبر من التحصيل بنفس الوسيلة)', l.booking_id, format('%s غرفة %s: %s %s = %s', coalesce(b.guest_name, '؟'), coalesce(b.room::text, '؟'), l.method, l.cur, sum(l.amt))
+from ledger l left join bookings b on b.id::text = l.booking_id group by l.booking_id, b.guest_name, b.room, l.method, l.cur having sum(l.amt) < -0.005
 union all
 select 'تنبيه', 'شيفت لسه مفتوح من أكتر من يومين', s.date::text || ' ' || s.shift_key, s.staff_name
 from shift_records s where not s.closed and s.date < hotel_today() - 1

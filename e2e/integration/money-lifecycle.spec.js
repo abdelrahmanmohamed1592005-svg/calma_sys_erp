@@ -200,6 +200,7 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     await expect(toast(page)).toContainText("طلب رد فلوس");
     const req = page.getByTestId("refund-request");
     await req.getByRole("button", { name: /رفض الرد/ }).click();
+    await req.getByTestId("refund-reject-confirm").click();
     await expect(toast(page)).toContainText("تم رفض الرد");
     const [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ status: "ملغي", refund_pending: false, refund_decision: "kept", amount_paid: 200 });

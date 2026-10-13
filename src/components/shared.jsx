@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { getBookingPayments } from "../data/shifts";
 import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { roomLabel } from "../domain/constants";
 
@@ -185,9 +186,24 @@ export function PayBreakdown({ payments, currency }) {
    - اتقرر: النتيجة بنص واضح (اترد X / رُفض الرد / مفيش رد). */
 export function RefundBox({ b, canDecide, onDecide }) {
   const [method, setMethod] = useState(b.paymentMethod);
+  const [paid, setPaid] = useState(null);                 // اللي اتدفع فعلًا بكل وسيلة (من اليومية): [{ method, details, amount }]
+  const [confirmKeep, setConfirmKeep] = useState(false);
   const rs = refundStatusOf(b);
+  const pending = rs?.kind === "pending";
+  // وسيلة الرد الافتراضية = الوسيلة اللي عليها أكبر رصيد من تحصيل الحجز ده (مش آخر وسيلة دفع بس)، وبنوري اتدفع بإيه فعلًا
+  useEffect(() => {
+    if (!pending || !canDecide) return undefined;
+    let cancelled = false;
+    getBookingPayments(b).then((r) => {
+      if (cancelled || !r) return;
+      setPaid(r);
+      const pos = r.filter((p) => p.amount > 0.004);
+      if (pos.length) setMethod(pos.reduce((a, c) => (c.amount > a.amount ? c : a)).method);
+    });
+    return () => { cancelled = true; };
+  }, [b.id, b.updatedAt, pending, canDecide]);
   if (!rs) return null;
-  if (rs.kind !== "pending") {
+  if (!pending) {
     return (
       <div className="cx-no-print" data-testid="refund-status" style={{ width: "100%", fontSize: 12, fontWeight: 700, color: rs.kind === "refunded" ? "var(--sage)" : rs.kind === "none" ? "var(--muted)" : "var(--rust)" }}>
         {rs.kind === "refunded" ? "✓ " : "• "}{rs.text}
@@ -195,6 +211,9 @@ export function RefundBox({ b, canDecide, onDecide }) {
     );
   }
   const reason = b.status === "ملغي" ? "الحجز اتلغى" : "النزيل مشي بدري / الإقامة اتقصّرت والمدفوع زاد عن الإجمالي";
+  const positive = (paid || []).filter((p) => p.amount > 0.004);
+  const methodBal = positive.filter((p) => p.method === method).reduce((a, p) => a + p.amount, 0);
+  const noBalance = paid !== null && positive.length > 0 && methodBal <= 0.004;
   return (
     <div className="cx-no-print" data-testid="refund-request" style={{ width: "100%", background: "#FBE2E4", borderRadius: 8, padding: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
       <span style={{ fontSize: 12, color: "var(--rust)", fontWeight: 700 }}>
@@ -203,13 +222,31 @@ export function RefundBox({ b, canDecide, onDecide }) {
       {canDecide ? (
         <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           <select className="cx-select" title="وسيلة رد الفلوس للنزيل (اللي هتتخصم من اليومية)" style={{ width: 130 }} value={method} onChange={(e) => setMethod(e.target.value)}>
-            {methodOptionsFor(b.paymentMethod).map((m) => <option key={m} value={m}>{m}</option>)}
+            {methodOptionsFor(method).map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
           <button className="cx-btn cx-btn-gold" data-testid="refund-approve" onClick={() => onDecide(b, "refund", method)}>رد الفلوس</button>
-          <button className="cx-btn cx-btn-outline" data-testid="refund-reject" onClick={() => onDecide(b, "keep", method)}>رفض الرد (الفلوس تفضل)</button>
+          {confirmKeep ? (
+            <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+              <button className="cx-btn cx-btn-danger" data-testid="refund-reject-confirm" onClick={() => { setConfirmKeep(false); onDecide(b, "keep", method); }}>تأكيد رفض الرد - الفلوس تفضل ومفيش رجوع</button>
+              <button className="cx-btn cx-btn-outline" onClick={() => setConfirmKeep(false)}>إلغاء</button>
+            </span>
+          ) : (
+            <button className="cx-btn cx-btn-outline" data-testid="refund-reject" onClick={() => setConfirmKeep(true)}>رفض الرد (الفلوس تفضل)</button>
+          )}
         </span>
       ) : (
         <span style={{ fontSize: 11, color: "var(--muted)" }}>في انتظار موافقة مدير الحجوزات</span>
+      )}
+      {canDecide && positive.length > 0 && (
+        <div data-testid="refund-paid-breakdown" style={{ width: "100%", fontSize: 11.5, color: "var(--ink)" }}>
+          اتدفع بـ: {positive.map((p, i) => { const d = describePaymentDetails(p.method, p.details); return <span key={i} style={{ marginInlineEnd: 8, fontWeight: 700 }}>{p.method}{d ? " " + "\u2066" + d + "\u2069" : ""} {fmt(p.amount)}</span>; })}
+          <span style={{ color: "var(--muted)" }}> - الرد بيتوزّع عليهم وبتبدأ بالوسيلة المختارة</span>
+        </div>
+      )}
+      {canDecide && noBalance && (
+        <div data-testid="refund-no-balance-warning" style={{ width: "100%", fontSize: 12, color: "var(--rust)", fontWeight: 700 }}>
+          ⚠ النزيل ماتدفعش بـ "{method}" - لو رديت بيها الرد كله هيتسجّل على وسيلة ماحصّلتش، وأرصدة الوسائل الحقيقية (الكاش/الفيزا) مش هتنقص. اختار وسيلة من اللي اتدفع بيها.
+        </div>
       )}
     </div>
   );

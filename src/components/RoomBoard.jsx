@@ -114,8 +114,8 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     // الخانات بتتصفّر فورًا (القيم اتحفظت فوق) عشان اللي بيتكتب بعد كده مايضيعش وقت الحفظ
     setPay({ amount: "", method: "كاش", details: emptyPaymentDetails() });
     // عملية واحدة ذرية في القاعدة: المدفوع على الحجز + صف الوسيلة في اليومية + (لو عليه كافيتيريا) صف الكافيتيريا
-    const res = await recordBookingPayment({ bookingId: booking.id, amount, method, details: rawDetails, note: "تحصيل" });
-    if (res?.error) { showToast(res.error); setPay({ amount: String(amount), method, details: rawDetails }); return; }
+    const res = await recordBookingPayment({ bookingId: booking.id, amount, method, details: rawDetails, note: "تحصيل", expectedUpdatedAt: booking.updatedAt });
+    if (res?.error) { showToast(res.error); if (onRefresh) onRefresh(); setPay({ amount: String(amount), method, details: rawDetails }); return; }
     const out = res.data || {};
     const details = out.details || cleanPaymentDetailsFor(method, rawDetails);
     const detailsText = describePaymentDetails(method, details) ? "\u2066" + describePaymentDetails(method, details) + "\u2069" : "";
@@ -142,7 +142,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     let warn = "";
     if (collectNow) {
       // الرسم اتسجّل على الحجز (زوّد المتبقي) فدلوقتي بنحصّله بعملية ذرية: الحجز + اليومية
-      const pr = await recordBookingPayment({ bookingId: booking.id, amount: fee, method: epay.method, details: epay.details, note: "رسم دخول مبكر" });
+      const pr = await recordBookingPayment({ bookingId: booking.id, amount: fee, method: epay.method, details: epay.details, note: "رسم دخول مبكر", expectedUpdatedAt: res?.data?.updatedAt });
       if (pr?.error) warn = " — لكن التحصيل ماتسجّلش: " + pr.error + " (الرسم لسه متبقي على النزيل - سجّله من خانة تسجيل دفعة)";
       else { if (onRefresh) await onRefresh(); getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); }); }
     }
@@ -310,7 +310,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 <b>{d.guestName}</b> - غادر النهارده ({d.checkin} → {d.checkout}){d.checkin === d.checkout ? " - دخل وخرج في نفس اليوم" : ""}{bookings.some((bk) => bk.room === selected && bk.duplicatePlacement && bk.id !== d.id && bk.checkin <= date && date < bk.checkout) ? " وحل مكانه نزيل جديد" : ""}
               </div>
               <MoneyBox b={d} />
-              <RefundBox b={d} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
+              <RefundBox key={booking.id} b={d} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
             </div>
           ))}
 
@@ -330,7 +330,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
 
               <MoneyBox b={b} />
               <PayBreakdown payments={payBreakdown} currency={b.currency} />
-              <RefundBox b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
+              <RefundBox key={booking.id} b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
 
               {offShift && (perms.markPaymentReceived || perms.editBookings) && <div style={{ fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعمل أي حاجة هنا." : "مش شيفتك دلوقتي - التحصيل والتعديل مش متاحين غير وقت شيفتك اللي حاجزه."}</div>}
 
