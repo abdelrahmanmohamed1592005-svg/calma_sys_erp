@@ -73,7 +73,8 @@
 | سرّيات | بحث regex في الملفات المتتبّعة + تاريخ git (JWT/`sbp_`/`ghp_`/`sb_secret_`/AWS/postgres URL) | **لا نتائج**؛ `.env` غير متتبّع؛ `.env.example` placeholders. (لا gitleaks متاح — فحص regex ≠ فحص كامل) |
 | bundle | بحث `service_role`/sourcemaps/`innerHTML`/`eval` | لا شيء |
 | ترقية المخطط | `schema.sql` مرتين + `pg_dump -s` diff | **متطابق** (الفرق الوحيد توكنات `\restrict` العشوائية) |
-| Lint/Format/Typecheck | — | **غير موجودة في المشروع** (لا ESLint/TS) → NOT VERIFIED كفئة. (كراش `booking is not defined` D-01 كان هيتلقط بـ ESLint `no-undef`: توصية) |
+| Lint | `npm run lint -- --quiet` | **0 أخطاء** (43 تحذير: متغيّرات/imports غير مستخدمة وdeps في hooks — مسجّلة ومش مانعة) |
+| Format / Typecheck | — | غير موجودة في المشروع → NOT VERIFIED |
 | أداء (محلي، Postgres 16) | `sim/load.sim.js` | 20k حجز: قراءة كل الحجوزات 417ms، يومية شيفت 4ms، تقرير سنة 86ms، إضافة حجز p95 7ms، رد فلوس وسط 3285 يومية 33ms؛ 40 اتصال متزامن 15ث: 25,089 عملية (1673/ث)، p95 33ms، **0 deadlock، 0 خطأ** |
 
 ## 6) أدلة بثلاث طبقات (UI + API + DB) — `e2e/evidence/evidence.spec.js` + `EVIDENCE.md`
@@ -105,7 +106,7 @@ EV1 دفعة صحيحة (toast + طلب RPC 200 + amount_paid=120 + صف الي�
 | D-11 | الإقفال التلقائي بعد الأوفر تايم بينفّذه المتصفح، لا cron على السيرفر: لو مفيش حد فتح التطبيق، الشيفت يفضل مفتوح | Medium | عالية | **مفتوح** | — |
 | D-12 | كافيتيريا الاستاف: فقد الرد بعد النجاح ثم إعادة المحاولة = مديونية مكررة (لا مفتاح idempotency) | Medium | متوسطة | **مفتوح** (RPC الدفع نفسه عنده `p_expected`) | — |
 | D-13 | لا MFA/سياسة قفل حساب في التطبيق (متروكة لإعدادات Supabase Auth) | Medium | — | **NOT VERIFIED** | — |
-| D-14 | لا ESLint/Typecheck في المشروع (D-01 كان هيتلقط) | Low | عالية | **مفتوح (توصية)** | — |
+| D-14 | لا ESLint في المشروع (D-01 كان هيتلقط) | Low | عالية | **مصلّح** (ESLint + خطوة CI؛ بيمسك `no-undef` — اتجرّب على نفس نوع كراش D-01). Typecheck (TypeScript) لسه غير موجود | — |
 | D-15 | رد الفلوس يتسجل على آخر شيفت مفتوح دون التأكد من وجود كاش بالدُرج؛ ومحجوب لو مفيش شيفت مفتوح | Medium (تشغيلي) | عالية | **موثّق** (HANDOVER قسم 6) | — |
 
 لا توجد نتائج Critical/High أمنية مفتوحة **في الكود المختبر**. البندان D-06 وD-08 (إعدادات/نشر البيئة الحقيقية) هما المانع.
@@ -115,7 +116,7 @@ EV1 دفعة صحيحة (toast + طلب RPC 200 + amount_paid=120 + صف الي�
 - ✅ `.env.example` placeholders فقط؛ لا أسرار متتبّعة.
 - ✅ الاختبارات الثقيلة محتاجة Postgres محلي (`E2E_PG_ADMIN_URL`) وخطوتها موثّقة في README؛ CI بيشغّلها كلها.
 - ⚠️ NOT VERIFIED: اتباع الدليل من شخص جديد فعليًا (أنا اللي كتبته)، نشر Edge Functions، النشر والرجوع (rollback) عبر Vercel.
-- التوصية: إضافة ESLint (no-undef/react-hooks) في CI.
+- ESLint (no-undef/react-hooks) بقى في CI (`npm run lint`).
 
 ## 10) الشروط الإلزامية قبل GO (مع المالك المسؤول)
 | # | الإجراء | المسؤول | الحالة |
