@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
+import { isMissingFunctionError, OUTDATED_SCHEMA_MESSAGE } from "./schemaCheck";
 
 /* تسجيل الفلوس بعملية واحدة ذرية في قاعدة البيانات (كله أو ولا حاجة): الحجز + صف الوسيلة في اليومية + كافيتيريا النزيل.
    التحقق (المبلغ ≤ المتبقي، الوسيلة، آخر ٤ أرقام الفيزا، رقم تليفون التحويل) بيتنفّذ في القاعدة نفسها كمان.
@@ -6,7 +7,7 @@ import { supabase } from "../lib/supabaseClient";
 
 async function rpc(name, args) {
   const { data, error } = await supabase.rpc(name, args);
-  if (error) return { error: error.message };
+  if (error) return { error: isMissingFunctionError(error) ? OUTDATED_SCHEMA_MESSAGE + " (" + name + ")" : error.message };
   return { data };
 }
 

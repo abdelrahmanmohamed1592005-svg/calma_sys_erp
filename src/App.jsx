@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { GlobalStyle, LoadingScreen, ConfigWarningBanner, RefundBox } from "./components/shared";
+import { GlobalStyle, LoadingScreen, ConfigWarningBanner, RefundBox, SchemaOutdatedBanner } from "./components/shared";
+import { checkSchemaVersion, REQUIRED_SCHEMA_VERSION } from "./data/schemaCheck";
 import { Header, TabBar } from "./components/Header";
 import { SetupScreen, LoginScreen, LogoutReportScreen } from "./components/AuthScreens";
 import { RoomBoard } from "./components/RoomBoard";
@@ -37,6 +38,17 @@ export default function App() {
   const [logoutGate, setLogoutGate] = useState(false);
   const [sessionExported, setSessionExported] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
+  const [schemaState, setSchemaState] = useState({ ok: null });
+  // فحص نسخة قاعدة البيانات بعد الدخول (وكل ما التاب يرجع ظاهر): لو أقدم من اللي الواجهة محتاجاه نحذّر بوضوح
+  useEffect(() => {
+    if (!currentProfile) return undefined;
+    let cancelled = false;
+    const run = async () => { const r = await checkSchemaVersion(); if (!cancelled) setSchemaState(r); };
+    run();
+    const onVis = () => { if (document.visibilityState === "visible") run(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { cancelled = true; document.removeEventListener("visibilitychange", onVis); };
+  }, [currentProfile?.id]);
 
   function requestEditBooking(id) { setPendingEditBookingId(id); setTab("bookings"); }
   // الرسالة بتفضل على الشاشة وقت يتناسب مع طولها (الرسائل الطويلة - زي تفاصيل
@@ -255,6 +267,7 @@ export default function App() {
   return (
     <div className="calma-app" dir="rtl">
       <GlobalStyle />
+      {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
       <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} />
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={perms.decideRefund ? { bookings: pendingRefunds.length } : {}} />
       {pendingRefunds.length > 0 && perms.tabs.includes("bookings") && activeTab !== "bookings" && (

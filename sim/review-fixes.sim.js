@@ -117,6 +117,17 @@ describe.skipIf(!enabled)("إصلاحات المراجعة الكاملة", () =
     await db.q("delete from shift_records"); await db.q("delete from shift_claims");
   });
 
+  it("calma_schema_version: متاحة للمسجّلين بس (مش anon) وبترجّع الرقم اللي الواجهة محتاجاه", async () => {
+    const ok = await db.tx("st1", (c) => c.query("select calma_schema_version() v"));
+    expect(ok.ok).toBe(true);
+    expect(Number(ok.r.rows[0].v)).toBeGreaterThanOrEqual(36);
+    const c = await db.pool.connect();
+    try {
+      await c.query("begin"); await c.query("set local role anon");
+      await expect(c.query("select calma_schema_version()")).rejects.toThrow();
+    } finally { await c.query("rollback").catch(() => {}); c.release(); }
+  });
+
   it("calma_num بيقرا .5 و 1e3 و 5. زي المتصفح (كانت صفر فبيتمسح تحصيل موجود)", async () => {
     const r = await db.q("select calma_num('.5')::float a, calma_num('1e3')::float b, calma_num('5.')::float c, calma_num('-2.50')::float d, calma_num('abc')::float e, calma_num('')::float f, calma_num(null)::float g");
     expect(r[0]).toEqual({ a: 0.5, b: 1000, c: 5, d: -2.5, e: 0, f: 0, g: 0 });

@@ -94,6 +94,15 @@ export function ConfigWarningBanner() {
   );
 }
 
+export function SchemaOutdatedBanner({ version, required, isAdmin }) {
+  return (
+    <div className="cx-no-print" data-testid="schema-outdated-banner" style={{ background: "#A8503B", color: "#fff", padding: "10px 16px", fontSize: 13, fontWeight: 700, textAlign: "center", position: "sticky", top: 0, zIndex: 70 }}>
+      ⚠ قاعدة البيانات لسه على نسخة قديمة ({version || 0} من {required}) - تسجيل الدفع والكافيتيريا ورد الفلوس مش هيشتغلوا لحد ما يتحدّثوا.
+      {isAdmin ? " شغّل ملف supabase/schema.sql كامل في Supabase (SQL Editor) وبعدين اعمل تحديث للصفحة." : " بلّغ المدير العام يحدّث قاعدة البيانات."}
+    </div>
+  );
+}
+
 export function Logo({ size = 34 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

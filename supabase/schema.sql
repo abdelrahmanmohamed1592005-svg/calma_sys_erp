@@ -2592,3 +2592,15 @@ $$;
 drop trigger if exists staff_cafeteria_lock_money on staff_cafeteria;
 create trigger staff_cafeteria_lock_money before insert or update on staff_cafeteria
   for each row execute function lock_staff_cafeteria_money();
+
+-- --------------------------------------------------------------------------
+-- 36) نسخة مخطط قاعدة البيانات + إعادة تحميل cache الـ API.
+--     الواجهة بتسأل calma_schema_version() وتحذّر بوضوح لو القاعدة لسه ماتحدّثتش (بدل "Could not find the function ...
+--     in the schema cache" اللي بتظهر من غير ما حد يفهم إن المطلوب تشغيل schema.sql). كل مرة بتتضاف أقسام جديدة بنرفع الرقم هنا
+--     وفي REQUIRED_SCHEMA_VERSION (src/data/schemaCheck.js).
+-- --------------------------------------------------------------------------
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 36 $$;
+revoke all on function calma_schema_version() from public, anon;
+grant execute on function calma_schema_version() to authenticated;
+-- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart
+notify pgrst, 'reload schema';
