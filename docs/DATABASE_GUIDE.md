@@ -256,8 +256,8 @@ staff_cafeteria.payments[]
 | `can_manage_financials()` | `gm` أو `accounts` |
 | `is_gm()` | `gm` |
 | `is_gm_or_reservations()` | `gm` أو `reservations` |
-| `can_view_activity_log()` | أدوار الإدارة |
-| `is_next_shift_claimant(date, shift)` | الموظف اللي حاجز الشيفت اللي بعد ده |
+| `can_view_activity_log()` | الدور `reservations` أو `accounts` أو `gm` وحسابه نشط |
+| `is_next_shift_claimant(date, shift)` | المستخدم حاجز **الشيفت اللي بعده مباشرة**: بعد الصباحي المسائي (نفس اليوم)، بعد المسائي الليلي (نفس اليوم)، بعد الليلي الصباحي (اليوم التالي). بيدّيه صلاحية يقفل الشيفت المفتوح اللي قبله |
 | `profiles_exist()` | في أي بروفايل أصلاً (لإنشاء أول مدير) |
 | `hotel_today()` | تاريخ النهارده بتوقيت `Africa/Cairo` |
 
@@ -320,26 +320,34 @@ flowchart TD
 | `bookings_early_memory` | `remember_pre_early_leave` | يحفظ `pre_early_checkout/total` عند أول مغادرة مبكرة |
 | `bookings_keep_cafeteria_paid` | `keep_cafeteria_paid` | يرجّع `extras.cafeteriaPaid` لقيمته القديمة لو اتغيّر من خارج RPC |
 | `bookings_lock_payments` | `lock_booking_payments` | من جلسة حقيقية: `amount_paid` ما يتغيّرش (ولا يتحط وقت الإنشاء) إلا من RPC |
-| `bookings_provenance_guard` | `protect_record_provenance` | حماية أثر الإنشاء |
+| `bookings_provenance_guard` | `protect_record_provenance` | أي تعديل على `created_by` / `created_by_role` / `created_at` **بيتجاهله بصمت** (بيرجّعهم لقيمهم القديمة) — مفيش رسالة خطأ |
 | `bookings_refund_pending_guard` | `set_refund_pending_on_cancel` | لو اتلغى حجز عليه مدفوع أو المدفوع زاد عن الإجمالي → `refund_pending=true` |
 | `bookings_reservations_collection_guard` | `prevent_reservations_collection_edit` | مدير الحجوزات ممنوع يغيّر `amount_paid`/`amount_tendered` (إلا من RPC الرد) |
 | `bookings_staff_cancel_guard` | `prevent_staff_cancel_status` | موظف الشيفت ما يحطش `ملغي` |
-| `bookings_staff_core_edit_guard` | `prevent_staff_core_booking_edit` | الموظف يعدّل حقول محدودة بس |
+| `bookings_staff_core_edit_guard` | `prevent_staff_core_booking_edit` | على موظف الشيفت فقط (التفاصيل تحت الجدول) |
 | `bookings_touch` | `touch_updated_at` | `updated_at = now()` (أساس فحص "الحجز اتغيّر من حد تاني") |
 | `bookings_zz_auto_settled` | `bookings_auto_settled` | `settled = (status ≠ ملغي) AND (amount_paid ≥ booking_hotel_total)` |
 | `bookings_audit` | `calma_audit` | يسجّل في `money_audit` |
 | `bookings_guests_sync` | `bookings_sync_guests` | يعيد بناء `booking_guests` عند تغيّر pax/room/guest_codes/checkin |
 | `bookings_no_delete_with_money` | `prevent_delete_booking_with_money` | يمنع المسح لو مدفوع/رد معلّق/مردود/مدفوع أونلاين — استخدم "ملغي" |
 
+**تفاصيل `bookings_staff_core_edit_guard` (موظف الشيفت):**
+- **ممنوع** يغيّر: الغرفة، اسم النزيل، الهاتف، عدد الأفراد، تاريخ الدخول، سعر الليلة، العملة، `payment_details`، `amount_tendered`، جهة الحجز، `approval_status`، كود الحجز، `imported`، `needs_room_review`.
+- **إجمالي الغرفة** يتغيّر بس مع تغيير تاريخ الخروج وبنفس سعر الليلة بالظبط (فرق ±0.011). **مفيش تمديد مجاني**: لو الخروج اتأخر والإجمالي ما زادش بنفس الفرق → رفض. التقصير ("مشي بدري") مسموح.
+- **الدخول المبكر**: يتسجل مرة واحدة (من `applied=false` لـ `true`)، ما يتعدّلش ولا يتشال بعد كده.
+- **الخروج المبكر / التسكين المكرر**: مسموح بس لو الحجز القديم تاريخ دخوله النهارده أو قبله؛ حجز مستقبلي → رفض. والتراجع عن الخروج المبكر مسموح بس بنفس الخروج والإجمالي المسجّلين في `pre_early_*`.
+- **غير ممنوع في هذا التريجر:** الحالة والملاحظات والرسوم الإضافية وأكواد الأفراد (الإلغاء له تريجر منفصل `staff_cancel_guard`).
+- مدير الحجوزات والمدير العام والحسابات **مش متأثرين** بالتريجر ده (لهم حراس تانية).
+
 **تجاوز الحراس:** حراس الفلوس (`lock_booking_payments`, `keep_cafeteria_paid`, `lock_staff_cafeteria_money`, `prevent_*_collection*`) بيعدّوا لو `auth.uid() is null` — يعني **محرر SQL / صيانة** (مفيش مستخدم). الواجهة والـ API دايمًا فيهم مستخدم، فمفيش تجاوز.
 
 ### 5.2 باقي الجداول
 | الجدول | التريجرات |
 |---|---|
-| `profiles` | `profiles_protect_identity` ، `profiles_protect_last_gm`، `profiles_audit` |
+| `profiles` | `profiles_protect_identity` (ممنوع تغيير `id` أو `username` **لأي حد**، حتى المدير العام)، `profiles_protect_last_gm`، `profiles_audit` |
 | `room_overrides` | `room_overrides_actor` (يملى `updated_by`) |
 | `shift_claims` | `shift_claims_actor` |
-| `shift_records` | `actor` (إدراج)، `claimant_guard` (غير صاحب الشيفت يقفل بس، ما يمسحش صفوف)، `lock` = `prevent_closed_shift_edit` (المقفول: إعادة فتح للـ gm/reservations، وتعديل محتواه للـ gm/accounts)، `provenance_guard`، `touch`، `audit` (عند تغيّر closed)، `audit_del` |
+| `shift_records` | `actor` (إدراج)، `claimant_guard` (غير صاحب الشيفت يقفل بس، ما يمسحش صفوف)، `lock` = `prevent_closed_shift_edit` (المقفول: إعادة فتح للـ gm/reservations، وتعديل محتواه للـ gm/accounts)، `provenance_guard` (يرفض تغيير `date` / `shift_key` / `staff_username`)، `touch`، `audit` (عند تغيّر closed)، `audit_del` |
 | `staff_cafeteria` | `guard_trg` (`staff_cafeteria_guard`)، `lock_money` (المبلغ/المدفوع/الدفعات من RPC فقط)، `audit` |
 | `activity_log` | `activity_log_actor` (يملى الاسم/الدور) |
 
