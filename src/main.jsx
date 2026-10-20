@@ -2,6 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import { registerSW } from "virtual:pwa-register";
+import { installPrintFit } from "./lib/printFit";
+
+installPrintFit();
 
 /*
   من غير الـ Error Boundary ده، أي خطأ برمجي غير متوقع في أي جزء من الواجهة

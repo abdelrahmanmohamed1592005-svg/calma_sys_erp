@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { getBookingPayments } from "../data/shifts";
 import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { roomLabel } from "../domain/constants";
+import { PRINT_FIT_CSS } from "../lib/printFit";
 
 export function GlobalStyle() {
   return (
@@ -35,6 +36,7 @@ export function GlobalStyle() {
       table.cx-table td, table.cx-table th{ border:1px solid var(--hair); padding:5px 6px; vertical-align:middle; }
       ::placeholder{ color:#B3AA97; }
       .cx-print-only{ display:none; }
+      ${PRINT_FIT_CSS}
 
       /* ========== شكل الطباعة الاحترافي (تقرير اليومية/الفترة) ========== */
       @media print{
