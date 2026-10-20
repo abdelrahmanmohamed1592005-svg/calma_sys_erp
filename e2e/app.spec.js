@@ -22,7 +22,7 @@ async function login(page, username, password = "Passw0rd1") {
   await page.getByRole("button", { name: "دخول", exact: true }).click();
 }
 const tabs = (page) => page.locator(".cx-tab");
-const field = (page, label) => page.locator(`xpath=//label[contains(normalize-space(.),'${label}')]/following-sibling::input[1]`);
+const field = (page, label) => page.locator(`xpath=//label[contains(normalize-space(.),'${label}')]/following-sibling::*[self::input or self::textarea][1]`);
 
 test.describe("تسجيل الدخول", () => {
   test("بيانات غلط بتظهر رسالة خطأ ومفيش دخول", async ({ page }) => {

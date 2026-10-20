@@ -7,7 +7,7 @@ import { computeRoomStatus, roomsOverlap, findOverlappingBooking, repricedTotalR
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
 import { recordBookingPayment } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
+import { AutoText, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
@@ -381,7 +381,7 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                       <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>النزيل دخل بدري قبل معاد الحجز؟ سجّل رسم الدخول المبكر - بيزوّد إجمالي الحجز{perms.markPaymentReceived ? "، ولو حصّلته دلوقتي بيتسجّل في اليومية والتقرير" : ""}</div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                         <input className="cx-input" data-testid="early-fee" type="number" min="0" placeholder="الرسم" value={ecFee} onChange={(e) => setEcFee(e.target.value)} style={{ width: 90 }} />
-                        <input className="cx-input" data-testid="early-note" placeholder="ملاحظة (اختياري)" value={ecNote} onChange={(e) => setEcNote(e.target.value)} style={{ width: 160 }} />
+                        <AutoText className="cx-input" data-testid="early-note" placeholder="ملاحظة (اختياري)" value={ecNote} onChange={(e) => setEcNote(e.target.value)} style={{ width: 160 }} />
                         {perms.markPaymentReceived && (<>
                           <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}><input type="checkbox" data-testid="early-collect" checked={ecCollect} onChange={(e) => setEcCollect(e.target.checked)} /> حصّلته دلوقتي</label>
                           {ecCollect && <><select className="cx-select" aria-label="وسيلة دفع رسم الدخول المبكر" data-testid="early-method" style={{ fontSize: 12, width: 130 }} value={epay.method} onChange={(e) => setEpay({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select><PaymentDetailsInline compact={false} testid="early" method={epay.method} details={epay.details} onChange={(d) => setEpay({ ...epay, details: d })} /></>}

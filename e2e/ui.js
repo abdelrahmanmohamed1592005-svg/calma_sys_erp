@@ -18,7 +18,7 @@ export const digits = (s) => String(s).replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥�
 
 export const tab = (page, label) => page.locator(".cx-tab").filter({ hasText: label });
 export const goTab = (page, label) => tab(page, label).click();
-export const field = (page, label) => page.locator(`xpath=//label[contains(normalize-space(.),'${label}')]/following-sibling::input[1]`);
+export const field = (page, label) => page.locator(`xpath=//label[contains(normalize-space(.),'${label}')]/following-sibling::*[self::input or self::textarea][1]`);
 
 export async function login(page, username, password = "Passw0rd1") {
   await page.locator("input").first().fill(username);

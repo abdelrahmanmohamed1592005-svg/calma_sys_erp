@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock } from "lucide-react";
-import { TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
+import { AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHotelTotal, refundStatusOf } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
@@ -349,7 +349,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
 
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الغرفة</label><select className="cx-select" value={form.room} onChange={(e) => onRoomChange(e.target.value)}><option value="">اختر</option>{rooms.map((r) => <option key={r.number} value={r.number}>{r.name || `غرفة ${r.number}`}</option>)}</select></div>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>اسم النزيل</label><input className="cx-input" value={form.guestName} onChange={(e) => setForm({ ...form, guestName: e.target.value })} /></div>
+            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>اسم النزيل</label><AutoText className="cx-input" value={form.guestName} onChange={(e) => setForm({ ...form, guestName: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الهاتف</label><input className="cx-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
             <div><label style={{ fontSize: 11, color: "var(--muted)" }}>عدد الأفراد</label><input className="cx-input" type="number" min="1" value={form.pax} onChange={(e) => setForm({ ...form, pax: e.target.value })} /></div>
             <div style={{ gridColumn: "1 / -1" }} data-testid="guest-code-inputs">
@@ -462,7 +462,7 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
             {form.earlyCheckin?.applied && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
                 <div><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رسم الدخول المبكر</label><input className="cx-input" type="number" min="0" disabled={earlyLocked} value={form.earlyCheckin.fee} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, fee: e.target.value } })} /></div>
-                <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر</label><input className="cx-input" disabled={earlyLocked} value={form.earlyCheckin.note} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, note: e.target.value } })} /></div>
+                <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر</label><AutoText className="cx-input" disabled={earlyLocked} value={form.earlyCheckin.note} onChange={(e) => setForm({ ...form, earlyCheckin: { ...form.earlyCheckin, note: e.target.value } })} /></div>
               </div>
             )}
           </div>
@@ -478,12 +478,12 @@ export function BookingsPanel({ rooms, bookings, perms, role, profile, onInsertB
                     مباشر من النزيل - فمفيش "اسم مرسل" أو "رقم محفظة" أصلًا.
                     اسم المنصة نفسها متسجل في "جهة الحجز" فوق، وده بس ملاحظة/
                     كود تأكيد اختياري يخص حجز المنصة. */}
-                <div style={{ gridColumn: "1 / -1" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رقم تأكيد الحجز على المنصة / ملاحظة (اختياري)</label><input className="cx-input" placeholder="مثلاً: رقم حجز Booking.com" disabled={chargeLocked} value={form.paymentDetails.ref} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, ref: e.target.value } })} /></div>
+                <div style={{ gridColumn: "1 / -1" }}><label style={{ fontSize: 10.5, color: "var(--muted)" }}>رقم تأكيد الحجز على المنصة / ملاحظة (اختياري)</label><AutoText className="cx-input" placeholder="مثلاً: رقم حجز Booking.com" disabled={chargeLocked} value={form.paymentDetails.ref} onChange={(e) => setForm({ ...form, paymentDetails: { ...form.paymentDetails, ref: e.target.value } })} /></div>
               </div>
             )}
           </div>
 
-            <div style={{ marginTop: 8 }}><label style={{ fontSize: 11, color: "var(--muted)" }}>ملاحظات</label><input className="cx-input" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+            <div style={{ marginTop: 8 }}><label style={{ fontSize: 11, color: "var(--muted)" }}>ملاحظات</label><AutoText className="cx-input" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
           </details>
 
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>

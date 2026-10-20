@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen } from "lucide-react";
-import { Logo } from "./shared";
+import { Logo, AutoText } from "./shared";
 import { guarded } from "../lib/busy";
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { listStaffCafeteria } from "../data/staffCafeteria";
@@ -56,7 +56,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
               <td>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={row.expenseCategory} onChange={(e) => updateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                  <input className="cx-input" placeholder="البيان" disabled={locked} value={row.expenseDesc} onChange={(e) => updateRow(idx, { expenseDesc: e.target.value })} />
+                  <AutoText className="cx-input" placeholder="البيان" disabled={locked} value={row.expenseDesc} onChange={(e) => updateRow(idx, { expenseDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
                     <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.expenseAmt} onChange={(e) => updateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
                     <CurrencyPicker value={row.expenseCurrency} disabled={locked} onChange={(v) => updateRow(idx, { expenseCurrency: v })} />
@@ -66,7 +66,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
               <td>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                  <input className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={row.collectionDesc} onChange={(e) => updateRow(idx, { collectionDesc: e.target.value })} />
+                  <AutoText className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={row.collectionDesc} onChange={(e) => updateRow(idx, { collectionDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
                     <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.collectionAmt} onChange={(e) => updateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
                     <CurrencyPicker value={row.collectionCurrency} disabled={locked} onChange={(v) => updateRow(idx, { collectionCurrency: v })} />
@@ -74,7 +74,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
                 </div>
               </td>
               <td><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => updateRow(idx, { paymentDetails: d })} /></td>
-              <td><input className="cx-input" disabled={locked} value={row.notes} onChange={(e) => updateRow(idx, { notes: e.target.value })} /></td>
+              <td><AutoText className="cx-input" disabled={locked} value={row.notes} onChange={(e) => updateRow(idx, { notes: e.target.value })} /></td>
             </tr>
           )))}
         </tbody>
@@ -103,7 +103,7 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
                 <td>
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={row.expenseCategory} onChange={(e) => onUpdateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                    <input className="cx-input" placeholder="بيان المصروف" disabled={locked} value={row.expenseDesc} onChange={(e) => onUpdateRow(idx, { expenseDesc: e.target.value })} />
+                    <AutoText className="cx-input" placeholder="بيان المصروف" disabled={locked} value={row.expenseDesc} onChange={(e) => onUpdateRow(idx, { expenseDesc: e.target.value })} />
                     <div style={{ display: "flex", gap: 3 }}>
                       <input className="cx-input" type="number" placeholder="مبلغ المصروف" disabled={locked} value={row.expenseAmt} onChange={(e) => onUpdateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
                       <CurrencyPicker value={row.expenseCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { expenseCurrency: v })} />
@@ -113,7 +113,7 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
                 <td>
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => onUpdateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                    <input className="cx-input" placeholder="بيان الإيراد" disabled={locked} value={row.collectionDesc} onChange={(e) => onUpdateRow(idx, { collectionDesc: e.target.value })} />
+                    <AutoText className="cx-input" placeholder="بيان الإيراد" disabled={locked} value={row.collectionDesc} onChange={(e) => onUpdateRow(idx, { collectionDesc: e.target.value })} />
                     <div style={{ display: "flex", gap: 3 }}>
                       <input className="cx-input" type="number" placeholder="مبلغ الإيراد" disabled={locked} value={row.collectionAmt} onChange={(e) => onUpdateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
                       <CurrencyPicker value={row.collectionCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { collectionCurrency: v })} />
@@ -121,7 +121,7 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
                   </div>
                 </td>
                 <td><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => onUpdateRow(idx, { paymentDetails: d })} /></td>
-                <td><input className="cx-input" disabled={locked} value={row.notes} onChange={(e) => onUpdateRow(idx, { notes: e.target.value })} /></td>
+                <td><AutoText className="cx-input" disabled={locked} value={row.notes} onChange={(e) => onUpdateRow(idx, { notes: e.target.value })} /></td>
                 {!locked && <td style={{ textAlign: "center" }}>{rows.length > 1 && <button className="cx-btn cx-btn-outline" title="شيل البند ده" aria-label={"شيل بند فندق " + (idx + 1)} style={{ padding: "3px 8px" }} onClick={() => onRemoveRow(idx)}>×</button>}</td>}
               </tr>
             ))}

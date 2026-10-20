@@ -70,7 +70,7 @@ test.describe("التحقق من المدخلات", () => {
     await field(page, "عدد الأفراد").fill("2.7");
     await priceInput(page).fill("40");
     await openMore(page);
-    await page.locator("xpath=//label[contains(.,'ملاحظات')]/following-sibling::input").fill("n".repeat(1500));
+    await page.locator("xpath=//label[contains(.,'ملاحظات')]/following-sibling::*[self::input or self::textarea]").fill("n".repeat(1500));
     await save(page);
     await expect(toast(page)).toContainText("تم الحفظ");
     const b = (await env.q("select * from bookings"))[0];

@@ -1,8 +1,28 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { getBookingPayments } from "../data/shifts";
 import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { roomLabel } from "../domain/constants";
 import { PRINT_FIT_CSS } from "../lib/printFit";
+
+/* حقل نص بيكبر لوحده: لو البيان طويل بينزل على سطر تاني بدل ما يتقصّ (نفس شكل وسلوك الـ <input> العادي:
+   Enter مابيعملش سطر جديد). بيتقاس تاني لما النص أو عرض الصفحة يتغيّر. */
+export function AutoText({ value, style, onKeyDown, ...rest }) {
+  const ref = useRef(null);
+  const fit = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = `${el.scrollHeight + 2}px`; };
+  useLayoutEffect(fit, [value]);
+  useEffect(() => {
+    // الحقل جوه قسم مطوي (مخفي) بيتقاس بصفر؛ لما يظهر أو عرضه يتغيّر بنعيد القياس
+    const el = ref.current; let w = el ? el.clientWidth : 0;
+    const ro = typeof ResizeObserver !== "undefined" && el ? new ResizeObserver(() => { if (el.clientWidth !== w) { w = el.clientWidth; fit(); } }) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, []);
+  return (
+    <textarea ref={ref} rows={1} value={value ?? ""} data-autotext="1"
+      onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); onKeyDown?.(e); }}
+      style={{ resize: "none", overflow: "hidden", display: "block", lineHeight: 1.45, minHeight: 32, ...style }} {...rest} />
+  );
+}
 
 export function GlobalStyle() {
   return (
@@ -139,7 +159,7 @@ export function PaymentDetailsInline({ method, details, onChange, disabled, comp
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 120 }}>
-      <input className="cx-input" style={st} placeholder="اسم المرسل" aria-label="اسم المرسل" data-testid={testid ? testid + "-name" : undefined} disabled={disabled} value={d.senderName} onChange={(e) => onChange({ ...d, ref: "", senderName: e.target.value })} />
+      <AutoText className="cx-input" style={st} placeholder="اسم المرسل" aria-label="اسم المرسل" data-testid={testid ? testid + "-name" : undefined} disabled={disabled} value={d.senderName} onChange={(e) => onChange({ ...d, ref: "", senderName: e.target.value })} />
       <input className="cx-input" style={st} dir="ltr" inputMode="tel" placeholder="رقم التليفون" aria-label="رقم التليفون" data-testid={testid ? testid + "-phone" : undefined} disabled={disabled} value={d.senderNumber} onChange={(e) => onChange({ ...d, ref: "", senderNumber: normalizePhone(e.target.value) })} />
     </div>
   );
