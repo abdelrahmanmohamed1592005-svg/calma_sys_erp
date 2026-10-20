@@ -1678,7 +1678,7 @@ create table if not exists booking_guests (
 -- (قبل ما العمود الجديد يتضاف) وبنشيل قيد التفرّد.
 do $$ begin
   if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bookings' and column_name = 'guest_codes') then
-    delete from booking_guests;
+    delete from booking_guests where id is not null;
   end if;
 end $$;
 alter table booking_guests drop constraint if exists booking_guests_code_key;
@@ -2138,25 +2138,26 @@ begin
   end if;
 
   -- رصيد كل وسيلة (وتفاصيلها) من تحصيل هذا الحجز في اليومية بعملة الحجز
-  create temporary table if not exists _refund_bal (m text, n text, p text, bal numeric, ord int) on commit drop;
-  delete from _refund_bal;
-  insert into _refund_bal(m, n, p, bal)
-  select e ->> 'collectionMethod', coalesce(e #>> '{paymentDetails,senderName}', ''), coalesce(e #>> '{paymentDetails,senderNumber}', ''),
-         sum(case when trim(coalesce(e ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(e ->> 'collectionAmt')::numeric else 0 end)
+  -- (Supabase بيفعّل pg_safeupdate: أي DELETE/UPDATE من غير WHERE بيتقفل - فمفيش هنا ولا واحد)
+  drop table if exists pg_temp._refund_bal;
+  create temporary table _refund_bal (m text, n text, p text, bal numeric, ord int) on commit drop;
+  insert into _refund_bal(m, n, p, bal, ord)
+  select t.m, t.n, t.p, t.bal, case when t.m = meth then 0 else 1 end from (
+  select e ->> 'collectionMethod' as m, coalesce(e #>> '{paymentDetails,senderName}', '') as n, coalesce(e #>> '{paymentDetails,senderNumber}', '') as p,
+         sum(case when trim(coalesce(e ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(e ->> 'collectionAmt')::numeric else 0 end) as bal
   from (
     select x as e from shift_records s, jsonb_array_elements(coalesce(s.rows, '[]'::jsonb)) x
     union all
     select x as e from shift_records s, jsonb_array_elements(coalesce(s.cafeteria_rows, '[]'::jsonb)) x
   ) q
   where q.e ->> 'bookingId' = b.id::text and q.e ->> 'collectionCurrency' = b.currency
-  group by 1, 2, 3;
+  group by 1, 2, 3) t;
   delete from _refund_bal where bal <= 0;
   select coalesce(sum(bal), 0) into chosen_bal from _refund_bal where m = meth;
-  -- ترتيب الرد: الوسيلة المختارة الأول، وبعدها الأكبر رصيد
-  update _refund_bal set ord = case when m = meth then 0 else 1 end;
+  -- (ترتيب الرد: الوسيلة المختارة الأول ord=0، وبعدها الأكبر رصيد - اتحسب وقت الإدخال)
   if chosen_bal = 0 then
     -- الوسيلة المختارة معاهاش رصيد: قرار المدير بيمشي والرد كله عليها (زي الأول)
-    delete from _refund_bal;
+    truncate _refund_bal;
     insert into _refund_bal values (meth, '', '', amount, 0);
   end if;
 
@@ -2684,7 +2685,7 @@ create trigger shift_records_audit after update on shift_records for each row
 drop trigger if exists shift_records_audit_del on shift_records;
 create trigger shift_records_audit_del after delete on shift_records for each row execute function calma_audit();
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 37 $$;
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 38 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart
