@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Plus, Check } from "lucide-react";
-import { PaymentDetailsInline } from "./shared";
+import { Plus, Check, Coffee } from "lucide-react";
+import { PaymentDetailsInline, SectionHead, RoomName } from "./shared";
 import { COMMON_CURRENCIES, PAYMENT_METHODS, EXPENSE_CATEGORIES, methodOptionsFor, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstanding, fmt } from "../domain/money";
 import { roomLabel } from "../domain/constants";
 import { staffOwed } from "../data/staffCafeteria";
@@ -94,32 +94,31 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
   if (!hasAnything) return null;
 
   return (
-    <div className="cx-card" data-testid="cafeteria-section" style={{ marginTop: 14, padding: 12 }}>
-      <div style={{ fontWeight: 800, marginBottom: 2 }}>الكافيتيريا</div>
-      <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>خدمات الكافيتيريا اللي بتتحصّل من النزلاء وسداد الاستاف بيتسجّلوا هنا لوحدهم بوسيلة الدفع وتفاصيلها، وبيدخلوا إجمالي اليومية وعهدة الفيزا والتقرير.</div>
+    <div className="cx-card" data-testid="cafeteria-section" style={{ marginTop: 14, padding: 14 }}>
+      <SectionHead icon={Coffee} tone="rose" title="الكافيتيريا" hint="خدمات الكافيتيريا اللي بتتحصّل من النزلاء وسداد الاستاف بيتسجّلوا هنا لوحدهم بوسيلة الدفع وتفاصيلها، وبيدخلوا إجمالي اليومية وعهدة الفيزا والتقرير." />
 
 
       {(canWrite || directHasData) && (
         <div data-testid="cafeteria-direct" style={{ marginBottom: 12, paddingBottom: 10, borderBottom: "1px dashed var(--hair)" }}>
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>مبيعات ومصاريف الكافيتيريا المباشرة</div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>اللي بيتباع في الكافيتيريا لنزيل خارجي أو بيتصرف عليها (خامات...) - مش المرتبط بحجز ولا باستاف.</div>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>مبيعات ومصاريف الكافيتيريا المباشرة</div>
+          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>اللي بيتباع في الكافيتيريا لنزيل خارجي أو بيتصرف عليها (خامات...) - مش المرتبط بحجز ولا باستاف.</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 10 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              <div style={{ fontSize: 11, color: "var(--muted)" }}>مصروف</div>
-              <select className="cx-select" style={{ fontSize: 11 }} disabled={!canWrite} value={dc.expenseCategory || "أخرى"} onChange={(e) => onUpdateCafeteria({ expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              <div style={{ fontSize: 12.5, color: "var(--muted)" }}>مصروف</div>
+              <select className="cx-select" style={{ fontSize: 12.5 }} disabled={!canWrite} value={dc.expenseCategory || "أخرى"} onChange={(e) => onUpdateCafeteria({ expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
               <input className="cx-input" placeholder="البيان" disabled={!canWrite} value={dc.expenseDesc || ""} onChange={(e) => onUpdateCafeteria({ expenseDesc: e.target.value })} />
               <div style={{ display: "flex", gap: 3 }}>
                 <input className="cx-input" type="number" placeholder="المبلغ" disabled={!canWrite} value={dc.expenseAmt ?? ""} onChange={(e) => onUpdateCafeteria({ expenseAmt: e.target.value })} style={{ flex: 1 }} />
-                <select className="cx-select" disabled={!canWrite} value={dc.expenseCurrency || "EGP"} onChange={(e) => onUpdateCafeteria({ expenseCurrency: e.target.value })} style={{ width: 72, fontSize: 12 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                <select className="cx-select" disabled={!canWrite} value={dc.expenseCurrency || "EGP"} onChange={(e) => onUpdateCafeteria({ expenseCurrency: e.target.value })} style={{ width: 72, fontSize: 13 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
               </div>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              <div style={{ fontSize: 11, color: "var(--muted)" }}>تحصيل (مبيعات)</div>
+              <div style={{ fontSize: 12.5, color: "var(--muted)" }}>تحصيل (مبيعات)</div>
               <select className="cx-select" disabled={!canWrite} value={dc.collectionMethod || "كاش"} onChange={(e) => onUpdateCafeteria({ collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(dc.collectionMethod || "كاش").map((m) => <option key={m} value={m}>{m}</option>)}</select>
               <input className="cx-input" placeholder="بيان التحصيل" disabled={!canWrite} value={dc.collectionDesc || ""} onChange={(e) => onUpdateCafeteria({ collectionDesc: e.target.value })} />
               <div style={{ display: "flex", gap: 3 }}>
                 <input className="cx-input" type="number" placeholder="المبلغ" disabled={!canWrite} value={dc.collectionAmt ?? ""} onChange={(e) => onUpdateCafeteria({ collectionAmt: e.target.value })} style={{ flex: 1 }} />
-                <select className="cx-select" disabled={!canWrite} value={dc.collectionCurrency || "EGP"} onChange={(e) => onUpdateCafeteria({ collectionCurrency: e.target.value })} style={{ width: 72, fontSize: 12 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                <select className="cx-select" disabled={!canWrite} value={dc.collectionCurrency || "EGP"} onChange={(e) => onUpdateCafeteria({ collectionCurrency: e.target.value })} style={{ width: 72, fontSize: 13 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
               </div>
               <PaymentDetailsInline compact={false} testid="cafe-direct" method={dc.collectionMethod || "كاش"} details={dc.paymentDetails} disabled={!canWrite} onChange={(d) => onUpdateCafeteria({ paymentDetails: d })} />
             </div>
@@ -129,7 +128,7 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       )}
       {rows.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 10 }}>
-          <table className="cx-table" data-testid="cafeteria-rows" style={{ fontSize: 12, minWidth: 620 }}>
+          <table className="cx-table" data-testid="cafeteria-rows" style={{ fontSize: 13, minWidth: 620 }}>
             <thead><tr><th className="cx-th">النوع</th><th className="cx-th">الجهة</th><th className="cx-th">الوسيلة</th><th className="cx-th">تفاصيل الدفع</th><th className="cx-th">المبلغ</th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
@@ -147,13 +146,13 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       )}
 
       {guestOutstanding.length > 0 && (
-        <div data-testid="cafeteria-guest-due" style={{ fontSize: 12, background: "var(--paper2)", borderRadius: 8, padding: 8, marginBottom: 10 }}>
+        <div data-testid="cafeteria-guest-due" style={{ fontSize: 13, background: "var(--paper2)", borderRadius: 8, padding: 8, marginBottom: 10 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>خدمات كافيتيريا على نزلاء لسه ماتحصّلتش</div>
-          {guestOutstanding.map((b) => <div key={b.id}>{roomLabel(rooms, b.room)} · {b.guestName}: {fmt(cafeteriaOutstanding(b))} {b.currency}</div>)}
+          {guestOutstanding.map((b) => <div key={b.id}><RoomName rooms={rooms} number={b.room} /> · <span className="cx-iso">{b.guestName}</span>: {fmt(cafeteriaOutstanding(b))} {b.currency}</div>)}
         </div>
       )}
 
-      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>كافيتيريا الاستاف</div>
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>كافيتيريا الاستاف</div>
       {canWrite && (
         <div data-testid="staff-cafe-form" className="cx-no-print" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 }}>
           <select className="cx-select" data-testid="staff-cafe-who" style={{ width: 150 }} value={who} onChange={(e) => setWho(e.target.value)}>
@@ -170,13 +169,13 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
             {PAYMENT_METHODS.map((m) => <option key={m} value={m}>دفع {m}</option>)}
           </select>
           {payMode === "pay" && <PaymentDetailsInline compact={false} testid="staff-cafe" method={method} details={details} onChange={setDetails} />}
-          <button className="cx-btn cx-btn-gold" data-testid="staff-cafe-add" style={{ fontSize: 12 }} onClick={addConsumption}><Plus size={13} /> تسجيل</button>
+          <button className="cx-btn cx-btn-gold" data-testid="staff-cafe-add" style={{ fontSize: 13 }} onClick={addConsumption}><Plus size={13} /> تسجيل</button>
         </div>
       )}
 
       {thisShift.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 10 }}>
-          <table className="cx-table" data-testid="staff-cafe-shift" style={{ fontSize: 12, minWidth: 520 }}>
+          <table className="cx-table" data-testid="staff-cafe-shift" style={{ fontSize: 13, minWidth: 520 }}>
             <thead><tr><th className="cx-th">الموظف</th><th className="cx-th">البيان</th><th className="cx-th">المبلغ</th><th className="cx-th">اتدفع</th><th className="cx-th">الباقي عليه</th></tr></thead>
             <tbody>{thisShift.map((e) => (
               <tr key={e.id}><td>{e.consumerName}</td><td>{e.description || "—"}</td><td>{fmt(e.amount)} {e.currency}</td><td>{fmt(e.paidAmount)}</td><td style={{ fontWeight: 700, color: staffOwed(e) > 0 ? "var(--rust)" : "var(--sage)" }}>{staffOwed(e) > 0 ? `${fmt(staffOwed(e))} ${e.currency}` : "مسدّد"}</td></tr>
@@ -187,16 +186,16 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
 
       {groupList.length > 0 && (
         <div data-testid="staff-cafe-balances" style={{ border: "1px solid var(--rust)", borderRadius: 8, padding: 8 }}>
-          <div style={{ fontWeight: 700, fontSize: 12.5, color: "var(--rust)", marginBottom: 6 }}>استاف عليهم فلوس للكافيتيريا ({groupList.length})</div>
+          <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--rust)", marginBottom: 6 }}>استاف عليهم فلوس للكافيتيريا ({groupList.length})</div>
           {groupList.map((g) => {
             const k = g.name + "|" + g.currency; const owed = g.entries.reduce((a, e) => a + staffOwed(e), 0);
             return (
               <div key={k} data-testid="staff-cafe-balance" style={{ borderBottom: "1px solid var(--hair)", padding: "6px 0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12.5 }}>
-                  <span><b>{g.name}</b> <span style={{ color: "var(--muted)", fontSize: 11 }}>({g.entries.length} استهلاك: {g.entries.map((e) => e.description || e.day).slice(0, 3).join("، ")})</span></span>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 13.5 }}>
+                  <span><b>{g.name}</b> <span style={{ color: "var(--muted)", fontSize: 12.5 }}>({g.entries.length} استهلاك: {g.entries.map((e) => e.description || e.day).slice(0, 3).join("، ")})</span></span>
                   <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <b style={{ color: "var(--rust)" }}>{fmt(owed)} {g.currency}</b>
-                    {canWrite && <button className="cx-btn cx-btn-outline cx-no-print" data-testid="staff-cafe-settle-open" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => { setPayFor(payFor === k ? null : k); setPayAmt(""); }}>تسديد</button>}
+                    {canWrite && <button className="cx-btn cx-btn-outline cx-no-print" data-testid="staff-cafe-settle-open" style={{ fontSize: 12.5, padding: "3px 8px" }} onClick={() => { setPayFor(payFor === k ? null : k); setPayAmt(""); }}>تسديد</button>}
                   </span>
                 </div>
                 {payFor === k && canWrite && (
@@ -204,7 +203,7 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
                     <input className="cx-input" data-testid="staff-cafe-pay-amount" type="number" min="0" style={{ width: 110 }} placeholder={`المبلغ (${fmt(owed)})`} value={payAmt} onChange={(e) => setPayAmt(e.target.value)} />
                     <select className="cx-select" data-testid="staff-cafe-pay-method" style={{ width: 140 }} value={payMethod} onChange={(e) => { setPayMethod(e.target.value); setPayDetails(emptyPaymentDetails()); }}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
                     <PaymentDetailsInline compact={false} testid="staff-cafe-pay" method={payMethod} details={payDetails} onChange={setPayDetails} />
-                    <button className="cx-btn cx-btn-gold" data-testid="staff-cafe-pay-go" style={{ fontSize: 12 }} onClick={() => settle(g)}><Check size={13} /> تسجيل السداد</button>
+                    <button className="cx-btn cx-btn-gold" data-testid="staff-cafe-pay-go" style={{ fontSize: 13 }} onClick={() => settle(g)}><Check size={13} /> تسجيل السداد</button>
                   </div>
                 )}
               </div>
@@ -212,7 +211,7 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
           })}
         </div>
       )}
-      {groupList.length === 0 && entries.length > 0 && <div style={{ fontSize: 12, color: "var(--sage)" }}>مفيش استاف عليه فلوس للكافيتيريا دلوقتي.</div>}
+      {groupList.length === 0 && entries.length > 0 && <div style={{ fontSize: 13, color: "var(--sage)" }}>مفيش استاف عليه فلوس للكافيتيريا دلوقتي.</div>}
     </div>
   );
 }

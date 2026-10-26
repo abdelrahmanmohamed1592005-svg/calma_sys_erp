@@ -160,7 +160,7 @@ function mapAuthError(error) {
   if (error.code === "same_password" || msg.includes("different from the old")) return "كلمة المرور الجديدة لازم تكون مختلفة عن القديمة";
   if (msg.includes("invalid login credentials")) return "بيانات الدخول غير صحيحة";
   if (msg.includes("already registered") || msg.includes("already exists")) return "اسم المستخدم ده موجود بالفعل";
-  if (msg.includes("password")) return "كلمة المرور ٨ حروف على الأقل، وفيها حرف ورقم";
+  if (msg.includes("password")) return "كلمة المرور 8 حروف على الأقل، وفيها حرف ورقم";
   if (msg.includes("email not confirmed")) return "لازم توقف خاصية Confirm Email من إعدادات Supabase Auth (README)";
   // رسالة غير متوقعة - نسجلها كاملة للمطوّر في الـ console، ونرجع للمستخدم
   // رسالة عامة آمنة بدل ما نكشفله تفاصيل داخلية ممكن تكون حساسة

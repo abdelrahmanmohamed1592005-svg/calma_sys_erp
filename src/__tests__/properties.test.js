@@ -55,7 +55,7 @@ describe("خصائص عامة (property tests) على منطق التحصيل: �
       });
       // كل صف وسيلة واحدة وعملة واحدة (بالتعريف)، والتفاصيل الغريبة ماتدخلش صف وسيلة تانية
       [...rec.rows, ...rec.cafeteriaRows].filter((r) => r.collectionMethod === "كاش" && Number(r.collectionAmt) !== 0).forEach((r) => expect(describePaymentDetails("كاش", r.paymentDetails), `seed ${seed}`).toBe(""));
-      // الفيزا بتفاصيل ٤ أرقام دايمًا (من غير اسم/ref)
+      // الفيزا بتفاصيل 4 أرقام دايمًا (من غير اسم/ref)
       [...rec.rows, ...rec.cafeteriaRows].filter((r) => r.collectionMethod === "فيزا" && Number(r.collectionAmt) > 0).forEach((r) => { expect(r.paymentDetails.senderNumber).toMatch(/^\d{4}$/); expect(r.paymentDetails.senderName).toBe(""); expect(r.paymentDetails.ref).toBe(""); });
       // مفيش تحصيل موجب من غير تفاصيل صالحة بعد التنظيف
       expect(missingPaymentDetails(rec)).toEqual([]);
@@ -85,7 +85,7 @@ describe("خصائص عامة (property tests) على منطق التحصيل: �
   });
 
   it("تنضيف تفاصيل الدفع: idempotent، والمدخلات الغريبة (نصوص، أرقام عربي، null، رموز) ماتكسرش حاجة", () => {
-    const junk = [null, undefined, "", " ", "12", "١٢٣٤", "٤١١١ ١١١١ ١١١١ ١٢٣٤", "abcd", "12345678901234567890", "+20 (10) 1234-5678", "\u0000\u0007x", "😀١٢٣٤😀", { a: 1 }, 5555, ["1", "2"]];
+    const junk = [null, undefined, "", " ", "12", "1234", "4111 1111 1111 1234", "abcd", "12345678901234567890", "+20 (10) 1234-5678", "\u0000\u0007x", "😀1234😀", { a: 1 }, 5555, ["1", "2"]];
     for (const m of [...PAYMENT_METHODS, "انستاباي", "تحويل بنكي", "حاجة غريبة"]) {
       for (const a of junk) for (const b of junk) {
         const d = { senderName: a, senderNumber: b, ref: a };
@@ -99,8 +99,8 @@ describe("خصائص عامة (property tests) على منطق التحصيل: �
         expect(sameDetails(m, c1, c1)).toBe(true);
       }
     }
-    expect(normalizeLast4("٤١١١ ١١١١ ١١١١ ١٢٣٤")).toBe("1234");
-    expect(normalizePhone("+٢٠ ١٠ ١٢٣٤")).toBe("+2010" + "1234");
+    expect(normalizeLast4("4111 1111 1111 1234")).toBe("1234");
+    expect(normalizePhone("+20 10 1234")).toBe("+2010" + "1234");
   });
 
   it("إعادة دمج اليومية بعد تعارض (rebase): الخانات اللي غيّرها الموظف + اللي غيّرها السيرفر بيتحفظوا مع بعض", () => {
@@ -148,7 +148,7 @@ describe("rebaseShiftRecord - مراجعة الكود الكاملة", () => {
     expect(out.shiftNotes).toBe("x");
   });
 
-  it("الموظف كتب تحصيل في خانة والسيرفر زوّد تحصيل حجز في نفس الخانة: بيتجمعوا (٥٠٠ + ٣٠٠) مش واحد بيمسح التاني", () => {
+  it("الموظف كتب تحصيل في خانة والسيرفر زوّد تحصيل حجز في نفس الخانة: بيتجمعوا (500 + 300) مش واحد بيمسح التاني", () => {
     const base = rec({ rows: [row(601)] });
     const mine = rec({ rows: [row(601, "", { collectionAmt: 500 })] });
     const fresh = rec({ rows: [row(601, "", { collectionAmt: 300, bookingId: "b1", collectionDesc: "تحصيل" })], updatedAt: "t2" });

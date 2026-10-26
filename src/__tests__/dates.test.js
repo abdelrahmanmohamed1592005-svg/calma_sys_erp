@@ -92,3 +92,21 @@ describe("shiftDayNow (operational shift day starts at 08:00)", () => {
     expect(shiftDayNow(new Date(2026, 10, 1, 1, 0))).toBe("2026-10-31");
   });
 });
+
+/* ليلة تغيير الساعة في مصر (نهاية التوقيت الصيفي: ليلة الخميس 29 أكتوبر 2026 الساعة بترجع ساعة) -
+   اليوم ده طوله 25 ساعة. الحساب بالتقويم لازم يفضل صح: عدد الليالي وإضافة الأيام ويوم الشيفت. */
+describe("ليلة تغيير الساعة (توقيت القاهرة)", () => {
+  const withCairo = (fn) => { const old = process.env.TZ; process.env.TZ = "Africa/Cairo"; try { fn(); } finally { if (old === undefined) delete process.env.TZ; else process.env.TZ = old; } };
+  it("عدد الليالي والأيام عبر ليلة تغيير الساعة", () => withCairo(() => {
+    expect(nightsBetween("2026-10-29", "2026-10-30")).toBe(1);
+    expect(nightsBetween("2026-10-28", "2026-10-31")).toBe(3);
+    expect(nightsBetween("2026-04-29", "2026-05-02")).toBe(3);   // بداية التوقيت الصيفي (يوم 23 ساعة)
+    expect(addDays("2026-10-26", 4)).toBe("2026-10-30");
+    expect(addDays("2026-10-30", -1)).toBe("2026-10-29");
+  }));
+  it("يوم الشيفت بعد نص الليل في الأسبوع ده لسه اليوم اللي قبله", () => withCairo(() => {
+    expect(shiftDayNow(new Date("2026-10-26T00:30:00+03:00"))).toBe("2026-10-25");
+    expect(shiftDayNow(new Date("2026-10-30T00:30:00+02:00"))).toBe("2026-10-29");
+    expect(shiftDayNow(new Date("2026-10-30T09:00:00+02:00"))).toBe("2026-10-30");
+  }));
+});

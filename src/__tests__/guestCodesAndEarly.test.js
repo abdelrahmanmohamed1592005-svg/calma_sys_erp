@@ -56,7 +56,7 @@ describe("المستحق على الفندق (عادي وأونلاين)", () =>
 });
 
 describe("المغادرة المبكرة", () => {
-  it("قعد ليلة من ٣ ودافع الكل: بيتحاسب ليلة والباقي يتحوّل لرد", () => {
+  it("قعد ليلة من 3 ودافع الكل: بيتحاسب ليلة والباقي يتحوّل لرد", () => {
     const b = { ...base, amountPaid: 300, settled: true };
     const patch = earlyLeavePatch(b, "2030-01-02", "plain");
     expect(patch).toMatchObject({ checkout: "2030-01-02", totalRoom: 100, leftEarly: true, status: "تم تسجيل الخروج" });

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { Info, UserPlus, Key, Check, AlertTriangle } from "lucide-react";
-import { TwoStepButton } from "./shared";
+import { Info, UserPlus, Key, Check, AlertTriangle, CalendarClock } from "lucide-react";
+import { TwoStepButton, initials, SectionHead } from "./shared";
 import { ROLES, SHIFTS } from "../domain/constants";
 import { shiftDayNow } from "../domain/dates";
 import { getClaimsForDate, clearClaimRow, deleteShiftRecord, getShiftRecord } from "../data/shifts";
@@ -73,16 +73,16 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
   }
 
   return (
-    <div style={{ padding: 14 }}>
-      <div className="cx-card" style={{ padding: 10, marginBottom: 12, fontSize: 12, color: "var(--muted)", display: "flex", gap: 6 }}><Info size={14} style={{ flexShrink: 0, marginTop: 1 }} />الحساب الوحيد اللي يقدر يضيف موظفين جدد أو يعطّل حساب هو المدير العام. مفيش تسجيل حساب مفتوح لأي حد. {readOnly && "إنت بتشوف القائمة دي للعلم بس، مفيش تعديل من هنا."}</div>
+    <div className="cx-page">
+      <div className="cx-card" style={{ padding: "12px 14px", marginBottom: 14, fontSize: 13.5, color: "var(--muted)", display: "flex", gap: 8, background: "var(--info-bg)", borderColor: "#D3E0EB" }}><Info size={16} style={{ flexShrink: 0, marginTop: 2, color: "var(--slate)" }} />الحساب الوحيد اللي يقدر يضيف موظفين جدد أو يعطّل حساب هو المدير العام. مفيش تسجيل حساب مفتوح لأي حد. {readOnly && "إنت بتشوف القائمة دي للعلم بس، مفيش تعديل من هنا."}</div>
 
       {!readOnly && claims && (
         <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
-          <div style={{ fontWeight: 800, marginBottom: 6 }}>شيفتات النهارده</div>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>لو حد اختار شيفت غلط بالغلط، تقدر تلغي اختياره من هنا عشان يقدر يختار تاني (تصحيح إداري بس). تنبيه: ده بيمسح ورقة اليومية بتاعة الشيفت ده كاملة، أما أي حجوزات أو تغييرات غرف حصلت في نفس الوقت فمش بتُمسح أو تترجع تلقائيًا - لازم تراجعيها وتصلّحيها يدويًا لو فيها خطأ.</div>
+          <SectionHead icon={CalendarClock} tone="amber" title="شيفتات النهارده" hint="مين اختار أنهي شيفت النهارده" />
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8, lineHeight: 1.7 }}>لو حد اختار شيفت غلط بالغلط، تقدر تلغي اختياره من هنا عشان يقدر يختار تاني (تصحيح إداري بس). تنبيه: ده بيمسح ورقة اليومية بتاعة الشيفت ده كاملة، أما أي حجوزات أو تغييرات غرف حصلت في نفس الوقت فمش بتُمسح أو تترجع تلقائيًا - لازم تراجعيها وتصلّحيها يدويًا لو فيها خطأ.</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {SHIFTS.map((s) => (
-              <div key={s.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, borderBottom: "1px solid var(--hair)", padding: "6px 0" }}>
+              <div key={s.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, borderBottom: "1px solid var(--hair)", padding: "6px 0" }}>
                 <span>{s.label}: {claims[s.key] ? claims[s.key].name : <span style={{ color: "var(--muted)" }}>لسه محدش اختاره</span>}</span>
                 {claims[s.key] && <TwoStepButton label="إلغاء الاختيار" confirmLabel="مسح ورقة اليومية وإلغاء الاختيار؟" icon={<AlertTriangle size={12} />} onConfirm={() => clearClaim(s.key)} />}
               </div>
@@ -96,10 +96,10 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
       {!readOnly && form && (
         <div className="cx-card" style={{ padding: 14, marginBottom: 14 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الاسم</label><input className="cx-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>اسم المستخدم</label><input className="cx-input" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></div>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>الدور</label><select className="cx-select" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{ROLES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}</select></div>
-            <div><label style={{ fontSize: 11, color: "var(--muted)" }}>كلمة المرور</label><input className="cx-input" type="password" value={form.pw} onChange={(e) => setForm({ ...form, pw: e.target.value })} /></div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>الاسم</label><input className="cx-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>اسم المستخدم</label><input className="cx-input" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>الدور</label><select className="cx-select" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{ROLES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}</select></div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>كلمة المرور</label><input className="cx-input" type="password" value={form.pw} onChange={(e) => setForm({ ...form, pw: e.target.value })} /></div>
           </div>
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}><button className="cx-btn cx-btn-gold" onClick={saveNew}><Check size={14} /> حفظ</button><button className="cx-btn cx-btn-outline" onClick={() => setForm(null)}>إلغاء</button></div>
         </div>
@@ -107,8 +107,8 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {users.map((u) => (
-          <div key={u.username} className="cx-card" style={{ padding: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, opacity: u.active ? 1 : 0.55 }}>
-            <div><div style={{ fontWeight: 800 }}>{u.name} {u.username === currentUsername && <span style={{ fontSize: 11, color: "var(--muted)" }}>(أنت)</span>}</div><div style={{ fontSize: 12, color: "var(--muted)" }}>@{u.username} · {ROLES.find((r) => r.key === u.role)?.label} {!u.active && "· معطّل"}</div></div>
+          <div key={u.username} className="cx-card" style={{ padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, opacity: u.active ? 1 : 0.6 }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-avatar" aria-hidden="true" style={{ width: 40, height: 40, background: u.active ? undefined : "#CFC8B8" }}>{initials(u.name)}</span><div><div style={{ fontWeight: 700, fontSize: 15 }}>{u.name} {u.username === currentUsername && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>(أنت)</span>}</div><div style={{ fontSize: 13, color: "var(--muted)" }}><span dir="ltr">@{u.username}</span> · <span className={"cx-role r-" + u.role}>{ROLES.find((r) => r.key === u.role)?.label}</span> {!u.active && <span className="cx-role off">· معطّل</span>}</div></div></div>
             {!readOnly && (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {resetTarget === u.username ? (

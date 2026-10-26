@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen } from "lucide-react";
-import { Logo, AutoText } from "./shared";
+import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX } from "lucide-react";
+import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel } from "./shared";
 import { guarded } from "../lib/busy";
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { listStaffCafeteria } from "../data/staffCafeteria";
 import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails } from "../domain/money";
-import { SHIFTS, HOTEL_NAME, roomLabel } from "../domain/constants";
+import { SHIFTS, HOTEL_NAME } from "../domain/constants";
 import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
 import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord } from "../data/shifts";
@@ -14,7 +14,7 @@ import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
 function CurrencyPicker({ value, onChange, disabled, width }) {
   return (
-    <select className="cx-select" disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)} style={{ width: width || 72, fontSize: 12 }}>
+    <select className="cx-select" disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)} style={{ width: width || 86, fontSize: 13 }}>
       {COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
     </select>
   );
@@ -32,30 +32,32 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
   const touch = (idx, patch) => { const room = record.rows[idx]?.room; if (room != null && !shown.has(room)) setShown(new Set([...shown, room])); onUpdateRow(idx, patch); };
   const updateRow = touch;
   return (
+    <div className="cx-card" style={{ padding: 14 }}>
+      <SectionHead icon={DoorOpen} tone="teal" title="حركة الغرف" hint="مصاريف وتحصيل كل غرفة في الشيفت ده" />
     <div style={{ overflowX: "auto" }}>
       {!locked && (hiddenRooms.length > 0 || all) && (
-        <div className="cx-no-print" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 4px", fontSize: 12, color: "var(--muted)" }}>
+        <div className="cx-no-print" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 4px", fontSize: 13, color: "var(--muted)" }}>
           <span>الغرف اللي فيها حركة بس ظاهرة.</span>
           {hiddenRooms.length > 0 && (
             <select className="cx-select" data-testid="ledger-add-room" style={{ width: 150 }} value="" onChange={(e) => { if (e.target.value) setShown(new Set([...shown, Number(e.target.value)])); }}>
               <option value="">＋ أضف غرفة...</option>
-              {hiddenRooms.map((n) => <option key={n} value={n}>{roomLabel(rooms, n)}</option>)}
+              {hiddenRooms.map((n) => <option key={n} value={n}>{roomOptionLabel(rooms, n)}</option>)}
             </select>
           )}
-          <button type="button" className="cx-btn cx-btn-outline" data-testid="ledger-show-all" style={{ fontSize: 11, padding: "2px 8px" }} onClick={() => setAll(!all)}>{all ? "إخفاء الغرف الفاضية" : "عرض كل الغرف"}</button>
+          <button type="button" className="cx-btn cx-btn-outline" data-testid="ledger-show-all" style={{ fontSize: 12.5, padding: "2px 8px" }} onClick={() => setAll(!all)}>{all ? "إخفاء الغرف الفاضية" : "عرض كل الغرف"}</button>
         </div>
       )}
-      <table className="cx-table" style={{ fontSize: 12, minWidth: 860 }}>
+      <table className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 860 }}>
         <thead><tr><th className="cx-th" style={{ width: 60 }}>الغرفة</th><th className="cx-th">المصاريف</th><th className="cx-th">التحصيل</th><th className="cx-th">تفاصيل الدفع (فيزا / تحويل)</th><th className="cx-th">ملاحظات</th></tr></thead>
         <tbody>
           {record.rows.map((row, idx) => (!visible(row) ? null : (
             <tr key={row.room + "-" + idx}>
               {/* ممكن يكون لنفس الغرفة أكتر من صف (لو اتحصّل عليها بوسيلتين دفع أو
                   عملتين مختلفتين، أو اتردّ ليها فلوس) - الصف الإضافي بيتعلّم. */}
-              <td style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}>{roomLabel(rooms, row.room)}{record.rows.findIndex((r) => r.room === row.room) !== idx && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)" }}>صف إضافي</div>}</td>
-              <td>
+              <td data-label="الغرفة" style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}><RoomName rooms={rooms} number={row.room} />{record.rows.findIndex((r) => r.room === row.room) !== idx && <div style={{ fontSize: 11.5, fontWeight: 400, color: "var(--muted)" }}>صف إضافي</div>}</td>
+              <td data-label="المصاريف">
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={row.expenseCategory} onChange={(e) => updateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                  <select className="cx-select" style={{ fontSize: 12.5 }} disabled={locked} value={row.expenseCategory} onChange={(e) => updateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
                   <AutoText className="cx-input" placeholder="البيان" disabled={locked} value={row.expenseDesc} onChange={(e) => updateRow(idx, { expenseDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
                     <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.expenseAmt} onChange={(e) => updateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
@@ -63,7 +65,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
                   </div>
                 </div>
               </td>
-              <td>
+              <td data-label="التحصيل">
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
                   <AutoText className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={row.collectionDesc} onChange={(e) => updateRow(idx, { collectionDesc: e.target.value })} />
@@ -73,12 +75,13 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
                   </div>
                 </div>
               </td>
-              <td><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => updateRow(idx, { paymentDetails: d })} /></td>
-              <td><AutoText className="cx-input" disabled={locked} value={row.notes} onChange={(e) => updateRow(idx, { notes: e.target.value })} /></td>
+              <td data-label="تفاصيل الدفع"><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => updateRow(idx, { paymentDetails: d })} /></td>
+              <td data-label="ملاحظات"><AutoText className="cx-input" disabled={locked} value={row.notes} onChange={(e) => updateRow(idx, { notes: e.target.value })} /></td>
             </tr>
           )))}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
@@ -91,18 +94,17 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
   const rows = hotelRowsOf(record);
   return (
     <div className="cx-card" data-testid="hotel-rows" style={{ marginTop: 14, padding: 12 }}>
-      <div style={{ fontWeight: 800, marginBottom: 2 }}>مصاريف وإيرادات الفندق</div>
-      <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 8 }}>بنود مش مرتبطة بغرفة (كهرباء، إيجار قاعة، مشتريات...). المصروف بيتخصم من الخزينة (كاش) والإيراد بيتضاف زي أي تحصيل، وبيدخلوا في إجماليات اليومية والتقارير.</div>
+      <SectionHead icon={Building2} tone="slate" title="مصاريف وإيرادات الفندق" hint="بنود مش مرتبطة بغرفة (كهرباء، إيجار قاعة، مشتريات...). المصروف بيتخصم من الخزينة (كاش) والإيراد بيتضاف زي أي تحصيل، وبيدخلوا في إجماليات اليومية والتقارير." />
       <div style={{ overflowX: "auto" }}>
-        <table className="cx-table" style={{ fontSize: 12, minWidth: 760 }}>
+        <table className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 760 }}>
           <thead><tr><th className="cx-th" style={{ width: 70 }}>البند</th><th className="cx-th">المصاريف</th><th className="cx-th">الإيرادات</th><th className="cx-th">تفاصيل الدفع (فيزا / تحويل)</th><th className="cx-th">ملاحظات</th>{!locked && <th className="cx-th" style={{ width: 36 }} />}</tr></thead>
           <tbody>
             {rows.map((row, idx) => (
               <tr key={idx} data-testid={"hotel-row-" + idx}>
-                <td style={{ textAlign: "center", fontWeight: 700, whiteSpace: "nowrap" }}>فندق {idx + 1}</td>
-                <td>
+                <td data-label="البند" style={{ textAlign: "center", fontWeight: 700, whiteSpace: "nowrap" }}>فندق {idx + 1}</td>
+                <td data-label="المصاريف">
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <select className="cx-select" style={{ fontSize: 11 }} disabled={locked} value={row.expenseCategory} onChange={(e) => onUpdateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    <select className="cx-select" style={{ fontSize: 12.5 }} disabled={locked} value={row.expenseCategory} onChange={(e) => onUpdateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
                     <AutoText className="cx-input" placeholder="بيان المصروف" disabled={locked} value={row.expenseDesc} onChange={(e) => onUpdateRow(idx, { expenseDesc: e.target.value })} />
                     <div style={{ display: "flex", gap: 3 }}>
                       <input className="cx-input" type="number" placeholder="مبلغ المصروف" disabled={locked} value={row.expenseAmt} onChange={(e) => onUpdateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
@@ -110,7 +112,7 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
                     </div>
                   </div>
                 </td>
-                <td>
+                <td data-label="الإيرادات">
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => onUpdateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
                     <AutoText className="cx-input" placeholder="بيان الإيراد" disabled={locked} value={row.collectionDesc} onChange={(e) => onUpdateRow(idx, { collectionDesc: e.target.value })} />
@@ -120,15 +122,15 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
                     </div>
                   </div>
                 </td>
-                <td><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => onUpdateRow(idx, { paymentDetails: d })} /></td>
-                <td><AutoText className="cx-input" disabled={locked} value={row.notes} onChange={(e) => onUpdateRow(idx, { notes: e.target.value })} /></td>
+                <td data-label="تفاصيل الدفع"><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => onUpdateRow(idx, { paymentDetails: d })} /></td>
+                <td data-label="ملاحظات"><AutoText className="cx-input" disabled={locked} value={row.notes} onChange={(e) => onUpdateRow(idx, { notes: e.target.value })} /></td>
                 {!locked && <td style={{ textAlign: "center" }}>{rows.length > 1 && <button className="cx-btn cx-btn-outline" title="شيل البند ده" aria-label={"شيل بند فندق " + (idx + 1)} style={{ padding: "3px 8px" }} onClick={() => onRemoveRow(idx)}>×</button>}</td>}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {!locked && <button className="cx-btn cx-btn-outline cx-no-print" data-testid="hotel-row-add" style={{ marginTop: 8, fontSize: 12 }} onClick={onAddRow}><Plus size={13} /> إضافة بند مصاريف/إيرادات فندق</button>}
+      {!locked && <button className="cx-btn cx-btn-outline cx-no-print" data-testid="hotel-row-add" style={{ marginTop: 8, fontSize: 13 }} onClick={onAddRow}><Plus size={13} /> إضافة بند مصاريف/إيرادات فندق</button>}
     </div>
   );
 }
@@ -145,31 +147,32 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
   const activeMethods = candidateMethods.filter((m) => m !== "كاش" && (currencyKeysOf(record.methodHandover?.[m]).length > 0 || currencyKeysOf(totals.byMethodCurrency?.[m]).length > 0));
   return (
     <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
+      <SectionHead icon={Landmark} tone="green" title="الخزينة والعهدة" hint="العهدة + التحصيل - المصاريف لكل عملة" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
         {activeCurrencies.map((cur) => (
           <div key={cur} style={{ border: "1px solid var(--hair)", borderRadius: 10, padding: 10 }}>
             <div style={{ fontWeight: 800, marginBottom: 8 }}>{CURRENCY_LABEL[cur] || cur} ({cur})</div>
             <div style={{ marginBottom: 6 }}>
-              <label style={{ fontSize: 11, color: "var(--muted)" }}>العهدة</label>
+              <label style={{ fontSize: 12.5, color: "var(--muted)" }}>العهدة</label>
               <input className="cx-input" type="number" disabled={locked} value={record.handover?.[cur] ?? 0} onChange={(e) => onChangeHandover(cur, e.target.value)} />
-              {prevClosing && prevClosing[cur] != null && <div style={{ fontSize: 10, color: "var(--muted)" }}>مقترح: {money(prevClosing, cur)}</div>}
+              {prevClosing && prevClosing[cur] != null && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>مقترح: {money(prevClosing, cur)}</div>}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12.5 }}>
-              <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>إجمالي التحصيل</div><div style={{ fontWeight: 700 }}>{money(totals.totalCollections, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>نقدًا منها</div><div style={{ fontWeight: 700 }}>{money(totals.cashCollections, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>إجمالي المصاريف</div><div style={{ fontWeight: 700 }}>{money(totals.totalExpenses, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>رصيد الخزينة</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(totals.closingCash, cur)}</div></div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13.5 }}>
+              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي التحصيل</div><div style={{ fontWeight: 700 }}>{money(totals.totalCollections, cur)}</div></div>
+              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>نقدًا منها</div><div style={{ fontWeight: 700 }}>{money(totals.cashCollections, cur)}</div></div>
+              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي المصاريف</div><div style={{ fontWeight: 700 }}>{money(totals.totalExpenses, cur)}</div></div>
+              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>رصيد الخزينة</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(totals.closingCash, cur)}</div></div>
             </div>
           </div>
         ))}
       </div>
       {!locked && COMMON_CURRENCIES.filter((c) => !activeCurrencies.includes(c)).length > 0 && (
         <div style={{ marginTop: 12, display: "flex", gap: 6, alignItems: "center" }}>
-          <select className="cx-select" style={{ maxWidth: 180, fontSize: 12 }} value={newCur} onChange={(e) => setNewCur(e.target.value)}>
+          <select className="cx-select" style={{ maxWidth: 180, fontSize: 13 }} value={newCur} onChange={(e) => setNewCur(e.target.value)}>
             <option value="">أضف عملة تانية...</option>
             {COMMON_CURRENCIES.filter((c) => !activeCurrencies.includes(c)).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} disabled={!newCur} onClick={() => { onAddCurrency(newCur); setNewCur(""); }}><Plus size={13} /> إضافة</button>
+          <button className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} disabled={!newCur} onClick={() => { onAddCurrency(newCur); setNewCur(""); }}><Plus size={13} /> إضافة</button>
         </div>
       )}
 
@@ -179,7 +182,7 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
           الوسيلة يتسجل في جدول اليومية فوق. */}
       {(activeMethods.length > 0 || !locked) && (
         <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--hair)" }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 8 }}>عهدة وسائل الدفع الأخرى (فيزا، إلخ)</div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 8 }}>عهدة وسائل الدفع الأخرى (فيزا، إلخ)</div>
           {activeMethods.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14, marginBottom: activeMethods.length ? 10 : 0 }}>
               {activeMethods.map((m) => {
@@ -188,17 +191,17 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
                   <div key={m + cur} style={{ border: "1px solid var(--hair)", borderRadius: 10, padding: 10 }}>
                     <div style={{ fontWeight: 800, marginBottom: 8 }}>{m} ({cur})</div>
                     <div style={{ marginBottom: 6 }}>
-                      <label style={{ fontSize: 11, color: "var(--muted)" }}>العهدة (قراءة الجهاز في بداية الشيفت)</label>
+                      <label style={{ fontSize: 12.5, color: "var(--muted)" }}>العهدة (قراءة الجهاز في بداية الشيفت)</label>
                       <input className="cx-input" type="number" disabled={locked} value={record.methodHandover?.[m]?.[cur] ?? 0} onChange={(e) => onChangeMethodHandover(m, cur, e.target.value)} />
-                      {prevMethodClosing?.[m]?.[cur] != null && <div style={{ fontSize: 10, color: "var(--muted)" }}>مقترح: {money(prevMethodClosing[m], cur)}</div>}
+                      {prevMethodClosing?.[m]?.[cur] != null && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>مقترح: {money(prevMethodClosing[m], cur)}</div>}
                     </div>
                     {(() => { const tx = methodTransactions(record, m).filter((t) => t.currency === cur); return tx.length > 0 && (
-                      <div data-testid="method-transactions" style={{ marginBottom: 6, fontSize: 11, background: "var(--paper2)", borderRadius: 6, padding: 6 }}>
+                      <div data-testid="method-transactions" style={{ marginBottom: 6, fontSize: 12.5, background: "var(--paper2)", borderRadius: 6, padding: 6 }}>
                         {tx.map((t, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 6 }}><span>{t.where}{t.details ? <b dir="ltr" style={{ marginInlineStart: 6 }}>{t.details}</b> : null}</span><b>{fmt(t.amount)}</b></div>)}
                       </div>); })()}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12.5 }}>
-                      <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>حصلت الشيفت ده</div><div style={{ fontWeight: 700 }}>{money(totals.byMethodCurrency?.[m], cur)}</div></div>
-                      <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>الإجمالي دلوقتي</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(totals.methodClosing?.[m], cur)}</div></div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13.5 }}>
+                      <div><div style={{ color: "var(--muted)", fontSize: 12 }}>حصلت الشيفت ده</div><div style={{ fontWeight: 700 }}>{money(totals.byMethodCurrency?.[m], cur)}</div></div>
+                      <div><div style={{ color: "var(--muted)", fontSize: 12 }}>الإجمالي دلوقتي</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(totals.methodClosing?.[m], cur)}</div></div>
                     </div>
                   </div>
                 ));
@@ -207,9 +210,9 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
           )}
           {!locked && (
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <select className="cx-select" style={{ fontSize: 12, width: 130 }} value={newMethod} onChange={(e) => setNewMethod(e.target.value)}>{PAYMENT_METHODS.filter((m) => m !== "كاش").map((m) => <option key={m} value={m}>{m}</option>)}</select>
-              <select className="cx-select" style={{ width: 90, fontSize: 12 }} value={newMethodCur} onChange={(e) => setNewMethodCur(e.target.value)}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-              <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} disabled={!newMethod || !newMethodCur} onClick={() => onAddMethodTracking(newMethod, newMethodCur)}><Plus size={13} /> متابعة عهدة {newMethod}</button>
+              <select className="cx-select" style={{ fontSize: 13, width: 130 }} value={newMethod} onChange={(e) => setNewMethod(e.target.value)}>{PAYMENT_METHODS.filter((m) => m !== "كاش").map((m) => <option key={m} value={m}>{m}</option>)}</select>
+              <select className="cx-select" style={{ width: 90, fontSize: 13 }} value={newMethodCur} onChange={(e) => setNewMethodCur(e.target.value)}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              <button className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} disabled={!newMethod || !newMethodCur} onClick={() => onAddMethodTracking(newMethod, newMethodCur)}><Plus size={13} /> متابعة عهدة {newMethod}</button>
             </div>
           )}
         </div>
@@ -222,8 +225,8 @@ function ShiftClaimPicker({ date, claims, onClaim }) {
   const nowShift = defaultShiftForNow();
   return (
     <div className="cx-card" style={{ padding: 16 }}>
-      <div style={{ fontWeight: 800, marginBottom: 4 }}>اختار شيفتك النهارده ({arabicWeekday(date)} · {date})</div>
-      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>الاختيار ده بيتحدد مرة واحدة بس ومينفعش تغيّره بعد كده، وهتقدر تعدل بس على الشيفت ده لحد ما يخلص اليوم. كل شيفت مينفتحش غير في معاده الفعلي.</div>
+      <div style={{ fontWeight: 800, marginBottom: 4 }}>اختار شيفتك النهارده ({arabicWeekday(date)} · <bdi dir="ltr" className="cx-rn">{date}</bdi>)</div>
+      <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>الاختيار ده بيتحدد مرة واحدة بس ومينفعش تغيّره بعد كده، وهتقدر تعدل بس على الشيفت ده لحد ما يخلص اليوم. كل شيفت مينفتحش غير في معاده الفعلي.</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {SHIFTS.map((s) => {
           const taken = claims[s.key];
@@ -231,9 +234,9 @@ function ShiftClaimPicker({ date, claims, onClaim }) {
           const disabled = !!taken || notYourTime;
           return (
             <button key={s.key} disabled={disabled} onClick={() => onClaim(s.key)}
-              className="cx-btn cx-btn-outline" style={{ justifyContent: "space-between", padding: "12px 14px", fontSize: 13.5, opacity: disabled ? 0.5 : 1 }}>
+              className="cx-btn cx-btn-outline" style={{ justifyContent: "space-between", padding: "12px 14px", fontSize: 14.5, opacity: disabled ? 0.5 : 1 }}>
               <span>{s.label} <span style={{ fontWeight: 400, color: "var(--muted)" }}>({s.time})</span></span>
-              {taken ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>اتاخد بواسطة {taken.name}</span> : notYourTime ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>لسه مش وقته</span> : null}
+              {taken ? <span style={{ fontSize: 13, color: "var(--muted)" }}>اتاخد بواسطة {taken.name}</span> : notYourTime ? <span style={{ fontSize: 13, color: "var(--muted)" }}>لسه مش وقته</span> : null}
             </button>
           );
         })}
@@ -504,7 +507,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   async function closeShiftInner() {
     // مفيش إقفال وفيه تحصيل فيزا من غير آخر ٤ أرقام (أو تحويل من غير رقم) - كل عملية لازم تتتبّع
     const missing = missingPaymentDetails(pendingRef.current || record);
-    if (missing.length > 0) { showToast(`مينفعش تقفل الشيفت: ${missing.slice(0, 3).map((m) => `${m.where} (${m.method})`).join("، ")}${missing.length > 3 ? ` و${missing.length - 3} كمان` : ""} من غير ${missing[0].method === "فيزا" ? "آخر ٤ أرقام الكارت" : "رقم التليفون"} - اكتبها في عمود تفاصيل الدفع`); return; }
+    if (missing.length > 0) { showToast(`مينفعش تقفل الشيفت: ${missing.slice(0, 3).map((m) => `${m.where} (${m.method})`).join("، ")}${missing.length > 3 ? ` و${missing.length - 3} كمان` : ""} من غير ${missing[0].method === "فيزا" ? "آخر 4 أرقام الكارت" : "رقم التليفون"} - اكتبها في عمود تفاصيل الدفع`); return; }
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     const mineRec = pendingRef.current || record;
     let base = mineRec;
@@ -553,7 +556,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   const printRecord = mode === "live" ? record : histRecord;
 
   return (
-    <div style={{ padding: 14 }}>
+    <div className="cx-page">
       <div className="cx-no-print" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         {perms.editLedger && <button className={"cx-btn " + (mode === "live" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("live")}>شيفتي النهارده</button>}
         <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> استعراض شيفتات سابقة (قراءة فقط)</button>
@@ -571,7 +574,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
             </div>
             <div className="cx-print-meta">
               <div className="cx-print-title">يومية شيفت</div>
-              <div>{arabicWeekday(printRecord.date)} {printRecord.date} · {SHIFTS.find((s) => s.key === printRecord.shiftKey)?.label} ({printRecord.staffName})</div>
+              <div>{arabicWeekday(printRecord.date)} <bdi dir="ltr" className="cx-rn">{printRecord.date}</bdi> · {SHIFTS.find((s) => s.key === printRecord.shiftKey)?.label} ({printRecord.staffName})</div>
               <div>تاريخ الإصدار: {arabicDateLong(todayStr())}{profile?.name ? ` · أُعِد بواسطة: ${profile.name}` : ""}</div>
             </div>
           </div>
@@ -584,26 +587,31 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
           <ShiftClaimPicker date={today} claims={claims || {}} onClaim={claimShift} />
         ) : (
           <>
-            <div className="cx-card" style={{ padding: 12, marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>التاريخ</label><div style={{ fontWeight: 700, fontSize: 13, padding: "6px 2px" }}>{arabicWeekday(today)} · {today}</div></div>
-              <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>شيفتك</label><div style={{ fontWeight: 700, fontSize: 13, padding: "6px 2px" }}>{SHIFTS.find((s) => s.key === myShiftKey)?.label} ({SHIFTS.find((s) => s.key === myShiftKey)?.time})</div></div>
-              <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>الاسم</label><div style={{ fontSize: 13, padding: "6px 2px" }}>{record.staffName}</div></div>
+            <div className="cx-card" style={{ padding: "14px 16px", marginBottom: 14, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", background: "linear-gradient(90deg,#FFFFFF,#FBF6E9)" }}>
+              <span className="cx-ico ic-gold" aria-hidden="true"><CalendarClock size={20} /></span>
+              <div><label style={{ fontSize: 12.5, color: "var(--muted)", display: "block" }}>التاريخ</label><div style={{ fontWeight: 700, fontSize: 14, padding: "6px 2px" }}>{arabicWeekday(today)} · <bdi dir="ltr" className="cx-rn">{today}</bdi></div></div>
+              <div><label style={{ fontSize: 12.5, color: "var(--muted)", display: "block" }}>شيفتك</label><div style={{ fontWeight: 700, fontSize: 14, padding: "6px 2px" }}>{SHIFTS.find((s) => s.key === myShiftKey)?.label} ({SHIFTS.find((s) => s.key === myShiftKey)?.time})</div></div>
+              <div><label style={{ fontSize: 12.5, color: "var(--muted)", display: "block" }}>الاسم</label><div style={{ fontSize: 14, padding: "6px 2px" }}>{record.staffName}</div></div>
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
-            <LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} />
+            <LedgerBar sections={LEDGER_SECTIONS} totals={totals} record={record} canClose={!record.closed && perms.closeShift} onClose={closeShift} />
+            <div id="led-rooms" className="cx-anchor"><LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} /></div>
+            <div id="led-cafe" className="cx-anchor">
             <CafeteriaSection record={record} rooms={rooms} bookings={bookings} onUpdateCafeteria={updateCafeteria} locked={locked} readOnly={!perms.editLedger} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={flushNow} reloadRecord={reloadRecord} onLog={onLog} showToast={showToast} />
-            <HotelRowsTable record={record} locked={locked} onUpdateRow={updateHotelRow} onAddRow={addHotelRow} onRemoveRow={removeHotelRow} />
-            <div className="cx-card" style={{ marginTop: 14, padding: 14 }}>
+            </div>
+            <div id="led-hotel" className="cx-anchor"><HotelRowsTable record={record} locked={locked} onUpdateRow={updateHotelRow} onAddRow={addHotelRow} onRemoveRow={removeHotelRow} /></div>
+            <div id="led-notes" className="cx-card cx-anchor" style={{ marginTop: 14, padding: 14 }}>
+              <SectionHead icon={MessageSquareText} tone="amber" title="ملاحظات الشيفت" />
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <input type="checkbox" checked={record.flagged} disabled={locked} onChange={(e) => persist({ ...record, flagged: e.target.checked }, { immediate: true })} />
-                <span style={{ fontSize: 13, fontWeight: 700, color: record.flagged ? "var(--rust)" : "var(--text)" }}><AlertTriangle size={13} style={{ verticalAlign: -2 }} /> فيه مشكلة تحتاج متابعة من المديرة/المدير العام</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: record.flagged ? "var(--rust)" : "var(--text)" }}><AlertTriangle size={13} style={{ verticalAlign: -2 }} /> فيه مشكلة تحتاج متابعة من المديرة/المدير العام</span>
               </div>
               <textarea className="cx-textarea" rows={2} placeholder="ملاحظات الشيفت" disabled={locked} value={record.shiftNotes} onChange={(e) => persist({ ...record, shiftNotes: e.target.value }, { silent: true })} />
             </div>
-            <ShiftSummaryFooter record={record} totals={totals} locked={locked} onChangeHandover={updateHandover} onAddCurrency={addCurrency} prevClosing={prevClosing} onChangeMethodHandover={updateMethodHandover} onAddMethodTracking={addMethodTracking} prevMethodClosing={prevMethodClosing} />
+            <div id="led-cash" className="cx-anchor"><ShiftSummaryFooter record={record} totals={totals} locked={locked} onChangeHandover={updateHandover} onAddCurrency={addCurrency} prevClosing={prevClosing} onChangeMethodHandover={updateMethodHandover} onAddMethodTracking={addMethodTracking} prevMethodClosing={prevMethodClosing} /></div>
             <div className="cx-no-print" style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {!record.closed && perms.closeShift && <button className="cx-btn cx-btn-gold" onClick={closeShift}><Lock size={14} /> إقفال الشيفت</button>}
-              {record.closed && <span style={{ fontSize: 12, color: "var(--muted)" }}>أُقفل بواسطة {record.closedBy} في {new Date(record.closedAt).toLocaleString("ar-EG")} — لو محتاج تصحّح حاجة كلّم مدير الحجوزات أو المدير العام يفتحوه تاني</span>}
+              {!record.closed && perms.closeShift && <span className="cx-hint">راجع الخزينة فوق، وبعدين اضغط "إقفال الشيفت" من الشريط اللي فوق.</span>}
+              {record.closed && <span style={{ fontSize: 13, color: "var(--muted)" }}>أُقفل بواسطة {record.closedBy} في {new Date(record.closedAt).toLocaleString("ar-EG-u-nu-latn")} — لو محتاج تصحّح حاجة كلّم مدير الحجوزات أو المدير العام يفتحوه تاني</span>}
             </div>
             <LedgerPrintFooter />
           </>
@@ -611,20 +619,20 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
       ) : (
         <>
           <div className="cx-card cx-no-print" style={{ padding: 12, marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <div><label style={{ fontSize: 11, color: "var(--muted)", display: "block" }}>التاريخ</label><input className="cx-input" type="date" value={histDate} onChange={(e) => setHistDate(e.target.value)} style={{ width: 150 }} /></div>
-            <div style={{ display: "flex", gap: 6 }}>{SHIFTS.map((s) => <button key={s.key} onClick={() => setHistShift(s.key)} className={"cx-btn " + (histShift === s.key ? "cx-btn-gold" : "cx-btn-outline")} style={{ fontSize: 12 }}>{s.label}</button>)}</div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)", display: "block" }}>التاريخ</label><input className="cx-input" type="date" value={histDate} onChange={(e) => setHistDate(e.target.value)} style={{ width: 150 }} /></div>
+            <div className="cx-seg" role="group" aria-label="اختار الشيفت" style={{ alignSelf: "flex-end", maxWidth: "100%" }}>{SHIFTS.map((s) => <button key={s.key} aria-pressed={histShift === s.key} onClick={() => setHistShift(s.key)} className={"cx-btn " + (histShift === s.key ? "cx-btn-gold" : "cx-btn-outline")} style={{ fontSize: 13 }}>{s.label}</button>)}</div>
           </div>
-          {!histRecord ? <div style={{ color: "var(--muted)", fontSize: 13, padding: 20, textAlign: "center" }}>لا يوجد سجل لهذا الشيفت</div> : (
+          {!histRecord ? <EmptyState icon={FileX} title="لا يوجد سجل لهذا الشيفت" hint="محدش فتح يومية للشيفت ده في التاريخ ده - اختار تاريخ أو شيفت تاني." /> : (
             <>
               {perms.reopenShift && (
                 <div className="cx-card cx-no-print" style={{ padding: 10, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   {histRecord.closed ? (
                     <>
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}><Lock size={12} style={{ verticalAlign: -1 }} /> مقفول بواسطة {histRecord.closedBy} في {histRecord.closedAt ? new Date(histRecord.closedAt).toLocaleString("ar-EG") : "—"}</span>
-                      <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={reopenHistoryShift}><LockOpen size={13} /> إعادة فتح الشيفت</button>
+                      <span style={{ fontSize: 13, color: "var(--muted)" }}><Lock size={12} style={{ verticalAlign: -1 }} /> مقفول بواسطة {histRecord.closedBy} في {histRecord.closedAt ? new Date(histRecord.closedAt).toLocaleString("ar-EG-u-nu-latn") : "—"}</span>
+                      <button className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} onClick={reopenHistoryShift}><LockOpen size={13} /> إعادة فتح الشيفت</button>
                     </>
                   ) : (
-                    <span style={{ fontSize: 12, color: "var(--sage)" }}><Unlock size={12} style={{ verticalAlign: -1 }} /> {staffCanContinue(histDate, histShift) ? "الشيفت ده مفتوح لسه (أو اتفتح تاني) - الموظف يقدر يكمل فيه" : "الشيفت ده مفتوح لكن وقته انتهى - هيتقفل تلقائيًا أول ما الموظف يفتح اليومية"}</span>
+                    <span style={{ fontSize: 13, color: "var(--sage)" }}><Unlock size={12} style={{ verticalAlign: -1 }} /> {staffCanContinue(histDate, histShift) ? "الشيفت ده مفتوح لسه (أو اتفتح تاني) - الموظف يقدر يكمل فيه" : "الشيفت ده مفتوح لكن وقته انتهى - هيتقفل تلقائيًا أول ما الموظف يفتح اليومية"}</span>
                   )}
                 </div>
               )}
@@ -632,12 +640,45 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
               <CafeteriaSection record={histRecord} rooms={rooms} bookings={bookings} onUpdateCafeteria={() => {}} locked={true} readOnly={true} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={async () => {}} reloadRecord={async () => {}} onLog={onLog} showToast={showToast} />
               {(histRecord.hotelRows || []).some((r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || r.expenseDesc || r.collectionDesc) && <HotelRowsTable record={histRecord} locked={true} onUpdateRow={() => {}} onAddRow={() => {}} onRemoveRow={() => {}} />}
               <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
-              {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 12.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
+              {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 13.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
               <LedgerPrintFooter />
             </>
           )}
         </>
       )}
+    </div>
+  );
+}
+
+const LEDGER_SECTIONS = [["led-rooms", "الغرف", DoorOpen], ["led-cafe", "الكافيتيريا", Coffee], ["led-hotel", "مصاريف الفندق", Building2], ["led-notes", "الملاحظات", MessageSquareText], ["led-cash", "الخزينة", Landmark]];
+
+/* شريط ثابت فوق اليومية: تنقّل سريع بين الأقسام (بيعلّم القسم اللي انت فيه) + رصيد الخزينة لحظيًا + زرار الإقفال */
+function LedgerBar({ sections, totals, record, canClose, onClose }) {
+  const [active, setActive] = useState(sections[0][0]);
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return undefined;
+    const io = new IntersectionObserver((es) => {
+      const vis = es.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (vis) setActive(vis.target.id);
+    }, { rootMargin: "-140px 0px -55% 0px" });
+    sections.forEach(([id]) => { const el = document.getElementById(id); if (el) io.observe(el); });
+    return () => io.disconnect();
+  }, [sections]);
+  const cash = currencyKeysOf(totals?.closingCash).map((c) => `${money(totals.closingCash, c)} ${c}`).join(" · ") || "0";
+  return (
+    <div className="cx-ledbar cx-no-print">
+      <nav aria-label="أقسام اليومية" className="cx-ledbar-nav">
+        {sections.map(([id, label, Icon]) => (
+          <a key={id} href={"#" + id} className={active === id ? "on" : ""} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); setActive(id); }}>
+            <Icon size={15} aria-hidden="true" />{label}
+          </a>
+        ))}
+      </nav>
+      <div className="cx-ledbar-end">
+        <div className="cx-ledbar-cash"><span>رصيد الخزينة</span><b>{cash}</b></div>
+        {canClose && <button className="cx-btn cx-btn-gold" onClick={onClose}><Lock size={15} /> إقفال الشيفت</button>}
+        {record.closed && <span className="cx-pill" style={{ background: "#EFEEEC", color: "#6E685D" }}><Lock size={12} aria-hidden="true" /> الشيفت مقفول</span>}
+      </div>
     </div>
   );
 }

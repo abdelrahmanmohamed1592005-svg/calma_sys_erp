@@ -232,7 +232,7 @@ describe("repricedTotalRoom (discount-aware, matches DB reprice_total)", () => {
 
 
 describe("computeRoomStatus - الحالات اليدوية والمغادرة المبكرة", () => {
-  const T = new Date(2026, 8, 10, 12, 0, 0).getTime();       // ١٠ سبتمبر ١٢ ظهرًا (بتوقيت الجهاز)
+  const T = new Date(2026, 8, 10, 12, 0, 0).getTime();       // 10 سبتمبر 12 ظهرًا (بتوقيت الجهاز)
   const today = "2026-09-10";
   const mk = (over) => ({ id: "x", room: 601, status: "مؤكد", checkin: today, checkout: "2026-09-12", amountPaid: 0, totalRoom: 100, extras: {}, ...over });
   const ovAt = (status, updatedAt) => ({ 601: { status, updatedAt } });

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { GlobalStyle, LoadingScreen, ConfigWarningBanner, RefundBox, SchemaOutdatedBanner } from "./components/shared";
+import { RoomName, GlobalStyle, BackToTop, LoadingScreen, ConfigWarningBanner, RefundBox, SchemaOutdatedBanner } from "./components/shared";
 import { checkSchemaVersion, REQUIRED_SCHEMA_VERSION } from "./data/schemaCheck";
-import { Header, TabBar } from "./components/Header";
+import { Header, TabBar, PageHead } from "./components/Header";
 import { SetupScreen, LoginScreen, LogoutReportScreen } from "./components/AuthScreens";
 import { RoomBoard } from "./components/RoomBoard";
 import { DailyLedger } from "./components/DailyLedger";
@@ -9,6 +9,7 @@ import { BookingsPanel } from "./components/BookingsPanel";
 import { ReportsPanel } from "./components/ReportsPanel";
 import { ActivityPanel } from "./components/ActivityPanel";
 import { UsersPanel } from "./components/UsersPanel";
+import { CommandPalette } from "./components/CommandPalette";
 
 import { supabaseConfigured } from "./lib/supabaseClient";
 import { subscribeToAllChanges } from "./lib/realtime";
@@ -39,6 +40,14 @@ export default function App() {
   const [sessionExported, setSessionExported] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
   const [schemaState, setSchemaState] = useState({ ok: null });
+  // بحث سريع (Ctrl+K) + "اقفز لـ" غرفة/حجز من أي شاشة
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [jump, setJump] = useState(null);       // { room } أو { query } + nonce
+  useEffect(() => {
+    const onKey = (e) => { if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K" || e.code === "KeyK")) { e.preventDefault(); setPaletteOpen((o) => !o); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // فحص نسخة قاعدة البيانات بعد الدخول (وكل ما التاب يرجع ظاهر): لو أقدم من اللي الواجهة محتاجاه نحذّر بوضوح
   useEffect(() => {
     if (!currentProfile) return undefined;
@@ -163,7 +172,7 @@ export default function App() {
   const loadedOnce = useRef(false);
   useEffect(() => {
     setBookings([]); setActivity([]); setOverrides({}); setAllProfiles([]); setLoadingData(true); setTab("board");
-    setSchemaState({ ok: null }); loadedOnce.current = false; prevRefundIds.current = null;
+    setSchemaState({ ok: null }); loadedOnce.current = false; prevRefundIds.current = null; setJump(null); setPaletteOpen(false);
   }, [currentProfile?.id]);
 
   useEffect(() => {
@@ -295,20 +304,22 @@ export default function App() {
   }
 
   return (
-    <div className="calma-app" dir="rtl">
+    <div className="calma-app cx-shell" dir="rtl">
       <GlobalStyle />
-      {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
-      <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} />
+      <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} onOpenSearch={() => setPaletteOpen(true)} />
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={perms.decideRefund ? { bookings: pendingRefunds.length } : {}} />
+      <main className="cx-main">
+      {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
+      <PageHead tab={activeTab} />
       {pendingRefunds.length > 0 && perms.tabs.includes("bookings") && activeTab !== "bookings" && (
-        <div className="cx-no-print" data-testid="refund-banner" style={{ background: "#F4E7E2", padding: "8px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ color: "var(--rust)", fontSize: 12.5, fontWeight: 700 }}>
+        <div className="cx-no-print cx-card" data-testid="refund-banner" style={{ background: "var(--bad-bg)", borderColor: "#EBC3B9", margin: "14px 22px 0", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ color: "var(--rust)", fontSize: 14, fontWeight: 700 }}>
             🔔 طلبات رد فلوس منتظرة ({pendingRefunds.length}){perms.decideRefund ? "" : " - مدير الحجوزات هو اللي بيوافق"}
             {!perms.decideRefund && <span style={{ fontWeight: 400, marginInlineStart: 8 }}>{pendingRefunds.map((b) => `${roomLabel(rooms, b.room)} ${b.guestName}`).join(" · ")}</span>}
           </div>
           {perms.decideRefund && pendingRefunds.map((b) => (
             <div key={b.id} data-testid="refund-inbox-item" style={{ fontSize: 12.5 }}>
-              <div style={{ fontWeight: 700, marginBottom: 2 }}>{roomLabel(rooms, b.room)} · {b.guestName}</div>
+              <div style={{ fontWeight: 700, marginBottom: 2 }}><RoomName rooms={rooms} number={b.room} /> · <span className="cx-iso">{b.guestName}</span></div>
               <RefundBox b={b} canDecide onDecide={runRefund} />
             </div>
           ))}
@@ -316,15 +327,21 @@ export default function App() {
       )}
       {loadingData ? <LoadingScreen /> : (
         <>
-          {activeTab === "board" && <RoomBoard rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onEditBooking={requestEditBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "board" && <RoomBoard jumpRoom={jump?.room != null ? jump : null} onJumpDone={() => setJump(null)} rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onEditBooking={requestEditBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "ledger" && <DailyLedger rooms={rooms} bookings={bookings} profiles={allProfiles} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "bookings" && <BookingsPanel rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
+          {activeTab === "bookings" && <BookingsPanel jumpQuery={jump?.query != null ? jump : null} onJumpDone={() => setJump(null)} rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
           {activeTab === "activity" && <ActivityPanel activity={activity} />}
           {activeTab === "users" && <UsersPanel users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
         </>
       )}
-      {toast && <div className="cx-toast">{toast}</div>}
+      </main>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} tabs={perms.tabs} rooms={rooms} bookings={bookings} overrides={overrides}
+        onGoTab={(t) => setTab(t)}
+        onOpenRoom={(r) => { setTab(perms.tabs.includes("board") ? "board" : perms.tabs[0]); setJump({ room: r, nonce: Date.now() }); }}
+        onFindBooking={(name) => { if (perms.tabs.includes("bookings")) { setTab("bookings"); setJump({ query: name, nonce: Date.now() }); } }} />
+      <BackToTop />
+      {toast && <div className="cx-toast" role="status">{toast}</div>}
       {!supabaseConfigured && <ConfigWarningBanner />}
     </div>
   );

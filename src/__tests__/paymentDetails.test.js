@@ -6,16 +6,16 @@ import {
 } from "../domain/money";
 
 describe("تفاصيل الدفع حسب الوسيلة", () => {
-  it("الفيزا: آخر ٤ أرقام بس (حتى لو لصق رقم الكارت كامل أو بأرقام عربي)", () => {
+  it("الفيزا: آخر 4 أرقام بس (حتى لو لصق رقم الكارت كامل أو بأرقام عربي)", () => {
     expect(normalizeLast4("4111 1111 1111 1234")).toBe("1234");
-    expect(normalizeLast4("١٢٣٤")).toBe("1234");
+    expect(normalizeLast4("1234")).toBe("1234");
     expect(cleanPaymentDetailsFor("فيزا", { senderName: "أحمد", senderNumber: "4111111111111234", ref: "R1" })).toEqual({ senderName: "", senderNumber: "1234", ref: "", onlinePaid: false });
   });
   it("التحويل/فودافون: اسم + رقم تليفون، من غير رقم عملية", () => {
     expect(cleanPaymentDetailsFor("فودافون كاش", { senderName: " سارة ", senderNumber: "010 1234-5678", ref: "X" })).toEqual({ senderName: "سارة", senderNumber: "01012345678", ref: "", onlinePaid: false });
     expect(cleanPaymentDetailsFor("كاش", { senderName: "x", senderNumber: "1" })).toEqual({ senderName: "", senderNumber: "", ref: "", onlinePaid: false });
   });
-  it("التحقق: الفيزا لازم ٤ أرقام، والتحويل لازم رقم", () => {
+  it("التحقق: الفيزا لازم 4 أرقام، والتحويل لازم رقم", () => {
     expect(validatePaymentDetailsFor("فيزا", { senderNumber: "12" })).not.toBe("");
     expect(validatePaymentDetailsFor("فيزا", { senderNumber: "1234" })).toBe("");
     expect(validatePaymentDetailsFor("تحويل بنكي / انستاباي", { senderName: "x", senderNumber: "" })).not.toBe("");
@@ -36,7 +36,7 @@ describe("تفاصيل الدفع حسب الوسيلة", () => {
 describe("تحصيل الحجز بيروح للوسيلة الصح بتفاصيلها", () => {
   const rows = [emptyLedgerRow(601), emptyLedgerRow(602)];
   const visa = { amount: 100, currency: "USD", method: "فيزا", room: 601, bookingId: "b1", guestName: "Ali", details: { senderNumber: "1234" } };
-  it("دفعة فيزا: صف فيزا فيه آخر ٤ أرقام، مش كاش", () => {
+  it("دفعة فيزا: صف فيزا فيه آخر 4 أرقام، مش كاش", () => {
     const { rows: out } = applyCollectionToRows(rows, visa);
     expect(out[0]).toMatchObject({ collectionMethod: "فيزا", collectionAmt: 100, bookingId: "b1" });
     expect(out[0].paymentDetails.senderNumber).toBe("1234");

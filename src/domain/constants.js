@@ -4,9 +4,9 @@
 export const HOTEL_NAME = "فندق Calma";
 
 export const SHIFTS = [
-  { key: "morning", label: "الشيفت الصباحي", time: "٨ص - ٤م" },
-  { key: "evening", label: "الشيفت المسائي", time: "٤م - ١٢ص" },
-  { key: "night", label: "الشيفت الليلي", time: "١٢ص - ٨ص" },
+  { key: "morning", label: "الشيفت الصباحي", time: "8ص - 4م" },
+  { key: "evening", label: "الشيفت المسائي", time: "4م - 12ص" },
+  { key: "night", label: "الشيفت الليلي", time: "12ص - 8ص" },
 ];
 
 export const ROLES = [
@@ -95,6 +95,27 @@ export const ROOMS_DEFAULT = [
 // لو متسجل، وإلا "غرفة" + رقمها كاحتياط (مثلاً لو غرفة جديدة اتضافت في
 // قاعدة البيانات من غير اسم لسه).
 export function roomLabel(rooms, number) {
+  const { ltr, word } = roomDisplay(rooms, number);
+  return `غرفة \u2066${ltr}\u2069${word ? " " + word : ""}`;
+}
+
+/* أسامي الغرف متسجّلة بأشكال مختلفة: "602(S/D)داخلي" و"(W)606(T)" و"(t)601داخلي" - الرقم مرة في الأول ومرة
+   في النص. لو اتعرضت زي ما هي جوه صفحة عربي، المتصفح بيقلب ترتيب الأقواس والرقم وكل غرفة بتطلع بشكل.
+   فبنفكّ الاسم لأجزاءه ونعرضه دايمًا بنفس الترتيب: الرقم ← الأكواد اللي بين الأقواس ← الكلمة العربي
+   ("606 (T)(W)" ، "601 (t) داخلي"). الاسم المتسجّل في قاعدة البيانات مابيتغيّرش. */
+export function roomNameParts(name, number) {
+  const raw = String(name || "").trim();
+  if (!raw) return { num: String(number ?? ""), codes: [], word: "" };
+  const numM = raw.match(/\d+/);
+  const num = numM ? numM[0] : String(number ?? "");
+  const at = numM ? numM.index : -1;
+  const all = [...raw.matchAll(/\(([^)]*)\)/g)].map((m) => ({ code: m[1].trim(), at: m.index })).filter((c) => c.code);
+  const codes = [...all.filter((c) => c.at > at), ...all.filter((c) => c.at < at)].map((c) => c.code);
+  const word = raw.replace(/\([^)]*\)/g, " ").replace(/\d+/, " ").replace(/\s+/g, " ").trim();
+  return { num, codes, word };
+}
+export function roomDisplay(rooms, number) {
   const r = rooms?.find((x) => x.number === number);
-  return `غرفة ${(r && r.name) ? r.name : number}`;
+  const { num, codes, word } = roomNameParts(r && r.name, number);
+  return { ltr: [num, codes.map((c) => `(${c})`).join("")].filter(Boolean).join(" "), word };
 }

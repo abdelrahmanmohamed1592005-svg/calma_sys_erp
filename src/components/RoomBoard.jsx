@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Pencil, Check, X, Eye, AlertTriangle } from "lucide-react";
+import { Pencil, Check, X, Eye, AlertTriangle, Search, Wallet, Receipt, BedDouble, CalendarDays, Moon, Users, Hash, LogIn, LogOut } from "lucide-react";
 import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, refundDueAmount, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
 import { todayStr, shiftDayNow, nightsBetween, addDays } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
@@ -7,31 +7,78 @@ import { computeRoomStatus, roomsOverlap, findOverlappingBooking, repricedTotalR
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
 import { recordBookingPayment } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { AutoText, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
+import { DateRange, RoomName, AutoText, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
 // نص الأقراص على الخلفية الفاتحة: ألوان أغمق من ألوان المربعات عشان تحقق تباين WCAG AA (٤.٥:١)
 const STATUS_TEXT = { ...STATUS_COLORS, occupied_paid: "#6B5300", occupied_unpaid: "#B0222E", early_checkout: "#8F4A12" };
+// اسم قصير للحالة على مربع الغرفة (الاسم الكامل في البطاقة والفلتر)
+const TILE_LABEL = { available: "متاحة", occupied_paid: "مدفوعة", occupied_unpaid: "عليها فلوس", reserved: "قادمة", early_checkout: "خرج بدري", maintenance: "صيانة", cleaning: "تنظيف" };
 const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#F5EFD6", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
 /* قسم مطوي في بطاقة الغرفة (برّه الـ component عشان الحقول اللي جواه ماتتفقدش الفوكس وقت الكتابة) */
 function Sec({ id, title, children, badge }) {
   return (
-    <details data-testid={id} style={{ marginTop: 8, background: "#fff", borderRadius: 8, padding: "6px 10px" }}>
-      <summary style={{ cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>{title}{badge ? <span className="cx-pill" style={{ background: "var(--paper2)", marginInlineStart: 6, fontSize: 10.5 }}>{badge}</span> : null}</summary>
+    <details data-testid={id} style={{ marginTop: 4, background: "#fff", borderRadius: 12, padding: "10px 14px", border: "1px solid var(--hair2)" }}>
+      <summary style={{ cursor: "pointer", fontSize: 14.5, fontWeight: 700, color: "var(--ink)" }}>{title}{badge ? <span className="cx-pill" style={{ background: "var(--paper2)", marginInlineStart: 6, fontSize: 12 }}>{badge}</span> : null}</summary>
       <div style={{ marginTop: 8 }}>{children}</div>
     </details>
   );
 }
 
-export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOverride, onUpdateBooking, onRefresh, onEditBooking, onDecideRefund, onLog, showToast, dataVersion }) {
+/* "النهارده": مين جاي، مين ماشي، ومين لسه عليه فلوس - بضغطة على الاسم بتفتح غرفته */
+function TodayStrip({ rooms, bookings, overrides, date, onOpen }) {
+  const live = bookings.filter((b) => b.status !== "ملغي");
+  const arrivals = live.filter((b) => b.checkin === date);
+  const departures = live.filter((b) => b.checkout === date && b.checkin !== date);
+  const due = rooms.map((r) => computeRoomStatus(r.number, bookings, overrides, date)).filter((st) => st.key === "occupied_unpaid" && st.booking).map((st) => st.booking);
+  const cols = [
+    ["arr", "وصول النهارده", LogIn, "teal", arrivals, "مفيش وصول متوقع النهارده"],
+    ["dep", "مغادرة النهارده", LogOut, "amber", departures, "مفيش مغادرة النهارده"],
+    ["due", "مطلوب تحصيله", Wallet, "red", due, "كل النزلاء الساكنين دافعين ✓"],
+  ];
+  return (
+    <div className="cx-today cx-no-print" data-testid="today-strip">
+      {cols.map(([k, title, Icon, tone, list, empty]) => (
+        <div key={k} className="cx-card cx-today-col">
+          <div className="cx-today-head"><span className={"cx-ico sm ic-" + tone} aria-hidden="true"><Icon size={16} /></span><b>{title}</b><span className="cx-today-n">{list.length}</span></div>
+          {list.length === 0 ? <div className="cx-hint" style={{ padding: "4px 2px" }}>{empty}</div> : (
+            <ul>
+              {list.slice(0, 4).map((b) => (
+                <li key={b.id}><button type="button" onClick={() => onOpen(b.room)}>
+                  <span className="r"><RoomName rooms={rooms} number={b.room} /></span><span className="g">{b.guestName}</span>
+                  {k === "due" && <span className="d">{fmt(bookingAmountDue(b))} {b.currency}</span>}
+                </button></li>
+              ))}
+              {list.length > 4 && <li className="cx-hint" style={{ padding: "2px 6px" }}>+ {list.length - 4} كمان</li>}
+            </ul>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, perms, profile, onSaveOverride, onUpdateBooking, onRefresh, onEditBooking, onDecideRefund, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
+  const [stFilter, setStFilter] = useState("all");
+  // فتح غرفة جاية من البحث السريع
+  useEffect(() => { if (jumpRoom?.room != null) { setStFilter("all"); setSelected(jumpRoom.room); onJumpDone?.(); } }, [jumpRoom?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Esc بيقفل بطاقة الغرفة المفتوحة
+  useEffect(() => {
+    if (selected == null) return undefined;
+    const onKey = (e) => { if (e.key === "Escape" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) setSelected(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
   const [kpis, setKpis] = useState(null);
   const [extrasDraft, setExtrasDraft] = useState(null);
   const extrasBaseRef = useRef("");
   const normExtras = (e) => JSON.stringify([Number(e?.laundry) || 0, Number(e?.cafeteria) || 0, Number(e?.tours) || 0, Number(e?.pickup) || 0]);
-  // دفعة جديدة على الحجز: مبلغ + وسيلة + تفاصيلها (فيزا = آخر ٤ أرقام، تحويل = اسم + رقم)
+  // دفعة جديدة على الحجز: مبلغ + وسيلة + تفاصيلها (فيزا = آخر 4 أرقام، تحويل = اسم + رقم)
+  // زرار التحصيل بيتقفل وقت الحفظ ولحظة بعده: دوسات ورا بعض (دبل/تريبل كليك) ماتسجّلش "كامل المتبقي" تاني
+  const [payLock, setPayLock] = useState(false);
   const [pay, setPay] = useState({ amount: "", method: "كاش", details: emptyPaymentDetails() });
   // تحصيل رسم الدخول المبكر ليه وسيلته وتفاصيله المستقلة (مايتخلطوش مع خانات الدفعة العادية)
   const [epay, setEpay] = useState({ method: "كاش", details: emptyPaymentDetails() });
@@ -98,11 +145,15 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
     showToast("تم تحديث حالة الغرفة");
   }
   // تسجيل دفعة (كاملة أو جزئية) على الحجز: كل دفعة ليها وسيلتها وتفاصيلها
-  // (فيزا: آخر ٤ أرقام، تحويل: اسم + رقم) وبتتسجّل في صف نفس الوسيلة في اليومية،
+  // (فيزا: آخر 4 أرقام، تحويل: اسم + رقم) وبتتسجّل في صف نفس الوسيلة في اليومية،
   // فتدخل التحصيل وعهدة الفيزا والتقرير بنفس التفاصيل. حالة الحجز (مدفوع
   // بالكامل / متبقي) بتتحدّث لوحدها من المدفوع والإجمالي - مفيش علامة بتتعلّم.
   // لو النزيل عليه خدمات كافيتيريا، الدفعة بتسدّدها الأول وبتروح لصف الكافيتيريا.
-  async function recordPayment(booking) { return guarded("pay:" + booking.id, () => recordPaymentInner(booking)); }
+  async function recordPayment(booking) {
+    setPayLock(true);
+    try { return await guarded("pay:" + booking.id, () => recordPaymentInner(booking)); }
+    finally { setTimeout(() => setPayLock(false), 700); }
+  }
   async function recordPaymentInner(booking) {
     if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
     const due = bookingAmountDue(booking);
@@ -250,35 +301,56 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
   const cq = codeQuery.trim().toLowerCase();
   const codeHits = findGuestCodeHits(bookings, cq);
 
+  const LEGEND = [
+    ["available", "متاحة"], ["occupied_paid", "مشغولة - متحصّلة"], ["occupied_unpaid", "مشغولة - متبقي فلوس"], ["reserved", "قادمة قريبًا"],
+    ["early_checkout", "غادر مبكرًا"], ["maintenance", "صيانة"], ["cleaning", "تحت التنظيف"],
+  ];
+  const statusOf = (n) => computeRoomStatus(n, bookings, overrides, date);
+  const shownRooms = stFilter === "all" ? rooms : rooms.filter((r) => statusOf(r.number).key === stFilter);
+  const occPct = rooms.length ? Math.round((((counts.occupied_paid || 0) + (counts.occupied_unpaid || 0)) / rooms.length) * 100) : 0;
+
   return (
-    <div style={{ padding: 14 }}>
-      <div className="cx-no-print" style={{ marginBottom: 12 }}>
-        <input className="cx-input" data-testid="board-code-search" style={{ maxWidth: 320 }} placeholder="🔎 بحث بكود النزيل (يعرّفك الغرفة)" value={codeQuery} onChange={(e) => setCodeQuery(e.target.value)} />
-        <div style={{ marginTop: 8 }}><GuestCodeHits hits={codeHits} rooms={rooms} onOpenRoom={(r) => { setSelected(r); setCodeQuery(""); }} /></div>
-        {cq.length >= 3 && !codeHits.length && <div data-testid="board-code-missing" style={{ marginTop: 6, fontSize: 12, color: "var(--rust)" }}>مفيش نزيل بالكود ده</div>}
+    <div className="cx-page">
+      <div className="cx-no-print cx-toolbar" style={{ marginBottom: 14, flexDirection: "column", alignItems: "stretch" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ position: "relative", flex: "1 1 260px", maxWidth: 380 }}>
+            <Search size={16} aria-hidden="true" style={{ position: "absolute", insetInlineStart: 11, top: 12, color: "var(--faint)" }} />
+            <input className="cx-input" data-testid="board-code-search" style={{ paddingInlineStart: 34 }} placeholder="بحث بكود النزيل (يعرّفك الغرفة)" value={codeQuery} onChange={(e) => setCodeQuery(e.target.value)} />
+          </div>
+          <div className="cx-legend" role="radiogroup" aria-label="فلترة الغرف حسب الحالة">
+            <span role="radio" tabIndex={0} aria-checked={stFilter === "all"} className="cx-pill" style={{ background: "var(--paper2)", color: "var(--ink)" }} onClick={() => setStFilter("all")} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setStFilter("all")}>كل الغرف ({rooms.length})</span>
+            {LEGEND.map(([k, label]) => (
+              <span key={k} role="radio" tabIndex={0} aria-checked={stFilter === k} className="cx-pill" style={{ background: STATUS_TINTS[k], color: STATUS_TEXT[k] }}
+                onClick={() => setStFilter(stFilter === k ? "all" : k)} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setStFilter(stFilter === k ? "all" : k)}>{label} {counts[k] || 0}</span>
+            ))}
+          </div>
+        </div>
+        {(codeHits.length > 0 || cq.length >= 3) && (
+          <div>
+            <GuestCodeHits hits={codeHits} rooms={rooms} onOpenRoom={(r) => { setSelected(r); setCodeQuery(""); }} />
+            {cq.length >= 3 && !codeHits.length && <div data-testid="board-code-missing" style={{ fontSize: 13, color: "var(--rust)" }}>مفيش نزيل بالكود ده</div>}
+          </div>
+        )}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
-        <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>تحصيل اليوم</div><div style={{ fontWeight: 800, fontSize: 15 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.rev, c)} ${c}`).join(" + ") : "0") : "…"}</div></div>
-        <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>مصاريف اليوم</div><div style={{ fontWeight: 800, fontSize: 15 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.exp, c)} ${c}`).join(" + ") : "0") : "…"}</div></div>
-        <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>نسبة الإشغال</div><div style={{ fontWeight: 800, fontSize: 20 }}>{rooms.length ? Math.round((((counts.occupied_paid || 0) + (counts.occupied_unpaid || 0)) / rooms.length) * 100) : 0}%</div></div>
-        <div className="cx-kpi"><div style={{ fontSize: 11, color: "var(--muted)" }}>شيفتات تحتاج متابعة</div><div style={{ fontWeight: 800, fontSize: 20, color: kpis?.flagged ? "var(--rust)" : "var(--text)" }}>{kpis ? kpis.flagged : "…"}</div></div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 16 }}>
+        <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-green" aria-hidden="true"><Wallet size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>تحصيل اليوم</div><div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.rev, c)} ${c}`).join(" + ") : "0") : "…"}</div></div></div>
+        <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-red" aria-hidden="true"><Receipt size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>مصاريف اليوم</div><div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.exp, c)} ${c}`).join(" + ") : "0") : "…"}</div></div></div>
+        <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-indigo" aria-hidden="true"><BedDouble size={19} /></span><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>نسبة الإشغال</div><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span style={{ fontWeight: 700, fontSize: 20 }}>{occPct}%</span><span aria-hidden="true" style={{ flex: 1, height: 6, background: "var(--paper2)", borderRadius: 6, overflow: "hidden" }}><span style={{ display: "block", height: "100%", width: occPct + "%", background: "linear-gradient(90deg,#7A6BC9,#5B4BA6)" }} /></span></div></div></div>
+        <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className={"cx-ico " + (kpis?.flagged ? "ic-red" : "ic-amber")} aria-hidden="true"><AlertTriangle size={19} /></span><div><div style={{ fontSize: 13, color: "var(--muted)" }}>شيفتات تحتاج متابعة</div><div style={{ fontWeight: 700, fontSize: 20, color: kpis?.flagged ? "var(--rust)" : "var(--text)" }}>{kpis ? kpis.flagged : "…"}</div></div></div>
       </div>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, fontSize: 12.5 }}>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.available, color: STATUS_TEXT.available }}>متاحة {counts.available || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.occupied_paid, color: STATUS_TEXT.occupied_paid }}>مشغولة - متحصّلة {counts.occupied_paid || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.occupied_unpaid, color: STATUS_TEXT.occupied_unpaid }}>مشغولة - متبقي فلوس {counts.occupied_unpaid || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.reserved, color: STATUS_TEXT.reserved }}>قادمة قريبًا {counts.reserved || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.early_checkout, color: STATUS_TEXT.early_checkout }}>غادر مبكرًا {counts.early_checkout || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.maintenance, color: STATUS_TEXT.maintenance }}>صيانة {counts.maintenance || 0}</span>
-        <span className="cx-pill" style={{ background: STATUS_TINTS.cleaning, color: STATUS_TEXT.cleaning }}>تحت التنظيف {counts.cleaning || 0}</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px,1fr))", gap: 10 }}>
-        {rooms.map((r) => { const s = computeRoomStatus(r.number, bookings, overrides, date); return (
-          <div key={r.number} onClick={() => setSelected(r.number)} className={"cx-tile " + (selected === r.number ? "selected" : "")} style={{ borderRightColor: STATUS_COLORS[s.key], borderRightWidth: 5, background: STATUS_TINTS[s.key] || "var(--paper)" }}>
-            <div style={{ fontWeight: 800, fontSize: r.name ? 14.5 : 20, lineHeight: 1.15, wordBreak: "break-word" }}>{r.name || r.number}</div>
-            {s.guest && <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4 }}>{s.guest}</div>}
-            {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{fmt(s.booking.priceNight)} {s.booking.currency} / ليلة</div>}
-            {s.booking?.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", fontSize: 10, marginTop: 3 }}>تسكين مكرر</span>}
+      <TodayStrip rooms={rooms} bookings={bookings} overrides={overrides} date={date} onOpen={(n) => { setStFilter("all"); setSelected(n); }} />
+      <div className={"cx-board" + (room && status ? " has-panel" : "")}>
+      <div className="cx-tiles">
+        {shownRooms.length === 0 && <div style={{ gridColumn: "1 / -1", color: "var(--muted)", padding: 30, textAlign: "center" }}>مفيش غرف بالحالة دي دلوقتي</div>}
+        {shownRooms.map((r) => { const s = statusOf(r.number); const dueT = s.booking && (s.key === "occupied_unpaid") ? bookingAmountDue(s.booking) : 0; return (
+          <div key={r.number} role="button" tabIndex={0} aria-pressed={selected === r.number} onClick={() => setSelected(r.number)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(r.number); } }}
+            className={"cx-tile " + (selected === r.number ? "selected" : "")} style={{ "--st": STATUS_COLORS[s.key], background: `linear-gradient(180deg, ${STATUS_TINTS[s.key] || "#fff"} 0%, #fff 78%)` }}>
+            <span className="cx-tile-st" style={{ color: STATUS_TEXT[s.key] }}>{TILE_LABEL[s.key]}</span>
+            <div style={{ fontWeight: 700, fontSize: r.name ? 16 : 22, lineHeight: 1.25, overflowWrap: "anywhere", color: "var(--ink)" }}><RoomName rooms={rooms} number={r.number} prefix={false} /></div>
+            {s.guest && <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.guest}</div>}
+            {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 12.5, color: "var(--muted)" }}>{fmt(s.booking.priceNight)} {s.booking.currency} / ليلة</div>}
+            {dueT > 0 && <div style={{ fontSize: 12.5, color: "var(--rust)", fontWeight: 600, marginTop: "auto" }}>متبقي {fmt(dueT)} {s.booking.currency}</div>}
+            {s.booking?.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>تسكين مكرر</span>}
           </div>
         ); })}
       </div>
@@ -299,18 +371,18 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
         ].filter(Boolean) : [];
         const codes = b ? guestCodeEntries(b) : [];
         return (
-        <div className="cx-card" style={{ marginTop: 16, padding: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>{roomLabel(rooms, room.number)} <span className="cx-pill" style={{ background: STATUS_TINTS[status.key], color: STATUS_COLORS[status.key], fontSize: 11.5, marginInlineStart: 6 }}>{status.label}</span></div>
-            <button className="cx-btn cx-btn-outline" aria-label="إغلاق" onClick={() => setSelected(null)}><X size={14} /></button>
+        <aside className="cx-card cx-panel" aria-label={"تفاصيل " + roomLabel(rooms, room.number)} style={{ padding: 16 }}>
+          <div className="cx-panel-head">
+            <div style={{ fontSize: 20, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span><RoomName rooms={rooms} number={room.number} /></span> <span className="cx-pill" style={{ background: STATUS_TINTS[status.key], color: STATUS_TEXT[status.key], fontSize: 12.5 }}>{status.label}</span></div>
+            <button className="cx-btn cx-btn-outline" aria-label="إغلاق" title="إغلاق (Esc)" style={{ minHeight: 36, padding: "6px 10px" }} onClick={() => setSelected(null)}><X size={16} /></button>
           </div>
 
           {/* نزيل غادر مبكرًا النهارده: بياناته وحسابه وحالة رد الفلوس بنفس الشكل في كل مكان */}
           {departedList.map((d) => (
             <div key={d.id} data-testid="departed-card" className="cx-card" style={{ marginTop: 10, padding: 10, background: "#FBE9DA", display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: 13 }}>
-                <span className="cx-pill" style={{ background: "#fff", color: "var(--rust)", fontSize: 11, marginInlineEnd: 6 }}>غادر مبكرًا</span>
-                <b>{d.guestName}</b> - غادر النهارده ({d.checkin} → {d.checkout}){d.checkin === d.checkout ? " - دخل وخرج في نفس اليوم" : ""}{bookings.some((bk) => bk.room === selected && bk.duplicatePlacement && bk.id !== d.id && bk.checkin <= date && date < bk.checkout) ? " وحل مكانه نزيل جديد" : ""}
+              <div style={{ fontSize: 14 }}>
+                <span className="cx-pill" style={{ background: "#fff", color: "var(--rust)", fontSize: 12.5, marginInlineEnd: 6 }}>غادر مبكرًا</span>
+                <b>{d.guestName}</b> - غادر النهارده (<DateRange from={d.checkin} to={d.checkout} />){d.checkin === d.checkout ? " - دخل وخرج في نفس اليوم" : ""}{bookings.some((bk) => bk.room === selected && bk.duplicatePlacement && bk.id !== d.id && bk.checkin <= date && date < bk.checkout) ? " وحل مكانه نزيل جديد" : ""}
               </div>
               <MoneyBox b={d} />
               <RefundBox key={d.id} b={d} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
@@ -322,12 +394,14 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
               <div>
                 <div style={{ fontWeight: 800, fontSize: 15 }}>
                   {b.guestName}
-                  {online && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 11 }}>مدفوع أونلاين</span>}
-                  {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 11 }}>تسكين مكرر</span>}
+                  {online && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 12.5 }}>مدفوع أونلاين</span>}
+                  {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 12.5 }}>تسكين مكرر</span>}
                 </div>
-                <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>
-                  {b.checkin} ← {b.checkout} · {nightsBetween(b.checkin, b.checkout)} ليلة · {fmt(b.priceNight)} {b.currency} / ليلة · {b.pax || 1} فرد
-                  {b.code && <span dir="ltr" data-testid="card-booking-code" style={{ fontFamily: "monospace", marginInlineStart: 8 }}>{b.code}</span>}
+                <div className="cx-meta" style={{ marginTop: 4 }}>
+                  <span><CalendarDays size={14} aria-hidden="true" /><DateRange from={b.checkin} to={b.checkout} /></span>
+                  <span><Moon size={14} aria-hidden="true" />{nightsBetween(b.checkin, b.checkout)} ليلة · {fmt(b.priceNight)} {b.currency} / ليلة</span>
+                  <span><Users size={14} aria-hidden="true" />{b.pax || 1} فرد</span>
+                  {b.code && <span><Hash size={14} aria-hidden="true" /><span dir="ltr" data-testid="card-booking-code" style={{ fontFamily: "monospace" }}>{b.code}</span></span>}
                 </div>
               </div>
 
@@ -335,25 +409,25 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
               <PayBreakdown payments={payBreakdown} currency={b.currency} />
               <RefundBox key={b.id} b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
 
-              {offShift && (perms.markPaymentReceived || perms.editBookings) && <div style={{ fontSize: 11.5, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعمل أي حاجة هنا." : "مش شيفتك دلوقتي - التحصيل والتعديل مش متاحين غير وقت شيفتك اللي حاجزه."}</div>}
+              {offShift && (perms.markPaymentReceived || perms.editBookings) && <div style={{ fontSize: 13, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8, display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعمل أي حاجة هنا." : "مش شيفتك دلوقتي - التحصيل والتعديل مش متاحين غير وقت شيفتك اللي حاجزه."}</div>}
 
               {/* الأفعال الأساسية: تحصيل / غادر مبكرًا */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 {perms.markPaymentReceived && !offShift && b.status !== "ملغي" && due > 0 && (
                   <div data-testid="pay-panel" style={{ width: "100%", background: "#fff", borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700 }}>{online ? "تسجيل تحصيل الخدمات/الدخول المبكر" : "تسجيل دفعة"} <span style={{ fontWeight: 400, color: "var(--muted)" }}>(سيب المبلغ فاضي = كامل المتبقي {fmt(due)} {b.currency})</span></div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{online ? "تسجيل تحصيل الخدمات/الدخول المبكر" : "تسجيل دفعة"} <span style={{ fontWeight: 400, color: "var(--muted)" }}>(سيب المبلغ فاضي = كامل المتبقي {fmt(due)} {b.currency})</span></div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start" }}>
                       <input className="cx-input" data-testid="pay-amount" type="number" min="0" placeholder={`المبلغ (${fmt(due)})`} style={{ width: 120 }} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} />
-                      <select className="cx-select" aria-label="وسيلة الدفع" data-testid="collect-method" style={{ fontSize: 12, width: 150 }} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                      <select className="cx-select" aria-label="وسيلة الدفع" data-testid="collect-method" style={{ fontSize: 13, width: 150 }} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
                       <PaymentDetailsInline compact={false} testid="pay" method={pay.method} details={pay.details} onChange={(d) => setPay({ ...pay, details: d })} />
-                      <button className="cx-btn cx-btn-gold" data-testid="pay-record" style={{ fontSize: 12 }} onClick={() => recordPayment(b)}><Check size={13} /> تسجيل التحصيل</button>
+                      <button className="cx-btn cx-btn-gold" data-testid="pay-record" style={{ fontSize: 13 }} disabled={payLock} aria-busy={payLock} onClick={() => recordPayment(b)}><Check size={13} /> تسجيل التحصيل</button>
                     </div>
                   </div>
                 )}
                 {occupiedNow && perms.editRoomStatus && !offShift && (
                   <span data-testid="early-leave"><TwoStepButton label="غادر مبكرًا (تقصير الإقامة)" confirmLabel={`تأكيد المغادرة المبكرة؟ ${earlyLeavePreview(b)}`} onConfirm={() => earlyLeave(b)} /></span>
                 )}
-                {perms.editBookings && onEditBooking && <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => onEditBooking(b.id)}><Pencil size={13} /> تعديل الحجز</button>}
+                {perms.editBookings && onEditBooking && <button className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} onClick={() => onEditBooking(b.id)}><Pencil size={13} /> تعديل الحجز</button>}
               </div>
 
               {/* باقي التفاصيل مطوية عشان الشاشة تفضل بسيطة */}
@@ -361,32 +435,32 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 <Sec id="sec-extras" title="خدمات إضافية ودخول مبكر" badge={extrasList.length ? extrasList.length : null}>
                   {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift ? (
                     <div>
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (بتتضاف على طول من غير ما تفتح الحجز كامل)</div>
+                      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>رسوم إضافية (بتتضاف على طول من غير ما تفتح الحجز كامل)</div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
                         {profile?.role !== "reservations" && (<>
-                          <div><label style={{ fontSize: 10, color: "var(--muted)" }}>غسيل</label><input className="cx-input" aria-label="غسيل" type="number" min="0" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
-                          <div><label style={{ fontSize: 10, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" aria-label="كافيتيريا" type="number" min="0" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
+                          <div><label style={{ fontSize: 11.5, color: "var(--muted)" }}>غسيل</label><input className="cx-input" aria-label="غسيل" type="number" min="0" value={extrasDraft.laundry} onChange={(e) => setExtrasDraft({ ...extrasDraft, laundry: e.target.value })} /></div>
+                          <div><label style={{ fontSize: 11.5, color: "var(--muted)" }}>كافيتيريا</label><input className="cx-input" aria-label="كافيتيريا" type="number" min="0" value={extrasDraft.cafeteria} onChange={(e) => setExtrasDraft({ ...extrasDraft, cafeteria: e.target.value })} /></div>
                         </>)}
-                        <div><label style={{ fontSize: 10, color: "var(--muted)" }}>جولات</label><input className="cx-input" aria-label="جولات" type="number" min="0" value={extrasDraft.tours} onChange={(e) => setExtrasDraft({ ...extrasDraft, tours: e.target.value })} /></div>
-                        <div><label style={{ fontSize: 10, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" aria-label="بيك أب" type="number" min="0" value={extrasDraft.pickup} onChange={(e) => setExtrasDraft({ ...extrasDraft, pickup: e.target.value })} /></div>
+                        <div><label style={{ fontSize: 11.5, color: "var(--muted)" }}>جولات</label><input className="cx-input" aria-label="جولات" type="number" min="0" value={extrasDraft.tours} onChange={(e) => setExtrasDraft({ ...extrasDraft, tours: e.target.value })} /></div>
+                        <div><label style={{ fontSize: 11.5, color: "var(--muted)" }}>بيك أب</label><input className="cx-input" aria-label="بيك أب" type="number" min="0" value={extrasDraft.pickup} onChange={(e) => setExtrasDraft({ ...extrasDraft, pickup: e.target.value })} /></div>
                       </div>
-                      <button className="cx-btn cx-btn-gold" style={{ marginTop: 8, fontSize: 12 }} onClick={() => saveExtras(b)}><Check size={13} /> حفظ الرسوم</button>
+                      <button className="cx-btn cx-btn-gold" style={{ marginTop: 8, fontSize: 13 }} onClick={() => saveExtras(b)}><Check size={13} /> حفظ الرسوم</button>
                     </div>
                   ) : extrasList.length > 0 && (
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{extrasList.map(([label, amt]) => <span key={label} className="cx-pill" style={{ background: "var(--paper2)" }}>{label}: {fmt(amt)}</span>)}</div>
                   )}
-                  {b.earlyCheckin?.applied && b.earlyCheckin.note && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--muted)" }}>ملاحظة الدخول المبكر: {b.earlyCheckin.note}</div>}
+                  {b.earlyCheckin?.applied && b.earlyCheckin.note && <div style={{ marginTop: 6, fontSize: 13, color: "var(--muted)" }}>ملاحظة الدخول المبكر: {b.earlyCheckin.note}</div>}
                   {occupiedNow && !b.earlyCheckin?.applied && canAct && (
                     <div data-testid="early-checkin-panel" style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--hair)" }}>
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>النزيل دخل بدري قبل معاد الحجز؟ سجّل رسم الدخول المبكر - بيزوّد إجمالي الحجز{perms.markPaymentReceived ? "، ولو حصّلته دلوقتي بيتسجّل في اليومية والتقرير" : ""}</div>
+                      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>النزيل دخل بدري قبل معاد الحجز؟ سجّل رسم الدخول المبكر - بيزوّد إجمالي الحجز{perms.markPaymentReceived ? "، ولو حصّلته دلوقتي بيتسجّل في اليومية والتقرير" : ""}</div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                         <input className="cx-input" data-testid="early-fee" type="number" min="0" placeholder="الرسم" value={ecFee} onChange={(e) => setEcFee(e.target.value)} style={{ width: 90 }} />
                         <AutoText className="cx-input" data-testid="early-note" placeholder="ملاحظة (اختياري)" value={ecNote} onChange={(e) => setEcNote(e.target.value)} style={{ width: 160 }} />
                         {perms.markPaymentReceived && (<>
-                          <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}><input type="checkbox" data-testid="early-collect" checked={ecCollect} onChange={(e) => setEcCollect(e.target.checked)} /> حصّلته دلوقتي</label>
-                          {ecCollect && <><select className="cx-select" aria-label="وسيلة دفع رسم الدخول المبكر" data-testid="early-method" style={{ fontSize: 12, width: 130 }} value={epay.method} onChange={(e) => setEpay({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select><PaymentDetailsInline compact={false} testid="early" method={epay.method} details={epay.details} onChange={(d) => setEpay({ ...epay, details: d })} /></>}
+                          <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}><input type="checkbox" data-testid="early-collect" checked={ecCollect} onChange={(e) => setEcCollect(e.target.checked)} /> حصّلته دلوقتي</label>
+                          {ecCollect && <><select className="cx-select" aria-label="وسيلة دفع رسم الدخول المبكر" data-testid="early-method" style={{ fontSize: 13, width: 130 }} value={epay.method} onChange={(e) => setEpay({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select><PaymentDetailsInline compact={false} testid="early" method={epay.method} details={epay.details} onChange={(d) => setEpay({ ...epay, details: d })} /></>}
                         </>)}
-                        <button className="cx-btn cx-btn-gold" data-testid="early-apply" style={{ fontSize: 12 }} onClick={() => applyEarlyCheckin(b)}><Check size={13} /> تسجيل الدخول المبكر</button>
+                        <button className="cx-btn cx-btn-gold" data-testid="early-apply" style={{ fontSize: 13 }} onClick={() => applyEarlyCheckin(b)}><Check size={13} /> تسجيل الدخول المبكر</button>
                       </div>
                     </div>
                   )}
@@ -395,11 +469,11 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
 
               {canAct && occupiedNow && (
                 <Sec id="sec-extend" title="تمديد الإقامة">
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي بيتحدثوا لوحدهم (لو الغرفة محجوزة لحد تاني في التاريخ الجديد مش هيتسمحلك)</div>
+                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي بيتحدثوا لوحدهم (لو الغرفة محجوزة لحد تاني في التاريخ الجديد مش هيتسمحلك)</div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <input className="cx-input" aria-label="عدد ليالي التمديد" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
-                    <span style={{ fontSize: 11.5, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
-                    <button className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => extendBooking(b)}>تمديد الحجز</button>
+                    <span style={{ fontSize: 13, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
+                    <button className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} onClick={() => extendBooking(b)}>تمديد الحجز</button>
                   </div>
                 </Sec>
               )}
@@ -408,46 +482,47 @@ export function RoomBoard({ rooms, overrides, bookings, perms, profile, onSaveOv
                 <GuestCodeChips codes={codes} />
                 {canAct && (
                   <div data-testid="guest-codes-editor" style={{ marginTop: 6 }}>
-                    <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>كود لكل فرد (اكتبه بنفسك - فريد جوه الشهر)</div>
+                    <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>كود لكل فرد (اكتبه بنفسك - فريد جوه الشهر)</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                       {codesDraft.slice(0, 100).map((c, i) => <input key={i} className="cx-input" data-testid={`board-code-input-${i + 1}`} dir="ltr" maxLength={40} placeholder={`كود الفرد ${i + 1}`} value={c} onChange={(e) => setCodesDraft(codesDraft.map((x, j) => (j === i ? e.target.value : x)))} style={{ width: 130 }} />)}
-                      <button className="cx-btn cx-btn-outline" data-testid="board-codes-save" style={{ fontSize: 12 }} onClick={() => saveGuestCodes(b)}>حفظ الأكواد</button>
+                      <button className="cx-btn cx-btn-outline" data-testid="board-codes-save" style={{ fontSize: 13 }} onClick={() => saveGuestCodes(b)}>حفظ الأكواد</button>
                     </div>
                   </div>
                 )}
               </Sec>
 
               <Sec id="sec-info" title="بيانات الحجز">
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, fontSize: 12.5 }}>
-                  <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>مصدر الحجز</div><div style={{ fontWeight: 700 }}>{b.source}</div></div>
-                  {!online && <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>آخر وسيلة دفع</div><div style={{ fontWeight: 700 }}>{b.paymentMethod}</div></div>}
-                  <div><div style={{ color: "var(--muted)", fontSize: 10.5 }}>سعر الليلة × المدة</div><div style={{ fontWeight: 700 }}>{fmt(b.priceNight)} × {nightsBetween(b.checkin, b.checkout)} = {fmt(b.totalRoom)} {b.currency}</div></div>
-                  {online && b.paymentDetails?.ref && <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>ملاحظة حجز المنصة</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.ref}</div></div>}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, fontSize: 13.5 }}>
+                  <div><div style={{ color: "var(--muted)", fontSize: 12 }}>مصدر الحجز</div><div style={{ fontWeight: 700 }}>{b.source}</div></div>
+                  {!online && <div><div style={{ color: "var(--muted)", fontSize: 12 }}>آخر وسيلة دفع</div><div style={{ fontWeight: 700 }}>{b.paymentMethod}</div></div>}
+                  <div><div style={{ color: "var(--muted)", fontSize: 12 }}>سعر الليلة × المدة</div><div style={{ fontWeight: 700 }}>{fmt(b.priceNight)} × {nightsBetween(b.checkin, b.checkout)} = {fmt(b.totalRoom)} {b.currency}</div></div>
+                  {online && b.paymentDetails?.ref && <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 12 }}>ملاحظة حجز المنصة</div><div style={{ fontWeight: 700 }}>{b.paymentDetails.ref}</div></div>}
                   {!online && ONLINE_METHODS.includes(b.paymentMethod) && describePaymentDetails(b.paymentMethod, b.paymentDetails) && (
-                    <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>{b.paymentMethod === "فيزا" ? "فيزا - آخر ٤ أرقام" : "تفاصيل التحويل"}</div><div dir="ltr" style={{ fontWeight: 700, textAlign: "right" }}>{describePaymentDetails(b.paymentMethod, b.paymentDetails)}</div></div>
+                    <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 12 }}>{b.paymentMethod === "فيزا" ? "فيزا - آخر 4 أرقام" : "تفاصيل التحويل"}</div><div dir="ltr" style={{ fontWeight: 700, textAlign: "right" }}>{describePaymentDetails(b.paymentMethod, b.paymentDetails)}</div></div>
                   )}
-                  {b.notes && <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 10.5 }}>ملاحظات</div><div>{b.notes}</div></div>}
+                  {b.notes && <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 12 }}>ملاحظات</div><div>{b.notes}</div></div>}
                 </div>
               </Sec>
             </div>
           )}
 
           {/* الحالة اليدوية: صيانة / تنظيف بس، وبس لما مفيش نزيل ساكن (النزيل الساكن مابيتخباش بأي حالة) */}
-          {!perms.editRoomStatus ? (<div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Eye size={13} /> عرض فقط لدورك الحالي</div>) : !occupiedNow && (
+          {!perms.editRoomStatus ? (<div style={{ marginTop: 12, fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Eye size={13} /> عرض فقط لدورك الحالي</div>) : !occupiedNow && (
             offShift ? (
-              <div style={{ marginTop: 12, fontSize: 12, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 10, display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ marginTop: 12, fontSize: 13, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 10, display: "flex", alignItems: "center", gap: 4 }}>
                 <AlertTriangle size={13} /> {shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تعدّل حالة الغرف." : "مش شيفتك دلوقتي - الحالة مش هتتعدل غير وقت شيفتك اللي حاجزه."}
               </div>
             ) : (
               <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>حالة الغرفة</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{MANUAL_STATUS_OPTIONS.map((o) => <button key={o.key} className="cx-btn cx-btn-outline" style={{ fontSize: 12 }} onClick={() => saveOverride(o.key)}>{o.label}</button>)}</div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 6 }}>حالة الغرفة</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{MANUAL_STATUS_OPTIONS.map((o) => <button key={o.key} className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} onClick={() => saveOverride(o.key)}>{o.label}</button>)}</div>
               </div>
             )
           )}
-        </div>
+        </aside>
         );
       })()}
+      </div>
     </div>
   );
 }

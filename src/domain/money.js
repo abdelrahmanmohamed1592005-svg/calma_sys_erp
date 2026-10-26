@@ -43,6 +43,8 @@ export const emptyPaymentDetails = () => ({ senderName: "", senderNumber: "", re
 export const isVisaMethod = (m) => m === "فيزا";
 export const isTransferMethod = (m) => ONLINE_METHODS.includes(m) && m !== "فيزا";
 const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+/* كل الأرقام في السيستم (فلوس، تواريخ، عدد) بالأرقام اللاتيني 0-9 - نفس اللي الموظف بيكتبه في الخانات */
+export const NUM_LOCALE = "en-US";
 export function toLatinDigits(v) { return String(v ?? "").replace(/[٠-٩]/g, (d) => String(ARABIC_DIGITS.indexOf(d))); }
 export function normalizeLast4(v) { return toLatinDigits(v).replace(/\D/g, "").slice(-4); }
 export function normalizePhone(v) { return toLatinDigits(v).replace(/[^\d+]/g, "").slice(0, 20); }
@@ -57,7 +59,7 @@ export function cleanPaymentDetailsFor(method, d) {
 }
 /* رسالة خطأ (نص) لو التفاصيل ناقصة/غلط لوسيلة الدفع دي، أو "" لو سليمة */
 export function validatePaymentDetailsFor(method, d) {
-  if (isVisaMethod(method)) return normalizeLast4(d?.senderNumber).length === 4 ? "" : "اكتب آخر ٤ أرقام من الكارت (٤ أرقام بالظبط)";
+  if (isVisaMethod(method)) return normalizeLast4(d?.senderNumber).length === 4 ? "" : "اكتب آخر 4 أرقام من الكارت (4 أرقام بالظبط)";
   if (isTransferMethod(method)) return normalizePhone(d?.senderNumber).replace(/\D/g, "").length >= 6 ? "" : "اكتب رقم التليفون اللي اتحوّل منه";
   return "";
 }
@@ -80,7 +82,7 @@ export const emptyLedgerRow = (room) => ({
 });
 
 export function fmt(n) {
-  return (Number(n) || 0).toLocaleString("ar-EG");
+  return (Number(n) || 0).toLocaleString(NUM_LOCALE);
 }
 
 export function money(obj, cur) {
@@ -384,7 +386,7 @@ export function refundStatusOf(b) {
   if (!b) return null;
   const paid = Number(b.amountPaid) || 0;
   const cur = b.currency || "";
-  const fmtN = (n) => (Number(n) || 0).toLocaleString("ar-EG");
+  const fmtN = (n) => (Number(n) || 0).toLocaleString(NUM_LOCALE);
   if (b.refundPending && refundDueAmount(b) > 0) return { kind: "pending", text: `طلب رد فلوس معلّق: ${fmtN(refundDueAmount(b))} ${cur} - منتظر قرار مدير الحجوزات` };
   if (b.refundDecision === "refunded" && Number(b.refundedAmount) > 0) return { kind: "refunded", text: `اترد للنزيل ${fmtN(b.refundedAmount)} ${cur}${b.refundedBy ? " (بواسطة " + b.refundedBy + ")" : ""}` };
   if (b.status !== "ملغي") return null;

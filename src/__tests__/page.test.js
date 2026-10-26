@@ -12,7 +12,7 @@ const fakeQuery = (rows, maxRows, { withCount = true, failAtPage = null } = {}) 
 const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: i }));
 
 describe("fetchAll - قراءة كل الصفوف على صفحات", () => {
-  it("أكتر من ١٠٠٠ صف (حد Supabase) بتتجاب كلها بالترتيب من غير تكرار", async () => {
+  it("أكتر من 1000 صف (حد Supabase) بتتجاب كلها بالترتيب من غير تكرار", async () => {
     const { data } = await fetchAll(fakeQuery(mk(2500), 1000));
     expect(data).toHaveLength(2500);
     expect(data.map((r) => r.id)).toEqual(mk(2500).map((r) => r.id));

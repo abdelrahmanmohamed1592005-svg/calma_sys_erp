@@ -6,14 +6,14 @@
 */
 
 /*
-  سياسة كلمة المرور: ٨ حروف على الأقل، وفيها حرف ورقم على الأقل. ده أقوى من
+  سياسة كلمة المرور: 8 حروف على الأقل، وفيها حرف ورقم على الأقل. ده أقوى من
   الحد الأدنى الافتراضي (٦ حروف بس) من غير ما يكون معقد أوي على موظفين مش
   كلهم متمرسين تقنيًا.
 */
 export function validatePasswordStrength(password) {
   const pw = String(password || "");
-  if (pw.length < 8) return { ok: false, message: "كلمة المرور ٨ حروف على الأقل" };
-  if (pw.length > 128) return { ok: false, message: "كلمة المرور طويلة جدًا (الحد الأقصى ١٢٨ حرف)" };
+  if (pw.length < 8) return { ok: false, message: "كلمة المرور 8 حروف على الأقل" };
+  if (pw.length > 128) return { ok: false, message: "كلمة المرور طويلة جدًا (الحد الأقصى 128 حرف)" };
   if (!/[A-Za-z]/.test(pw)) return { ok: false, message: "كلمة المرور لازم تحتوي على حرف واحد على الأقل" };
   if (!/[0-9]/.test(pw)) return { ok: false, message: "كلمة المرور لازم تحتوي على رقم واحد على الأقل" };
   return { ok: true, message: "" };
@@ -23,7 +23,7 @@ export function validatePasswordStrength(password) {
    تسبب مشاكل في تحويله لإيميل داخلي أو في عناوين URL. */
 export function validateUsername(username) {
   const u = String(username || "").trim().toLowerCase();
-  if (u.length < 3 || u.length > 30) return { ok: false, message: "اسم المستخدم لازم يكون من ٣ لـ ٣٠ حرف" };
+  if (u.length < 3 || u.length > 30) return { ok: false, message: "اسم المستخدم لازم يكون من 3 لـ 30 حرف" };
   if (!/^[a-z0-9_]+$/.test(u)) return { ok: false, message: "اسم المستخدم يقبل بس حروف إنجليزية وأرقام و _" };
   return { ok: true, message: "" };
 }

@@ -419,7 +419,7 @@ describe("refundStatusOf - حالة الفلوس لحجز ملغي", () => {
   it("ملغي وعليه طلب رد معلّق => pending بالمبلغ", () => {
     const r = refundStatusOf({ ...base, amountPaid: 300, refundPending: true });
     expect(r.kind).toBe("pending");
-    expect(r.text).toContain("٣٠٠");
+    expect(r.text).toContain("300");
   });
   it("اترد => refunded بالمبلغ ومين رد", () => {
     const r = refundStatusOf({ ...base, amountPaid: 0, refundDecision: "refunded", refundedAmount: 300, refundedBy: "rawan" });
@@ -429,7 +429,7 @@ describe("refundStatusOf - حالة الفلوس لحجز ملغي", () => {
   it("رفض الرد => kept وبيذكر إن الفلوس فضلت", () => {
     const r = refundStatusOf({ ...base, amountPaid: 200, refundDecision: "kept" });
     expect(r.kind).toBe("kept");
-    expect(r.text).toContain("٢٠٠");
+    expect(r.text).toContain("200");
   });
   it("ملغي وفيه فلوس من غير قرار => holding", () => {
     expect(refundStatusOf({ ...base, amountPaid: 50 }).kind).toBe("holding");

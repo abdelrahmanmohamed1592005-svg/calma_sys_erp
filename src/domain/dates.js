@@ -1,3 +1,6 @@
+/* أسامي الأيام والشهور بالعربي، والأرقام لاتيني (26 أكتوبر 2026) - زي باقي السيستم */
+export const DATE_LOCALE = "ar-EG-u-nu-latn";
+
 export function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -12,12 +15,12 @@ export function addDays(dateStr, delta) {
 
 export function arabicWeekday(dateStr) {
   const [y, m, d] = dateStr.split("-").map(Number);
-  return new Intl.DateTimeFormat("ar-EG", { weekday: "long" }).format(new Date(y, m - 1, d));
+  return new Intl.DateTimeFormat(DATE_LOCALE, { weekday: "long" }).format(new Date(y, m - 1, d));
 }
 
 export function arabicDateLong(dateStr) {
   const [y, m, d] = dateStr.split("-").map(Number);
-  return new Intl.DateTimeFormat("ar-EG", { day: "numeric", month: "long", year: "numeric" }).format(new Date(y, m - 1, d));
+  return new Intl.DateTimeFormat(DATE_LOCALE, { day: "numeric", month: "long", year: "numeric" }).format(new Date(y, m - 1, d));
 }
 
 export function nightsBetween(inS, outS) {
