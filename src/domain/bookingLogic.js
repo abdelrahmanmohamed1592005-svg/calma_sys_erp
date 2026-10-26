@@ -15,9 +15,14 @@ export function isOverrideStillActive(ov, dateStr) {
    2) صيانة (لحد ما تتشال) أو تنظيف (لليوم بس) => حالتها.
    3) نزيل غادر مبكرًا النهارده => "غادر مبكرًا" (متحسبة من الحجز نفسه).
    4) حجز قادم خلال يومين => قادمة قريبًا، وغير كده => متاحة. */
-export function computeRoomStatus(roomNumber, bookings, overrides, dateStr) {
+/* opts.beforeCheckout: الساعة لسه قبل 12 الضهر (معاد الخروج) - النزيل اللي خروجه النهارده لسه في الغرفة
+   (غير لو غادر مبكرًا أو اتسجّل خروجه)، وبيتقدّم على نزيل داخل النهارده (دخوله 12 الضهر). */
+export function computeRoomStatus(roomNumber, bookings, overrides, dateStr, opts = {}) {
   const ov = overrides[roomNumber];
-  const active = bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.checkin <= dateStr && dateStr < b.checkout);
+  const departing = opts.beforeCheckout
+    ? bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.status !== "تم تسجيل الخروج" && !b.leftEarly && b.checkout === dateStr && b.checkin < dateStr)
+    : null;
+  const active = departing || bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.checkin <= dateStr && dateStr < b.checkout);
   const manual = !active && ov && (ov.status === "maintenance" || ov.status === "cleaning") && isOverrideStillActive(ov, dateStr) ? ov.status : null;
   if (manual) return { key: manual, label: STATUS_LABELS[manual], source: "manual" };
   if (active) {
@@ -26,7 +31,7 @@ export function computeRoomStatus(roomNumber, bookings, overrides, dateStr) {
     // الغرفة لازم تظهر "متبقي عليها فلوس" حتى لو العلامة القديمة لسه موجودة.
     // حجز أونلاين: سعر الغرفة متسدّد، لكن لو عليه خدمات/دخول مبكر لسه ماتحصّلتش بيفضل "متبقي عليها فلوس"
     const paid = !bookingHasDue(active);
-    return { key: paid ? "occupied_paid" : "occupied_unpaid", label: paid ? "مشغولة - متحصّل بالكامل" : "مشغولة - متبقي عليها فلوس", guest: active.guestName, booking: active, paid };
+    return { key: paid ? "occupied_paid" : "occupied_unpaid", label: paid ? "مشغولة - متحصّل بالكامل" : "مشغولة - متبقي عليها فلوس", guest: active.guestName, booking: active, paid, departingToday: !!departing };
   }
   const departed = bookings.find((b) => b.room === roomNumber && b.leftEarly && b.status !== "ملغي" && b.checkout === dateStr);
   if (departed) return { key: "early_checkout", label: STATUS_LABELS.early_checkout, guest: departed.guestName, departed, derived: true };

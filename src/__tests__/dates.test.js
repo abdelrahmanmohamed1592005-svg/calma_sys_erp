@@ -110,3 +110,22 @@ describe("ليلة تغيير الساعة (توقيت القاهرة)", () => {
     expect(shiftDayNow(new Date("2026-10-30T09:00:00+02:00"))).toBe("2026-10-30");
   }));
 });
+
+import { computeRoomStatus } from "../domain/bookingLogic";
+describe("معاد الخروج 12 الضهر في لوحة الغرف", () => {
+  const out = { id: "a", room: 601, guestName: "Leaving", checkin: "2026-10-25", checkout: "2026-10-27", status: "مؤكد", totalRoom: 200, amountPaid: 200, extras: {}, paymentDetails: {} };
+  const inn = { id: "b", room: 601, guestName: "Arriving", checkin: "2026-10-27", checkout: "2026-10-29", status: "مؤكد", totalRoom: 200, amountPaid: 0, extras: {}, paymentDetails: {} };
+  it("قبل 12: النزيل اللي خروجه النهارده لسه في الغرفة (حتى لو فيه حد داخل النهارده)", () => {
+    const st = computeRoomStatus(601, [out, inn], {}, "2026-10-27", { beforeCheckout: true });
+    expect(st.guest).toBe("Leaving");
+    expect(st.departingToday).toBe(true);
+  });
+  it("بعد 12: الغرفة للنزيل الجديد، ولو مفيش جديد بتبقى متاحة", () => {
+    expect(computeRoomStatus(601, [out, inn], {}, "2026-10-27", { beforeCheckout: false }).guest).toBe("Arriving");
+    expect(computeRoomStatus(601, [out], {}, "2026-10-27", { beforeCheckout: false }).key).toBe("available");
+  });
+  it("اللي غادر مبكرًا أو اتسجّل خروجه مابيتحسبش ساكن قبل 12", () => {
+    expect(computeRoomStatus(601, [{ ...out, leftEarly: true }], {}, "2026-10-27", { beforeCheckout: true }).key).not.toMatch(/occupied/);
+    expect(computeRoomStatus(601, [{ ...out, status: "تم تسجيل الخروج" }], {}, "2026-10-27", { beforeCheckout: true }).key).toBe("available");
+  });
+});

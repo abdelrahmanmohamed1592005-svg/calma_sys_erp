@@ -47,6 +47,10 @@ export function parseDateFlexible(s) {
    بيتسجّلوا على يوم الشيفت المسائي اللي قبلهم، مش على التاريخ الجديد بتاع
    التقويم. ده بيخلّي ترتيب الشيفتات (صباحي ← مسائي ← ليلي) ونقل العهدة بينهم
    متسق. (حجوزات الفندق نفسها بتفضل بتاريخ التقويم العادي.) */
+/* معاد الدخول والخروج في الفندق: 12 الضهر. قبلها النزيل اللي خروجه النهارده لسه في الغرفة (لوحة الغرف). */
+export const CHECKOUT_HOUR = 12;
+export const beforeCheckoutHour = (now = new Date()) => now.getHours() < CHECKOUT_HOUR;
+
 export function shiftDayNow(now = new Date()) {
   const cal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   return now.getHours() < 8 ? addDays(cal, -1) : cal;
