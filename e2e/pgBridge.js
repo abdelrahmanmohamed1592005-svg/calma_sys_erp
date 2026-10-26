@@ -115,7 +115,7 @@ export function makeBridge(pool, { log } = {}) {
         if (!/^[a-z0-9_]{3,30}$/.test(username)) return json(400, { error: "اسم المستخدم غير صالح" });
         if (!name) return json(400, { error: "الاسم مطلوب" });
         if (!["staff", "reservations", "accounts", "gm"].includes(body.role)) return json(400, { error: "دور غير معروف" });
-        if (!pwOk(body.password)) return json(400, { error: "كلمة المرور ٨ حروف على الأقل" });
+        if (!pwOk(body.password)) return json(400, { error: "كلمة المرور 8 حروف على الأقل" });
         const ex = await adminQ("select 1 from auth.users where email = $1", [`${username}@calma.internal`]);
         if (ex.rows[0]) return json(409, { error: "اسم المستخدم ده موجود بالفعل" });
         const id = randomUUID();
@@ -125,7 +125,7 @@ export function makeBridge(pool, { log } = {}) {
       }
       if (fn[1] === "reset-password") {
         const username = String(body.username || "").trim().toLowerCase();
-        if (!pwOk(body.newPassword)) return json(400, { error: "كلمة المرور ٨ حروف على الأقل" });
+        if (!pwOk(body.newPassword)) return json(400, { error: "كلمة المرور 8 حروف على الأقل" });
         const t = (await adminQ("select id from profiles where username = $1", [username])).rows[0];
         if (!t) return json(404, { error: "المستخدم مش موجود" });
         await adminQ("update auth.users set password = $2 where id = $1", [t.id, body.newPassword]);

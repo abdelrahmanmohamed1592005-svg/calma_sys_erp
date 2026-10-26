@@ -171,12 +171,12 @@ test.describe("الدخول المبكر", () => {
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 604);
     await page.getByTestId("early-fee").fill("50");
-    await page.getByTestId("early-note").fill("وصل ٧ الصبح");
+    await page.getByTestId("early-note").fill("وصل 7 الصبح");
     await page.getByTestId("early-apply").click();
     await expect(toast(page)).toContainText("اتحصّل");
-    expect(await get(env, "Early Bird")).toMatchObject({ amount_paid: 50, settled: false, early_checkin: { applied: true, fee: 50, note: "وصل ٧ الصبح" } });
+    expect(await get(env, "Early Bird")).toMatchObject({ amount_paid: 50, settled: false, early_checkin: { applied: true, fee: 50, note: "وصل 7 الصبح" } });
     await expectSync(env, { USD: 50 });
-    // الإجمالي ٢٥٠ والمتبقي ٢٠٠
+    // الإجمالي 250 والمتبقي 200
     expect(digits(await roomCard(page).getByTestId("money-box").innerText())).toContain("200");
     await expect(page.getByTestId("early-checkin-panel")).toHaveCount(0);      // اتسجّل مرة واحدة بس
     // تحصيل الباقي
@@ -184,11 +184,11 @@ test.describe("الدخول المبكر", () => {
     await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     expect(await get(env, "Early Bird")).toMatchObject({ amount_paid: 250, settled: true });
     await expectSync(env, { USD: 250 });
-    // اليومية: صفوف الحجز بتجمع ٢٥٠
+    // اليومية: صفوف الحجز بتجمع 250
     const [rec] = await env.q("select rows from shift_records");
     expect(rec.rows.filter((r) => r.room === 604).reduce((s, r) => s + (Number(r.collectionAmt) || 0), 0)).toBe(250);
     expect(rec.rows.some((r) => r.room === 604 && /دخول مبكر/.test(r.collectionDesc))).toBe(true);
-    // التقرير (مدير الحجوزات): إجمالي التحصيل ٢٥٠
+    // التقرير (مدير الحجوزات): إجمالي التحصيل 250
     await logout(page);
     await login(page, "rawan");
     await reportTotal(page, "250");
@@ -256,7 +256,7 @@ test.describe("الدخول المبكر", () => {
     expect(await get(env, "Booking Dot Com")).toMatchObject({ amount_paid: 70 });
     await expectSync(env, { USD: 70 });
     await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();
-    // التقرير: التحصيل ٧٠ (الفندق) وإيراد الأونلاين = سعر الغرفة ٢٠٠ بس
+    // التقرير: التحصيل 70 (الفندق) وإيراد الأونلاين = سعر الغرفة 200 بس
     await logout(page);
     await login(page, "rawan");
     await reportTotal(page, "70");
@@ -301,7 +301,7 @@ test.describe("المغادرة المبكرة وطلب رد الفلوس", () =
     await roomCard(page).getByRole("button", { name: "تأكيد المغادرة المبكرة؟" }).click();
   }
 
-  test("نزيل ٣ ليالي مدفوع كامل قعد ليلة وخرج: بيتحاسب ليلة والباقي طلب رد لمدير الحجوزات، وبعد الرد اليومية تتطابق", async ({ page, env }) => {
+  test("نزيل 3 ليالي مدفوع كامل قعد ليلة وخرج: بيتحاسب ليلة والباقي طلب رد لمدير الحجوزات، وبعد الرد اليومية تتطابق", async ({ page, env }) => {
     await users(env);
     const id = await env.seedBooking({ room: 609, guest: "Leaves Early", start: -1, nights: 3, price: 100, paid: 300, settled: true });
     await env.seedShift("ahmed", { collections: [{ room: 609, amount: 300, bookingId: id }] });

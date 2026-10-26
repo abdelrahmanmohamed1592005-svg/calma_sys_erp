@@ -39,7 +39,7 @@ test("الرد: الوسيلة الافتراضية اللي اتدفع بيها
   await vReq.locator("select").selectOption("فيزا");
   await expect(vReq.getByTestId("refund-no-balance-warning")).toHaveCount(0);
 
-  // الرد: الرسالة بتقول الوسيلة وآخر ٤ أرقام، واليومية اتخصمت من الفيزا بالكارت
+  // الرد: الرسالة بتقول الوسيلة وآخر 4 أرقام، واليومية اتخصمت من الفيزا بالكارت
   await vReq.getByTestId("refund-approve").click();
   await expect(toast(page)).toContainText("فيزا");
   await expect(toast(page)).toContainText("4242");
@@ -87,11 +87,11 @@ test("عربون على حجز بعيد (بعد أكتر من يومين): مو�
   await c.getByTestId("quickpay-amount").fill("500");
   await c.getByTestId("quickpay-submit").click();
   await expect(toast(page)).toContainText("أكبر من المتبقي");
-  // فيزا من غير ٤ أرقام: مرفوض
+  // فيزا من غير 4 أرقام: مرفوض
   await c.getByTestId("quickpay-amount").fill("50");
   await c.getByTestId("quickpay-method").selectOption("فيزا");
   await c.getByTestId("quickpay-submit").click();
-  await expect(toast(page)).toContainText("آخر ٤ أرقام");
+  await expect(toast(page)).toContainText("آخر 4 أرقام");
   expect(Number((await env.q("select amount_paid from bookings where id = $1", [id]))[0].amount_paid)).toBe(0);
   await c.getByTestId("quickpay-last4").fill("1234");
   await c.getByTestId("quickpay-submit").click();

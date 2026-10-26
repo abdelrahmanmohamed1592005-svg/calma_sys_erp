@@ -122,7 +122,7 @@ test("قرار رد الفلوس من جهازين: بيتنفّذ مرة واح
   const [b] = await env.q("select * from bookings where id = $1", [id]);
   expect(b).toMatchObject({ amount_paid: 0, refunded_amount: 300 });
   const [rec] = await env.q("select rows from shift_records");
-  expect(Number(rec.rows.find((r) => r.room === 603).collectionAmt)).toBe(0);      // ٣٠٠ - ٣٠٠ مرة واحدة (مش -٣٠٠)
+  expect(Number(rec.rows.find((r) => r.room === 603).collectionAmt)).toBe(0);      // 300 - 300 مرة واحدة (مش -300)
 });
 
 test("الموظف بيكتب في اليومية ورد فلوس بينزل على نفس السجل: الاتنين بيتحفظوا (دمج)", async ({ page, env }) => {
@@ -143,6 +143,6 @@ test("الموظف بيكتب في اليومية ورد فلوس بينزل ع�
   await page.waitForTimeout(2200);
   const [rec] = await env.q("select * from shift_records");
   expect(Number(rec.rows.find((x) => x.room === 602).expenseAmt)).toBe(25);                 // تعديل الموظف
-  expect(Number(rec.rows.find((x) => x.room === 604).collectionAmt)).toBe(0);               // رد الفلوس (١٠٠ - ١٠٠) ماضاعش
+  expect(Number(rec.rows.find((x) => x.room === 604).collectionAmt)).toBe(0);               // رد الفلوس (100 - 100) ماضاعش
   expect(rec.booking_collections).toHaveLength(2);
 });

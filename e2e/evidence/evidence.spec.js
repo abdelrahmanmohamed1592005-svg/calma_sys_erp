@@ -1,5 +1,5 @@
 /*
-  أدلة تشغيل حقيقية: كل سيناريو حرج بيتفحص على ٣ طبقات - الواجهة (نص + لقطة شاشة)، طلب/رد الـ API
+  أدلة تشغيل حقيقية: كل سيناريو حرج بيتفحص على 3 طبقات - الواجهة (نص + لقطة شاشة)، طلب/رد الـ API
   الفعلي اللي طلع من المتصفح، والسجلات المحفوظة فعلًا في Postgres حقيقي (قاعدة معزولة لكل اختبار).
   الناتج: evidence-out/<سيناريو>.json + .png ثم `node scripts/evidence-report.mjs` يطلّع EVIDENCE.md.
   بيانات الاختبار وهمية بالكامل؛ الباسوردات وتوكنات الدخول بتتشال من الطلبات المسجّلة.
@@ -48,7 +48,7 @@ test("EV1 تحصيل صحيح: واجهة + RPC + حجز + يومية + تقري
   await goTab(page, "لوحة الغرف"); await openRoom(page, 601);
   await payOnBoard(page, { amount: 120, method: "فيزا", last4: "4242" });
   await expect(toast(page)).toContainText("تم");
-  await r.step("بعد تسجيل ١٢٠ فيزا", { db: "select amount_paid, settled, payment_method from bookings" });
+  await r.step("بعد تسجيل 120 فيزا", { db: "select amount_paid, settled, payment_method from bookings" });
   const rpc = r.api.filter((a) => a.path === "rpc/record_booking_payment");
   expect(rpc).toHaveLength(1); expect(rpc[0].status).toBe(200);
   const [b] = await env.q("select amount_paid, settled from bookings where id=$1", [id]);
@@ -66,7 +66,7 @@ test("EV1 تحصيل صحيح: واجهة + RPC + حجز + يومية + تقري
   r.save();
 });
 
-test("EV2 مدخلات غلط: صفر/سالب/أكبر من المتبقي/فيزا بلا ٤ أرقام - مفيش تغيير في القاعدة", async ({ page, env }) => {
+test("EV2 مدخلات غلط: صفر/سالب/أكبر من المتبقي/فيزا بلا 4 أرقام - مفيش تغيير في القاعدة", async ({ page, env }) => {
   await base(env);
   const id = await env.seedBooking({ room: 601, guest: "Invalid Guest", nights: 1, price: 100 });
   await env.seedShift("ahmed");
@@ -99,7 +99,7 @@ test("EV3 ضغط مزدوج: دفعة واحدة بس", async ({ page, env }) =>
   const btn = page.getByTestId("pay-panel").getByTestId("pay-record");
   await btn.dblclick(); await btn.click({ force: true }).catch(() => {});
   await waitIdle(page); await page.waitForTimeout(500);
-  await r.step("بعد ٣ ضغطات", { db: "select amount_paid from bookings" });
+  await r.step("بعد 3 ضغطات", { db: "select amount_paid from bookings" });
   expect((await env.q("select amount_paid from bookings where id=$1", [id]))[0].amount_paid).toBe(100);
   const ok = r.api.filter((a) => a.path === "rpc/record_booking_payment" && a.status === 200);
   expect(ok.length).toBe(1);
@@ -128,7 +128,7 @@ test("EV4 صلاحيات: مدير حجوزات ومحاسب وموظف بلا �
   r.save({ cases });
 });
 
-test("EV5 تعافي من فشل: السيرفر ٥٠٠ ثم إعادة المحاولة تنجح مرة واحدة", async ({ page, env }) => {
+test("EV5 تعافي من فشل: السيرفر 500 ثم إعادة المحاولة تنجح مرة واحدة", async ({ page, env }) => {
   await base(env);
   const id = await env.seedBooking({ room: 601, guest: "Retry Guest", nights: 1, price: 100 });
   await env.seedShift("ahmed");
@@ -155,7 +155,7 @@ test("EV6 إلغاء مدفوع ← طلب رد ← قرار الريسيبشن:
   const id = await env.seedBooking({ room: 601, guest: "Refund Guest", nights: 2, price: 100 });
   await env.seedShift("ahmed");
   const r = recorder(page, env, "EV6-refund");
-  // الموظف يحصّل ٢٠٠ (١٠٠ كاش + ١٠٠ فيزا) ثم الحجز يتلغي
+  // الموظف يحصّل 200 (100 كاش + 100 فيزا) ثم الحجز يتلغي
   await page.goto("/"); await login(page, "ahmed");
   await goTab(page, "لوحة الغرف"); await openRoom(page, 601);
   await payOnBoard(page, { amount: 100, method: "كاش" });

@@ -14,15 +14,15 @@ const booking = async (env, guest) => (await env.q("select * from bookings where
 const shift = async (env) => (await env.q("select * from shift_records"))[0];
 
 test.describe("إدخالات غريبة", () => {
-  test("آخر ٤ أرقام وتليفون التحويل بأرقام عربية بيتحوّلوا لأرقام عادية في القاعدة", async ({ page, env }) => {
+  test("آخر 4 أرقام وتليفون التحويل بأرقام عربية بيتحوّلوا لأرقام عادية في القاعدة", async ({ page, env }) => {
     await users(env);
     await env.seedShift("ahmed");
     await env.seedBooking({ room: 601, guest: "Arabic Digits", nights: 2, price: 100 });
     await page.goto("/"); await login(page, "ahmed");
     await goTab(page, "لوحة الغرف"); await openRoom(page, 601);
-    await payOnBoard(page, { amount: 50, method: "فيزا", last4: "٤٢٤٢" });
+    await payOnBoard(page, { amount: 50, method: "فيزا", last4: "4242" });
     await expect.poll(async () => Number((await booking(env, "Arabic Digits")).amount_paid), { timeout: 8000 }).toBe(50);
-    await payOnBoard(page, { amount: 40, method: "فودافون كاش", senderName: "منى", phone: "٠١٠١٢٣٤٥٦٧٨" });
+    await payOnBoard(page, { amount: 40, method: "فودافون كاش", senderName: "منى", phone: "01012345678" });
     await expect.poll(async () => Number((await booking(env, "Arabic Digits")).amount_paid), { timeout: 8000 }).toBe(90);
     const rows = (await shift(env)).rows.filter((r) => Number(r.collectionAmt) !== 0);
     const visa = rows.find((r) => r.collectionMethod === "فيزا");
@@ -65,7 +65,7 @@ test.describe("إدخالات غريبة", () => {
     expect(total).toBe(70);
   });
 
-  test("اسم نزيل بنص خبيث/طويل: بيتقصّ لـ ١٢٠ حرف، بيتعرض كنص عادي ومفيش سكريبت بيتنفّذ", async ({ page, env }) => {
+  test("اسم نزيل بنص خبيث/طويل: بيتقصّ لـ 120 حرف، بيتعرض كنص عادي ومفيش سكريبت بيتنفّذ", async ({ page, env }) => {
     await users(env);
     await env.seedShift("ahmed");
     let dialogs = 0;
@@ -86,7 +86,7 @@ test.describe("إدخالات غريبة", () => {
 
 test.describe("شاشة موبايل صغيرة", () => {
   test.use({ viewport: { width: 360, height: 640 } });
-  test("لوحة الغرف والدفع شغالين على ٣٦٠px من غير سكرول أفقي للصفحة", async ({ page, env }) => {
+  test("لوحة الغرف والدفع شغالين على 360px من غير سكرول أفقي للصفحة", async ({ page, env }) => {
     await users(env);
     await env.seedShift("ahmed");
     await env.seedBooking({ room: 601, guest: "Phone User", nights: 2, price: 100 });

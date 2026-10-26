@@ -1,4 +1,4 @@
-// تطابق التقارير مع اليوميات والحجوزات: بيانات معقدة (٣ شيفتات، عملات ووسائل دفع
+// تطابق التقارير مع اليوميات والحجوزات: بيانات معقدة (3 شيفتات، عملات ووسائل دفع
 // مختلفة، حجوزات أونلاين ومباشرة، متبقي، رد معلّق) والأرقام المتوقعة بتتحسب هنا
 // بشكل مستقل عن كود التطبيق ثم بتتقارن بالشاشة.
 import { test, expect } from "../fixtures";
@@ -64,7 +64,7 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
     for (const [m, o] of Object.entries(t.by_method_currency)) { byMethod[m] ||= {}; for (const [c, v] of Object.entries(o)) add(byMethod[m], c, v); }
     for (const [m, o] of Object.entries(t.by_category)) { byCat[m] ||= {}; for (const [c, v] of Object.entries(o)) add(byCat[m], c, v); }
   }
-  // تحصيل الحجوزات المباشر بغير الكاش (مش متسجّل في أي يومية) بيتضاف: فيزا ٣٠٠ جنيه + فيزا ٨٠ يورو (ملغي ومحتفظ بفلوسه)
+  // تحصيل الحجوزات المباشر بغير الكاش (مش متسجّل في أي يومية) بيتضاف: فيزا 300 جنيه + فيزا 80 يورو (ملغي ومحتفظ بفلوسه)
   const direct = { "فيزا": { EGP: 300, EUR: 80 } };
   const combinedByMethod = JSON.parse(JSON.stringify(byMethod));
   for (const [m, o] of Object.entries(direct)) { combinedByMethod[m] ||= {}; for (const [c, v] of Object.entries(o)) add(combinedByMethod[m], c, v); }
@@ -84,7 +84,7 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
   expect(await cardText("إجمالي التحصيل")).toBe(line(combinedTotal));
   expect(await cardText("إجمالي المصاريف")).toBe(line(ledgerExpenses));
   expect(await cardText("صافي التحصيل بعد المصاريف")).toBe(line(net));
-  // نسبة الإشغال: ٤ حجوزات نشطة النهارده (607, 608, 609, 611, 612 = ٥) من ١٦ غرفة
+  // نسبة الإشغال: 4 حجوزات نشطة النهارده (607, 608, 609, 611, 612 = 5) من 16 غرفة
   const active = 5;
   expect(await cardText("متوسط نسبة الإشغال")).toBe(`${Math.round((active / 16) * 100)}%`);
 
@@ -99,13 +99,13 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
   for (const [c, o] of Object.entries(byCat)) {
     expect(digits(await catTable.locator("tr", { hasText: c }).first().innerText()), `بند ${c}`).toBe(c.replace(/\s/g, "") + curOrder.map((k) => o[k] || 0).join(""));
   }
-  // الأونلاين: إجمالي ٧٠٠ بالدولار (٥٠٠ + ٢٠٠ سعر الغرفة بس) - من غير عمولة، والرسوم (٥٠) بتتحصّل في الفندق ومش جزء منه
+  // الأونلاين: إجمالي 700 بالدولار (500 + 200 سعر الغرفة بس) - من غير عمولة، والرسوم (50) بتتحصّل في الفندق ومش جزء منه
   const onlineGross = 500 + 200;
   const onlineCard = page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last();
   const ot = digits(await onlineCard.innerText());
   expect(ot).toContain(`إجماليالحجوزاتالأونلاين${onlineGross}$`);
   expect(ot).not.toContain("العمولة");
-  // المتبقي على نزلاء: 609 → ٣٠٠$ (٤٠٠ - ١٠٠)، وحجز الأونلاين بتاع الرسوم → ٥٠$ بس
+  // المتبقي على نزلاء: 609 → 300$ (400 - 100)، وحجز الأونلاين بتاع الرسوم → 50$ بس
   const outstanding = digits(await page.locator(".cx-card", { hasText: "مبالغ متبقية على نزلاء" }).last().innerText());
   expect(outstanding).toContain("مبالغمتبقيةعلىنزلاء(2)");
   expect(outstanding).toContain("300USD");
@@ -136,7 +136,7 @@ test("مجموع تقارير الأيام = تقرير الفترة (من غي�
   const p0 = { 601: col(60, "كاش", "USD"), 603: col(25, "فيزا", "EGP") };
   await env.seedShift("sara", { key: "night", day: d1, closed: true, rowsPatch: p1, stored: totalsOf(rowsFor(p1), emptyRow("كافيتيريا")) });
   await env.seedShift("ahmed", { key: myShiftKey(), day: d0, rowsPatch: p0 });
-  // حجز أونلاين ٣ ليالي بدأ امبارح: بيتحسب مرة واحدة بس (في يوم الدخول)
+  // حجز أونلاين 3 ليالي بدأ امبارح: بيتحسب مرة واحدة بس (في يوم الدخول)
   await env.seedBooking({ anchor: "shift", room: 607, guest: "Online Multi", start: -1, nights: 3, price: 100, total: 300, payment_details: { onlinePaid: true, senderName: "", senderNumber: "", ref: "" } });
   await page.goto("/");
   await login(page, "boss");
@@ -147,10 +147,10 @@ test("مجموع تقارير الأيام = تقرير الفترة (من غي�
   const onlineNet = async () => digits(await page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last().innerText());
 
   await dayInput.fill(d1);
-  await expect(grid.locator(".cx-card", { hasText: "إجمالي التحصيل" }).first()).toContainText("١٠٠");
+  await expect(grid.locator(".cx-card", { hasText: "إجمالي التحصيل" }).first()).toContainText("100");
   const t1 = await read("إجمالي التحصيل"), e1 = await read("إجمالي المصاريف"), o1 = await onlineNet();
   await dayInput.fill(d0);
-  await expect(grid.locator(".cx-card", { hasText: "إجمالي التحصيل" }).first()).toContainText("٦٠");
+  await expect(grid.locator(".cx-card", { hasText: "إجمالي التحصيل" }).first()).toContainText("60");
   const t0 = await read("إجمالي التحصيل"), o0 = await onlineNet();
   expect(t1).toBe("100$"); expect(e1).toBe("40ج"); expect(t0).toBe("25ج+60$");
   expect(o1).toContain("300$");        // الإجمالي في يوم الدخول (امبارح)
@@ -160,7 +160,7 @@ test("مجموع تقارير الأيام = تقرير الفترة (من غي�
   await dates.nth(0).fill(d1);
   await dates.nth(1).fill(d0);
   await expect.poll(onlineNet).toContain("300$");
-  expect(await read("إجمالي التحصيل")).toBe("25ج+160$");          // ١٠٠ + ٦٠ دولار، ٢٥ جنيه
+  expect(await read("إجمالي التحصيل")).toBe("25ج+160$");          // 100 + 60 دولار، 25 جنيه
   expect(await read("إجمالي المصاريف")).toBe("40ج");
   expect(await onlineNet()).toContain("300$");
 });

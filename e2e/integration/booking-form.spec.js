@@ -31,7 +31,7 @@ test.describe("التحقق من المدخلات", () => {
     await save(page);
     await expect(toast(page)).toContainText("المدفوع لازم يكون رقم صحيح مش سالب");
 
-    // دفع أكتر من الإجمالي مرفوض، وفيزا من غير ٤ أرقام مرفوضة، وتحويل من غير رقم مرفوض
+    // دفع أكتر من الإجمالي مرفوض، وفيزا من غير 4 أرقام مرفوضة، وتحويل من غير رقم مرفوض
     await page.getByTestId("advance-amount").fill("999");
     await save(page);
     await expect(toast(page)).toContainText("أكبر من الإجمالي");
@@ -39,7 +39,7 @@ test.describe("التحقق من المدخلات", () => {
     await page.getByTestId("advance-method").selectOption("فيزا");
     await page.getByTestId("advance-last4").fill("12");
     await save(page);
-    await expect(toast(page)).toContainText("آخر ٤ أرقام");
+    await expect(toast(page)).toContainText("آخر 4 أرقام");
     await page.getByTestId("advance-method").selectOption("فودافون كاش");
     await save(page);
     await expect(toast(page)).toContainText("رقم التليفون");
@@ -143,7 +143,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     await expect(roomCard(page)).toContainText("مدفوع أونلاين");
     expect(digits(await roomCard(page).innerText())).not.toMatch(/المتبقي\d/);
     await goTab(page, "التقارير");
-    // الحجز تاريخ دخوله تاريخ التقويم، والتقرير بيفتح على يوم الشيفت (قبل ٨ الصبح = امبارح): نفتح يوم الدخول صراحةً
+    // الحجز تاريخ دخوله تاريخ التقويم، والتقرير بيفتح على يوم الشيفت (قبل 8 الصبح = امبارح): نفتح يوم الدخول صراحةً
     await page.locator('input[type="date"]').first().fill(cairoDate(0));
     await expect(page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last()).toContainText("BK-777");
     const online = digits(await page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last().innerText());
@@ -160,7 +160,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     await field(page, "تاريخ الخروج").fill(cairoDate(2));
     await priceInput(page).fill("100");
     await page.getByTestId("advance-method").selectOption("فيزا");
-    // الفيزا: خانة واحدة بس (آخر ٤ أرقام) - مفيش اسم مرسل ولا رقم عملية
+    // الفيزا: خانة واحدة بس (آخر 4 أرقام) - مفيش اسم مرسل ولا رقم عملية
     await expect(page.getByTestId("advance-last4")).toBeVisible();
     await expect(page.getByPlaceholder("اسم المرسل")).toHaveCount(0);
     await expect(page.getByPlaceholder("رقم العملية / ملاحظة")).toHaveCount(0);
@@ -174,7 +174,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     expect(b.payment_details).toMatchObject({ senderName: "", senderNumber: "4242", ref: "" });
     const [rec] = await env.q("select rows, booking_collections from shift_records");
     const row = rec.rows.find((r) => r.room === 606);
-    // المدفوع بالفيزا راح لصف فيزا بآخر ٤ أرقام - مش كاش
+    // المدفوع بالفيزا راح لصف فيزا بآخر 4 أرقام - مش كاش
     expect(row).toMatchObject({ collectionAmt: 120, collectionMethod: "فيزا", collectionCurrency: "USD" });
     expect(row.paymentDetails).toMatchObject({ senderNumber: "4242" });
     expect(rec.rows.filter((r) => r.collectionMethod === "كاش" && Number(r.collectionAmt) !== 0)).toHaveLength(0);
@@ -240,7 +240,7 @@ test.describe("البحث والتصفية في قائمة الحجوزات", ()
     await expect(page.getByText("Omar Fathy").first()).toBeVisible();
     await expect(page.getByText("Ali Hassan")).toHaveCount(0);
     await search.fill("");
-    // الفترة: النهارده → +٣ بس بتجيب علي
+    // الفترة: النهارده → +3 بس بتجيب علي
     await page.locator('input[type="date"]').nth(0).fill(cairoDate(0));
     await page.locator('input[type="date"]').nth(1).fill(cairoDate(3));
     await expect(page.getByText("Ali Hassan").first()).toBeVisible();

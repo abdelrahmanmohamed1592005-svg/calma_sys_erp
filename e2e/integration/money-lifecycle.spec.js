@@ -72,7 +72,7 @@ test.describe("رسوم إضافية وتجميع التحصيل", () => {
     await env.q("update shift_records set rows = (select jsonb_agg(case when r->>'room' = '605' then r || '{\"collectionAmt\":40,\"collectionMethod\":\"كاش\",\"collectionCurrency\":\"USD\",\"collectionDesc\":\"مقدّم\"}'::jsonb else r end) from jsonb_array_elements(rows) r), booking_collections = jsonb_build_array(jsonb_build_object('id','x','bookingId',$1::text))", [id]);
     await page.goto("/");
     await login(page, "ahmed");
-    await collectOnBoard(page, 605, "فيزا");               // تحصيل الباقي (٦٠) بفيزا
+    await collectOnBoard(page, 605, "فيزا");               // تحصيل الباقي (60) بفيزا
     const [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ amount_paid: 100, settled: true, payment_method: "فيزا" });
     const { rows } = await ledgerRows(env, 605);
@@ -173,7 +173,7 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b).toMatchObject({ amount_paid: 0, settled: false, refund_pending: false, refund_decision: "refunded", refunded_amount: 300, refunded_by: "rawan" });
     const { all, bc } = await ledgerRows(env, 604);
-    expect(Number(all.find((r) => r.room === 604).collectionAmt)).toBe(0);     // ٣٠٠ - ٣٠٠
+    expect(Number(all.find((r) => r.room === 604).collectionAmt)).toBe(0);     // 300 - 300
     expect(bc).toHaveLength(2);
     expect(await sumLedger(env)).toBe(0);
     await expect(page.getByTestId("refund-banner")).toHaveCount(0);
@@ -250,7 +250,7 @@ test.describe("الإلغاء وطلب رد الفلوس", () => {
     await login(page, "rawan");
     await goTab(page, "الحجوزات");
     await page.locator(".cx-card", { hasText: "Shorten Me" }).last().locator("button").first().click();
-    await field(page, "تاريخ الخروج").fill(cairoDate(1));            // ٢ ليالي بدل ٤
+    await field(page, "تاريخ الخروج").fill(cairoDate(1));            // 2 ليالي بدل 4
     await expect(page.getByText(/إجمالي الغرفة اتحرك تلقائيًا/)).toBeVisible();
     await page.getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(page.getByTestId("refund-request")).toBeVisible();     // (التنبيه بيظهر لمدير الحجوزات كطلب رد جديد)

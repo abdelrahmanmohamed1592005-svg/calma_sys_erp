@@ -10,7 +10,7 @@ async function users(env) {
   await env.seedUser("rawan", "reservations", "روان");
   await env.seedUser("mona", "accounts", "منى");
 }
-// مرفوض = خطأ (٤xx) أو عملية كتابة مالمستش أي صف
+// مرفوض = خطأ (4xx) أو عملية كتابة مالمستش أي صف
 const denied = (res) => res.status >= 400 || (Array.isArray(res.body) && res.body.length === 0);
 
 test.describe("الإعداد الأول وإدارة المستخدمين", () => {
@@ -44,7 +44,7 @@ test.describe("الإعداد الأول وإدارة المستخدمين", () 
     };
     await open();
     await fill("نور", "nour", "short1");
-    await expect(toast(page)).toContainText("كلمة المرور ٨ حروف على الأقل");
+    await expect(toast(page)).toContainText("كلمة المرور 8 حروف على الأقل");
     await fill("نور", "ahmed", "Strong123");
     await expect(toast(page)).toContainText("اسم المستخدم موجود بالفعل");
     await fill("نور", "nour", "Strong123", "accounts");
@@ -64,7 +64,7 @@ test.describe("الإعداد الأول وإدارة المستخدمين", () 
     await card.getByRole("button", { name: /إعادة تعيين كلمة المرور/ }).click();
     await card.locator('input[type="password"]').fill("weak");
     await card.getByRole("button", { name: "حفظ" }).click();
-    await expect(toast(page)).toContainText("٨ حروف");
+    await expect(toast(page)).toContainText("8 حروف");
     await card.locator('input[type="password"]').fill("BrandNew77");
     await card.getByRole("button", { name: "حفظ" }).click();
     await expect(toast(page)).toContainText("تم تغيير كلمة المرور");
@@ -86,7 +86,7 @@ test.describe("الإعداد الأول وإدارة المستخدمين", () 
     const pw = page.locator('input[type="password"]');
     await pw.nth(0).fill("weak"); await pw.nth(1).fill("weak");
     await page.getByRole("button", { name: "حفظ" }).click();
-    await expect(page.getByText("كلمة المرور ٨ حروف على الأقل")).toBeVisible();
+    await expect(page.getByText("كلمة المرور 8 حروف على الأقل")).toBeVisible();
     await pw.nth(0).fill("Changed99"); await pw.nth(1).fill("Different1");
     await page.getByRole("button", { name: "حفظ" }).click();
     await expect(page.getByText("كلمتا المرور غير متطابقتين")).toBeVisible();
@@ -147,7 +147,7 @@ test.describe("الإعداد الأول وإدارة المستخدمين", () 
     const r2 = await env.api("boss", "PATCH", `/rest/v1/profiles?username=eq.boss`, { role: "staff" });
     expect(r2.status).toBeGreaterThanOrEqual(400);
     // مدير عام تاني: تعطيل الأول عادي بعد وجود التاني
-    await env.seedUser("boss2", "gm", "مدير ٢");
+    await env.seedUser("boss2", "gm", "مدير 2");
     await refresh(page);
     const ok = await env.api("boss", "PATCH", `/rest/v1/profiles?username=eq.boss2`, { active: false });
     expect(ok.status).toBe(200);
@@ -255,7 +255,7 @@ test.describe("هجمات مباشرة على الـ API (من غير الواج
     const A = (m, p, b) => env.api("rawan", m, p, b);
     expect(denied(await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { amount_paid: 0 }))).toBe(true);
     expect(denied(await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { amount_paid: 500 }))).toBe(true);
-    // علامة "متحصّل" مابقتش حاجة بتتعلّم: حتى لو اتبعتت بالـ API بتتجاهلها قاعدة البيانات وبتحسبها من المدفوع (١٠٠ من ٢٠٠)
+    // علامة "متحصّل" مابقتش حاجة بتتعلّم: حتى لو اتبعتت بالـ API بتتجاهلها قاعدة البيانات وبتحسبها من المدفوع (100 من 200)
     await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { settled: true });
     expect((await env.q("select settled from bookings where id = $1", [id]))[0].settled).toBe(false);
     expect(denied(await A("DELETE", `/rest/v1/bookings?id=eq.${id}`))).toBe(true);        // عليه فلوس

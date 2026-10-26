@@ -75,7 +75,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     // بلوك الغرفة من بره: اسم النزيل الجديد + سعر الليلة + علامة التسكين المكرر
     const tile = boardTile(page, 611);
     await expect(tile).toContainText("New Guest");
-    await expect(page.getByTestId("tile-price-611")).toContainText("150 USD / ليلة".replace("150", "١٥٠"));
+    await expect(page.getByTestId("tile-price-611")).toContainText("150 USD / ليلة".replace("150", "150"));
     await expect(tile).toContainText("تسكين مكرر");
     // التفاصيل بتظهر لما أفتح الغرفة
     await tile.click();
@@ -103,7 +103,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await env.seedShift("ahmed", { collections: [{ room: 613, amount: 300, bookingId: oldId, desc: "تحصيل Previous Guest" }] });
     await page.goto("/");
     await login(page, "ahmed");
-    // تسكين مكرر بمقدّم ٥٠ كاش (نفس الوسيلة والعملة بتاعة القديم بالظبط)
+    // تسكين مكرر بمقدّم 50 كاش (نفس الوسيلة والعملة بتاعة القديم بالظبط)
     await goTab(page, "الحجوزات");
     await page.getByRole("button", { name: /حجز جديد/ }).click();
     await page.locator(".cx-card[data-calma-editing] select.cx-select").first().selectOption("613");
@@ -183,7 +183,7 @@ test.describe("مصاريف وإيرادات الفندق في اليومية", 
     expect(Number(rec.hotel_rows[0].expenseAmt)).toBe(120);
     expect(Number(rec.hotel_rows[0].collectionAmt)).toBe(500);
     expect(rec.hotel_rows[1]).toMatchObject({ expenseCategory: "نظافة", expenseCurrency: "USD" });
-    // رصيد الخزينة: ٥٠٠ - ١٢٠ = ٣٨٠ جنيه، و -٣٠ دولار
+    // رصيد الخزينة: 500 - 120 = 380 جنيه، و -30 دولار
     const egp = page.locator(`xpath=//div[./div[normalize-space(.)='جنيه (EGP)']]`).last();
     expect(digits(await egp.innerText())).toContain("رصيدالخزينة380");
     // قفل الشيفت بيحفظ الإجماليات شاملة بنود الفندق

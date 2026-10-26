@@ -18,7 +18,7 @@ test.describe("الأوفر تايم", () => {
     await env.seedBooking({ room: 601, guest: "Overtime Guest", nights: 1, price: 100 });
     await env.seedShift("ahmed", { key: "morning", day: today() });
 
-    // ١٧:٣٠ (الصباحي بيخلص ١٦:٠٠ + ساعتين أوفر تايم)
+    // 17:30 (الصباحي بيخلص 16:00 + ساعتين أوفر تايم)
     await setCairoTime(page, 17, 30);
     await page.goto("/");
     await login(page, "ahmed");
@@ -32,7 +32,7 @@ test.describe("الأوفر تايم", () => {
     await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
     expect((await env.q("select closed from shift_records"))[0].closed).toBe(false);
 
-    // ١٨:٣٠: الأوفر تايم خلص
+    // 18:30: الأوفر تايم خلص
     await setCairoTime(page, 18, 30);
     await page.reload();
     await goTab(page, "اليومية"); await showAllRooms(page);
@@ -49,7 +49,7 @@ test.describe("الأوفر تايم", () => {
     expect(log.length).toBe(1);
   });
 
-  test("الشيفت المسائي بعد منتصف الليل (٠٠:٣٠): لسه أوفر تايم على يوم الشيفت اللي قبل نص الليل، والتحصيل بيتسجّل عليه", async ({ page, env }) => {
+  test("الشيفت المسائي بعد منتصف الليل (00:30): لسه أوفر تايم على يوم الشيفت اللي قبل نص الليل، والتحصيل بيتسجّل عليه", async ({ page, env }) => {
     await users(env);
     await env.seedBooking({ room: 602, guest: "Midnight Guest", start: 0, nights: 1, price: 100 });
     await env.seedShift("ahmed", { key: "evening", day: yesterday() });
@@ -63,7 +63,7 @@ test.describe("الأوفر تايم", () => {
     const r = await rec(env, "ahmed");
     expect(r).toMatchObject({ date: yesterday(), shift_key: "evening", closed: false });
     expect(Number(r.rows.find((x) => x.room === 602).collectionAmt)).toBe(100);
-    // ٠٢:٣٠: الأوفر تايم خلص
+    // 02:30: الأوفر تايم خلص
     await setCairoTime(page, 2, 30);
     await page.reload();
     await goTab(page, "لوحة الغرف");
@@ -73,7 +73,7 @@ test.describe("الأوفر تايم", () => {
 });
 
 test.describe("تبديل الشيفتات والشيفت الليلي", () => {
-  test("الموظف المسائي يبدأ ١٧:٠٠: الصباحي (لسه مفتوح) بيتقفل تلقائي وعهدته بتتنقل", async ({ page, env }) => {
+  test("الموظف المسائي يبدأ 17:00: الصباحي (لسه مفتوح) بيتقفل تلقائي وعهدته بتتنقل", async ({ page, env }) => {
     await users(env);
     await env.seedShift("sara", { key: "morning", day: today(), collections: [{ room: 601, amount: 250, method: "كاش", currency: "EGP" }] });
     await setCairoTime(page, 17, 0);
@@ -89,7 +89,7 @@ test.describe("تبديل الشيفتات والشيفت الليلي", () => {
     expect((await rec(env, "ahmed")).handover).toEqual({ EGP: 250 });
   });
 
-  test("الشيفت الليلي ٠٢:٠٠: بيتسجّل على يوم المسائي اللي قبله، والحجز والتحصيل بيروحوا ليومية الليلي، والتقرير بيعرضه", async ({ page, env }) => {
+  test("الشيفت الليلي 02:00: بيتسجّل على يوم المسائي اللي قبله، والحجز والتحصيل بيروحوا ليومية الليلي، والتقرير بيعرضه", async ({ page, env }) => {
     await users(env);
     await setCairoTime(page, 2, 0);
     await page.goto("/");
@@ -130,7 +130,7 @@ test.describe("أعطال الشبكة والسيرفر", () => {
     expect((await rec(env, "ahmed")).booking_collections).toHaveLength(0);
   });
 
-  test("فشل حفظ حجز جديد (٥٠٠): الفورم يفضل مفتوح بالبيانات ورسالة الخطأ ظاهرة ومفيش حجز نص-نص", async ({ page, env }) => {
+  test("فشل حفظ حجز جديد (500): الفورم يفضل مفتوح بالبيانات ورسالة الخطأ ظاهرة ومفيش حجز نص-نص", async ({ page, env }) => {
     await users(env);
     await env.seedShift("ahmed");
     await page.goto("/");

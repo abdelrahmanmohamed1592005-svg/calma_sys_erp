@@ -17,25 +17,25 @@ const shift = async (env) => (await env.q("select * from shift_records"))[0];
 const nonZero = (rows) => rows.filter((r) => Number(r.collectionAmt) !== 0);
 const lrow = (page, n) => page.locator("table.cx-table tbody tr", { hasText: String(n) }).first();
 
-test("إقفال الشيفت مرفوض لو فيه تحصيل فيزا من غير آخر ٤ أرقام (أو تحويل من غير رقم)، وبعد ما تتكتب بيتقفل", async ({ page, env }) => {
+test("إقفال الشيفت مرفوض لو فيه تحصيل فيزا من غير آخر 4 أرقام (أو تحويل من غير رقم)، وبعد ما تتكتب بيتقفل", async ({ page, env }) => {
   await users(env);
   await page.goto("/"); await login(page, "ahmed"); await claimShift(page); await showAllRooms(page);
-  // صف يدوي: فيزا ١٠٠ دولار من غير تفاصيل
+  // صف يدوي: فيزا 100 دولار من غير تفاصيل
   const r = lrow(page, 602);
   await r.locator("select.cx-select").nth(2).selectOption("فيزا");
   await r.getByPlaceholder("المبلغ").nth(1).fill("100");
   await r.locator("select.cx-select").nth(3).selectOption("USD");
   await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
   await expect(toast(page)).toContainText("مينفعش تقفل الشيفت");
-  await expect(toast(page)).toContainText("آخر ٤ أرقام");
+  await expect(toast(page)).toContainText("آخر 4 أرقام");
   await expect.poll(async () => (await shift(env)).closed, { timeout: 5000 }).toBe(false);
   // تحويل من غير رقم برضه مرفوض
   await r.locator("select.cx-select").nth(2).selectOption("فودافون كاش");
   await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
   await expect(toast(page)).toContainText("رقم التليفون");
-  // نرجع فيزا ونكتب آخر ٤ أرقام: الإقفال بيعدّي
+  // نرجع فيزا ونكتب آخر 4 أرقام: الإقفال بيعدّي
   await r.locator("select.cx-select").nth(2).selectOption("فيزا");
-  await r.locator('input[placeholder="آخر ٤ أرقام الكارت"]').fill("6789");
+  await r.locator('input[placeholder="آخر 4 أرقام الكارت"]').fill("6789");
   await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
   await expect(page.getByText(/أُقفل بواسطة/)).toBeVisible();
   const rec = await shift(env);
@@ -78,7 +78,7 @@ test("حجز أونلاين: خدمات اتحصّلت بالفيزا بتروح
   expect(Number(b.amount_paid)).toBe(50);
   expect(b.settled).toBe(true);
   const rec = await shift(env);
-  // ٣٠ فيزا = كافيتيريا النزيل بالكامل (بتتسدّد الأول) في صف الكافيتيريا، و٢٠ كاش جولات في صف الغرفة
+  // 30 فيزا = كافيتيريا النزيل بالكامل (بتتسدّد الأول) في صف الكافيتيريا، و20 كاش جولات في صف الغرفة
   expect(rec.cafeteria_rows).toEqual([expect.objectContaining({ kind: "guest", collectionAmt: 30, collectionMethod: "فيزا" })]);
   expect(nonZero(rec.rows)).toEqual([expect.objectContaining({ collectionAmt: 20, collectionMethod: "كاش" })]);
 });
@@ -184,7 +184,7 @@ test("كل الأدوار بتشوف حالة الدفع (مدفوع بالكا�
   }
 });
 
-/* رد الفلوس بيتقسّم على وسائل الدفع الأصلية (فيزا ١٠٠ بكارت + كاش ٥٠) */
+/* رد الفلوس بيتقسّم على وسائل الدفع الأصلية (فيزا 100 بكارت + كاش 50) */
 async function paidVisaAndCash(page, env, guest, room) {
   await env.seedShift("ahmed");
   await env.seedBooking({ room, guest, nights: 1, price: 150 });
@@ -211,7 +211,7 @@ async function cancelAndRefund(env, guest, method) {
 }
 const net = (rows, m, num) => rows.filter((r) => r.collectionMethod === m && (num === undefined || r.paymentDetails?.senderNumber === num)).reduce((s, r) => s + Number(r.collectionAmt || 0), 0);
 
-test("رد فلوس حجز دافع فيزا ١٠٠ + كاش ٥٠ بالفيزا: الفيزا بترجع ١٠٠ على نفس الكارت والكاش ٥٠ (مفيش وسيلة بتنزل سالب)", async ({ page, env }) => {
+test("رد فلوس حجز دافع فيزا 100 + كاش 50 بالفيزا: الفيزا بترجع 100 على نفس الكارت والكاش 50 (مفيش وسيلة بتنزل سالب)", async ({ page, env }) => {
   await users(env);
   await paidVisaAndCash(page, env, "Split Refund", 607);
   await cancelAndRefund(env, "Split Refund", "فيزا");
@@ -225,7 +225,7 @@ test("رد فلوس حجز دافع فيزا ١٠٠ + كاش ٥٠ بالفيزا
   expect(Number(b.refunded_amount)).toBe(150);
 });
 
-test("نفس الحالة بالكاش: الكاش ٥٠ الأول ثم الفيزا ١٠٠ (ومفيش رصيد سالب في أي وسيلة)", async ({ page, env }) => {
+test("نفس الحالة بالكاش: الكاش 50 الأول ثم الفيزا 100 (ومفيش رصيد سالب في أي وسيلة)", async ({ page, env }) => {
   await users(env);
   await paidVisaAndCash(page, env, "Split Refund Cash", 608);
   await cancelAndRefund(env, "Split Refund Cash", "كاش");

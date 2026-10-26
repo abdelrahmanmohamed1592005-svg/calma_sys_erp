@@ -40,15 +40,15 @@ test("تحصيل كامل من لوحة الغرف: الحجز + اليومية 
   await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();
   await expect(page.getByText(/مشغولة - متبقي فلوس 0/)).toBeVisible();
   await refresh(page);
-  await expect(page.locator(".cx-kpi", { hasText: "تحصيل اليوم" })).toContainText(/200\s*USD|٢٠٠\s*USD/);
+  await expect(page.locator(".cx-kpi", { hasText: "تحصيل اليوم" })).toContainText(/200\s*USD|200\s*USD/);
 
-  // اليومية: صف الغرفة 601 فيه ٢٠٠ فيزا دولار
+  // اليومية: صف الغرفة 601 فيه 200 فيزا دولار
   await goTab(page, "اليومية");
   const ledgerRow = page.locator("table.cx-table tbody tr", { hasText: "601" }).first();
   await expect(ledgerRow.locator('input[type="number"]').nth(1)).toHaveValue("200");
   await expect(ledgerRow.locator("select.cx-select").nth(2)).toHaveValue("فيزا");
 
-  // مدير الحجوزات يشوف التقرير: إجمالي التحصيل ٢٠٠ دولار وفيزا ٢٠٠ دولار
+  // مدير الحجوزات يشوف التقرير: إجمالي التحصيل 200 دولار وفيزا 200 دولار
   await logout(page);
   await login(page, "rawan");
   await goTab(page, "التقارير");

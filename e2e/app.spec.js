@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { installFakeSupabase } from "./fakeSupabase";
 
-// "النهارده" في كل الاختبارات: ١٠ صباحًا بتوقيت القاهرة => الشيفت الصباحي
+// "النهارده" في كل الاختبارات: 10 صباحًا بتوقيت القاهرة => الشيفت الصباحي
 const NOW = new Date("2026-10-06T10:00:00+03:00");
 const USERS = [
   { username: "boss", password: "Passw0rd1", role: "gm", name: "المدير" },
@@ -84,7 +84,7 @@ test.describe("إدارة المستخدمين", () => {
     await field(page, "اسم المستخدم").fill("sara");
     await field(page, "كلمة المرور").fill("weak");
     await page.getByRole("button", { name: /حفظ/ }).click();
-    await expect(page.getByText("كلمة المرور ٨ حروف على الأقل")).toBeVisible();
+    await expect(page.getByText("كلمة المرور 8 حروف على الأقل")).toBeVisible();
     expect(store.functionCalls).toHaveLength(0);
 
     await field(page, "كلمة المرور").fill("Strong123");
@@ -125,7 +125,7 @@ test.describe("شيفت الموظف والحجوزات", () => {
     await tabs(page).filter({ hasText: "الحجوزات" }).click();
     await expect(page.getByRole("button", { name: /حجز جديد/ })).toHaveCount(0);
 
-    // حجز الشيفت (الساعة ١٠ ص => الصباحي بس هو المتاح)
+    // حجز الشيفت (الساعة 10 ص => الصباحي بس هو المتاح)
     await tabs(page).filter({ hasText: "اليومية" }).click();
     await expect(page.getByRole("button", { name: /الشيفت المسائي/ })).toBeDisabled();
     await page.getByRole("button", { name: /الشيفت الصباحي/ }).click();
@@ -184,7 +184,9 @@ test.describe("لوحة الغرف", () => {
     const store = await open(page);
     store.bookings.push({ id: "b2", room: 602, guest_name: "نزيلة اليوم", checkin: "2026-10-05", checkout: "2026-10-08", price_night: 40, currency: "USD", total_room: 120, pax: 1, status: "مؤكد", approval_status: "approved", extras: { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 }, early_checkin: { applied: false, fee: 0, note: "" }, payment_details: {}, payment_method: "كاش", source: "مباشر", amount_paid: 0, amount_tendered: 0, settled: false, notes: "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
     await login(page, "boss");
-    await expect(page.getByText("نزيلة اليوم")).toBeVisible();
+    // اسم النزيلة بيظهر على مربع الغرفة، وكمان في شريط "النهارده" (مطلوب تحصيله) فوق اللوحة
+    await expect(page.locator(".cx-tile", { hasText: "602" })).toContainText("نزيلة اليوم");
+    await expect(page.getByTestId("today-strip")).toContainText("نزيلة اليوم");
     await expect(page.getByText(/مشغولة - متبقي فلوس 1/)).toBeVisible();
   });
 });
@@ -231,7 +233,7 @@ test.describe("شاشة الإعداد الأول", () => {
     await inputs.nth(2).fill("short1");
     await inputs.nth(3).fill("short1");
     await page.getByRole("button", { name: /إنشاء الحساب والدخول/ }).click();
-    await expect(page.getByText("كلمة المرور ٨ حروف على الأقل")).toBeVisible();
+    await expect(page.getByText("كلمة المرور 8 حروف على الأقل")).toBeVisible();
     await inputs.nth(2).fill("Strong123");
     await inputs.nth(3).fill("Different9");
     await page.getByRole("button", { name: /إنشاء الحساب والدخول/ }).click();

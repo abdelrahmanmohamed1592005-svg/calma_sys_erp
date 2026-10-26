@@ -11,7 +11,7 @@ const get = async (env, name) => (await env.q("select * from bookings where gues
 const ledgerNet = async (env) => (await env.q("select rows from shift_records")).reduce((s, r) => s + r.rows.reduce((a, x) => a + (Number(x.collectionAmt) || 0), 0), 0);
 
 test.describe("تسكين مكرر", () => {
-  test("نزيل قديم دخل من يومين (٤ ليالي، مدفوع كامل) يخرج بدري ونزيل جديد ياخد الغرفة", async ({ page, env }) => {
+  test("نزيل قديم دخل من يومين (4 ليالي، مدفوع كامل) يخرج بدري ونزيل جديد ياخد الغرفة", async ({ page, env }) => {
     await users(env);
     const oldId = await env.seedBooking({ room: 611, guest: "Old Guest", start: -2, nights: 4, price: 100, paid: 400, settled: true });
     await env.seedShift("ahmed", { collections: [{ room: 611, amount: 400, bookingId: oldId }] });
@@ -47,7 +47,7 @@ test.describe("تسكين مكرر", () => {
     await expect(page.getByTestId("departed-card")).toContainText("طلب رد فلوس");
     await logout(page);
 
-    // مدير الحجوزات يرد الزيادة: ٢٠٠ فقط
+    // مدير الحجوزات يرد الزيادة: 200 فقط
     await login(page, "rawan");
     await expect(page.getByTestId("refund-banner")).toContainText("طلبات رد فلوس منتظرة (1)");
     await goTab(page, "الحجوزات");
@@ -57,7 +57,7 @@ test.describe("تسكين مكرر", () => {
     await expect(toast(page)).toContainText("تم رد");
     const after = await get(env, "Old Guest");
     expect(after).toMatchObject({ amount_paid: 200, refund_pending: false, refund_decision: "refunded", refunded_amount: 200, settled: true });
-    expect(await ledgerNet(env)).toBe(200);          // ٤٠٠ تحصيل - ٢٠٠ رد
+    expect(await ledgerNet(env)).toBe(200);          // 400 تحصيل - 200 رد
   });
 
   test("خروج في نفس يوم الدخول: بيتحاسب ليلة واحدة والباقي طلب رد", async ({ page, env }) => {

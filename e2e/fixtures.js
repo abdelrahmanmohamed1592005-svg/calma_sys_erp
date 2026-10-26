@@ -73,7 +73,7 @@ export const test = base.extend({
     /* حجز جاهز مباشرة في القاعدة (بصلاحيات المشرف) - للتجهيز بس. التواريخ بالفرق من النهارده. */
     const seedBooking = async (o) => {
       const { room, guest, start = 0, nights = 1, price = 100, total = price * nights, paid = 0, settled = false, status = "مؤكد", method = "كاش", currency = "USD", source = "مباشر", extras, payment_details, by = "ahmed", role = "staff", leftEarly = false, anchor = "calendar" } = o;
-      // anchor="shift": التواريخ نسبةً ليوم الشيفت (قبل ٨ الصبح = امبارح) - زي ما التقارير بتفتح؛ الافتراضي تاريخ التقويم
+      // anchor="shift": التواريخ نسبةً ليوم الشيفت (قبل 8 الصبح = امبارح) - زي ما التقارير بتفتح؛ الافتراضي تاريخ التقويم
       const off = anchor === "shift" && shiftDay() !== cairoDate(0) ? -1 : 0;
       const [r] = await q(
         `insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, amount_paid, settled, status, payment_method, currency, source, extras, payment_details, created_by, created_by_role, left_early)

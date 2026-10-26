@@ -3,17 +3,20 @@
 import { expect } from "@playwright/test";
 
 const CAIRO = "Africa/Cairo";
+/* تاريخ القاهرة النهارده + عدد أيام (بالتقويم). مكانش ينفع نجمع offset × 24 ساعة على الوقت: في ليلة تغيير
+   الساعة (نهاية/بداية التوقيت الصيفي) اليوم بيبقى 23 أو 25 ساعة، فبعد نص الليل بشوية "بعد 4 أيام" كانت بتطلع 3 أيام. */
 export function cairoDate(offsetDays = 0) {
-  const d = new Date(Date.now() + offsetDays * 86400000);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: CAIRO, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: CAIRO, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const [y, m, d] = today.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + offsetDays)).toISOString().slice(0, 10);
 }
 export const cairoHour = () => Number(new Intl.DateTimeFormat("en-GB", { timeZone: CAIRO, hour: "2-digit", hour12: false }).format(new Date())) % 24;
-// يوم الشيفتات التشغيلي: قبل ٨ص بيتسجّل على امبارح (زي shiftDayNow في التطبيق)
+// يوم الشيفتات التشغيلي: قبل 8ص بيتسجّل على امبارح (زي shiftDayNow في التطبيق)
 export const shiftDay = () => (cairoHour() < 8 ? cairoDate(-1) : cairoDate(0));
 export const myShiftKey = () => { const h = cairoHour(); return h >= 8 && h < 16 ? "morning" : h >= 16 ? "evening" : "night"; };
 export const SHIFT_LABEL = { morning: "الشيفت الصباحي", evening: "الشيفت المسائي", night: "الشيفت الليلي" };
 
-// أرقام التطبيق بتتعرض بالعربي (٢٠٠) وبفاصل آلاف (٢٬٠٠٠) - بنرجّعها لأرقام عادية للمقارنة
+// أرقام التطبيق بتتعرض لاتيني بفاصل آلاف (2,000)، وممكن تيجي بالعربي (٢٠٠) من رسائل قاعدة البيانات - بنرجّعها لأرقام عادية للمقارنة
 export const digits = (s) => String(s).replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d)).replace(/[٬,\s]/g, "");
 
 export const tab = (page, label) => page.locator(".cx-tab").filter({ hasText: label });
@@ -68,7 +71,7 @@ export async function addBooking(page, o) {
   await field(page, "تاريخ الخروج").fill(cairoDate(startOffset + nights));
   await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']").fill(String(price));
   if (currency) await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//select").selectOption(currency);
-  // الدفعة المقدّمة (موظف الشيفت بس): مبلغ + وسيلة + تفاصيل الوسيلة (فيزا = آخر ٤ أرقام، تحويل = اسم + رقم)
+  // الدفعة المقدّمة (موظف الشيفت بس): مبلغ + وسيلة + تفاصيل الوسيلة (فيزا = آخر 4 أرقام، تحويل = اسم + رقم)
   if (paid != null) await page.getByTestId("advance-amount").fill(String(paid));
   if (method) await page.getByTestId("advance-method").selectOption(method);
   if (last4) await page.getByTestId("advance-last4").fill(String(last4));
@@ -90,7 +93,7 @@ export const roomCard = (page) => page.getByTestId("booking-card");
    فنفس اليوم بالظبط والساعة بس هي اللي بتتغيّر. */
 export async function setCairoTime(page, hour, minute = 0) {
   const [y, m, d] = cairoDate(0).split("-").map(Number);
-  let t = Date.UTC(y, m - 1, d, hour, minute) - 3 * 3600000;       // تخمين (+٠٣:٠٠) ونصلّحه بالفرق الفعلي
+  let t = Date.UTC(y, m - 1, d, hour, minute) - 3 * 3600000;       // تخمين (+03:00) ونصلّحه بالفرق الفعلي
   const cairoHM = (ms) => new Intl.DateTimeFormat("en-GB", { timeZone: CAIRO, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms)).split(":").map(Number);
   for (let i = 0; i < 3; i++) {
     const [h, mi] = cairoHM(t);

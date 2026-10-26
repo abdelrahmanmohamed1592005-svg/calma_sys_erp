@@ -79,7 +79,7 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     await login(page, "ahmed");
     await claimShift(page); await showAllRooms(page);
 
-    // مصروف ٥٠ جنيه (نظافة) + تحصيل كاش ٣٠٠ دولار على غرفة 601 + تحصيل كافيتيريا ٢٠ جنيه
+    // مصروف 50 جنيه (نظافة) + تحصيل كاش 300 دولار على غرفة 601 + تحصيل كافيتيريا 20 جنيه
     const r601 = roomRow(page, 601);
     await r601.locator("select.cx-select").nth(0).selectOption("نظافة");
     await r601.getByPlaceholder("البيان", { exact: true }).fill("مناديل");
@@ -99,23 +99,23 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     expect(Number(row.collectionAmt)).toBe(300);
     expect(Number(rec.cafeteria.collectionAmt)).toBe(20);
 
-    // العهدة: ١٠٠٠ جنيه
+    // العهدة: 1000 جنيه
     const egpCard = block(page, "جنيه (EGP)");
     await egpCard.locator('input[type="number"]').first().fill("1000");
     await waitSaved(page);
     rec = await ledger(env);
     expect(rec.handover.EGP).toBe(1000);
 
-    // الأرصدة المعروضة: EGP = ١٠٠٠ + ٢٠ - ٥٠ = ٩٧٠ ، USD = ٣٠٠
+    // الأرصدة المعروضة: EGP = 1000 + 20 - 50 = 970 ، USD = 300
     expect(digits(await egpCard.innerText())).toMatch(/رصيدالخزينة970/);
     const usdCard = block(page, "دولار (USD)");
     expect(digits(await usdCard.innerText())).toMatch(/رصيدالخزينة300/);
 
     // ملاحظة + علامة متابعة
     await page.getByRole("checkbox").first().check();
-    await page.getByPlaceholder("ملاحظات الشيفت").fill("العد ناقص ١٠ جنيه");
+    await page.getByPlaceholder("ملاحظات الشيفت").fill("العد ناقص 10 جنيه");
     await waitSaved(page);
-    expect(await ledger(env)).toMatchObject({ flagged: true, shift_notes: "العد ناقص ١٠ جنيه" });
+    expect(await ledger(env)).toMatchObject({ flagged: true, shift_notes: "العد ناقص 10 جنيه" });
 
     // قفل الشيفت: بيحفظ الإجماليات وكل الحقول بتتقفل
     await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
@@ -147,7 +147,7 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     expect(grid).toContain("300$");
     expect(grid).toContain("20ج");
     expect(grid).toContain("50ج");
-    await expect(page.getByText(/العد ناقص ١٠ جنيه/)).toBeVisible();
+    await expect(page.getByText(/العد ناقص 10 جنيه/)).toBeVisible();
     expect(digits(await page.locator("table.cx-table tr", { hasText: "نظافة" }).first().innerText())).toContain("50");
     await goTab(page, "اليومية"); await showAllRooms(page);
     await page.locator('input[type="date"]').fill(shiftDay());
@@ -184,10 +184,10 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     const rec = await ledger(env);
     expect(rec.method_handover).toEqual({ "فيزا": { EGP: 500 } });
     expect(digits(await block(page, "فيزا (EGP)").innerText())).toContain("الإجماليدلوقتي620");
-    // تحصيل الفيزا لازم يكون معاه آخر ٤ أرقام قبل الإقفال (كل عملية تتتبّع)
+    // تحصيل الفيزا لازم يكون معاه آخر 4 أرقام قبل الإقفال (كل عملية تتتبّع)
     await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
-    await expect(toast(page)).toContainText("آخر ٤ أرقام");
-    await r603.locator('input[placeholder="آخر ٤ أرقام الكارت"]').fill("4321");
+    await expect(toast(page)).toContainText("آخر 4 أرقام");
+    await r603.locator('input[placeholder="آخر 4 أرقام الكارت"]').fill("4321");
     await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
     await expect(page.getByText(/أُقفل بواسطة/)).toBeVisible();
     expect((await ledger(env)).method_closing).toEqual({ "فيزا": { EGP: 620 } });
