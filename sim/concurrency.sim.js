@@ -131,19 +131,18 @@ describe.skipIf(!enabled)("تزامن حقيقي", () => {
     } finally { await db.close(); }
   });
 
-  it("دفعتين بعملة تانية في نفس اللحظة على نفس المتبقي: واحدة بس بتعدّي، واليومية = المدفوع بعملة الحجز", async () => {
+  it("دفعتين بالجنيه في نفس اللحظة على خدمات بالجنيه (حجز بالدولار): واحدة بس بتعدّي، واليومية = المدفوع بنفس العملة من غير تحويل", async () => {
     const { db, today } = await setup();
     try {
-      const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency) values (601, 'FX Race', $1, $2, 100, 200, 'USD') returning id", [today, addDays(today, 2)]);
-      const rs = await Promise.all(Array.from({ length: 4 }, () => db.tx("st1", (c) => c.query("select record_booking_payment_fx($1, 10000, 'EGP', 50, 'كاش') r", [id]))));
+      const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency, other_charges) values (601, 'Other Race', $1, $2, 100, 200, 'USD', '{\"EGP\":{\"laundry\":10000,\"cafeteria\":0,\"tours\":0,\"pickup\":0}}'::jsonb) returning id", [today, addDays(today, 2)]);
+      const rs = await Promise.all(Array.from({ length: 4 }, () => db.tx("st1", (c) => c.query("select record_booking_payment_other($1, 10000, 'EGP', 'كاش') r", [id]))));
       expect(rs.filter((r) => r.ok)).toHaveLength(1);
-      const [b] = await db.q("select amount_paid::float paid, settled from bookings where id = $1", [id]);
-      expect(b).toEqual({ paid: 200, settled: true });
+      const [b] = await db.q("select amount_paid::float paid, (other_paid->>'EGP')::float egp from bookings where id = $1", [id]);
+      expect(b).toEqual({ paid: 0, egp: 10000 });
       const [rec] = await db.q("select rows from shift_records");
       const mine = rec.rows.filter((x) => x.bookingId === id);
-      expect(mine.reduce((a, x) => a + Number(x.fxCovered), 0)).toBe(200);
       expect(mine.reduce((a, x) => a + Number(x.collectionAmt), 0)).toBe(10000);
-      expect(mine.every((x) => x.collectionCurrency === "EGP" && x.fxBookingCurrency === "USD")).toBe(true);
+      expect(mine.every((x) => x.collectionCurrency === "EGP")).toBe(true);
     } finally { await db.close(); }
   });
 

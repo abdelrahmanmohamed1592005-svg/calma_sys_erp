@@ -296,12 +296,12 @@ select t.eq('E4 مفيش طلب رد (مفيش مدفوع نقدي)', t.f('E4', 
 -- ======================================================================
 -- G) قسم ٣٩: الدفع بعملة تانية، نقل النزيل، الأونلاين، الشيفت اللي معاده خلص
 -- ======================================================================
-create function t.fx(u text, nm text, amt numeric, cur text, rate numeric, meth text default 'كاش') returns text language plpgsql as $$
+create function t.fx(u text, nm text, amt numeric, cur text, meth text default 'كاش') returns text language plpgsql as $$
 declare v uuid; res jsonb;
 begin
   select id into v from t.ids where name = nm;
   perform t.as_user(u);
-  select record_booking_payment_fx(v, amt, cur, rate, meth) into res;
+  select record_booking_payment_other(v, amt, cur, meth) into res;
   execute 'reset role';
   perform set_config('t.last_fx', res::text, false);
   return null;
@@ -322,20 +322,32 @@ exception when others then
   return sqlerrm;
 end $$;
 
-select t.pass('G1 حجز ٢٠٠ دولار', t.ins('st1', 'G1', 601, 60, 62, 100, 200));
-select t.reject('G1 مدير الحجوزات مايسجّلش تحصيل', t.fx('res1', 'G1', 1000, 'EGP', 50), 'موظف الشيفت');
-select t.reject('G1 نفس عملة الحجز مرفوضة', t.fx('st1', 'G1', 50, 'USD', 1), 'بنفس عملة الحجز');
-select t.reject('G1 سعر صرف صفر مرفوض', t.fx('st1', 'G1', 1000, 'EGP', 0), 'سعر الصرف');
-select t.reject('G1 أكبر من المتبقي مرفوض', t.fx('st1', 'G1', 20000, 'EGP', 50), 'أكبر من المتبقي');
-select t.pass('G2 دفع ٥٠٠٠ جنيه بسعر ٥٠ = ١٠٠ دولار', t.fx('st1', 'G1', 5000, 'EGP', 50));
-select t.eqn('G2 المغطّى ١٠٠', (current_setting('t.last_fx', true)::jsonb ->> 'covered')::numeric, 100);
-select t.eqn('G2 المدفوع على الحجز ١٠٠ دولار', t.fn('G1', 'amount_paid'), 100);
-select t.eq('G2 لسه متبقي', t.f('G1', 'settled'), 'false');
-select t.chk('G2 صف اليومية بالجنيه وفيه المقابل بالدولار', exists (select 1 from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and el ->> 'room' = '601'
-  and (el ->> 'collectionAmt')::numeric = 5000 and el ->> 'collectionCurrency' = 'EGP' and (el ->> 'fxCovered')::numeric = 100 and el ->> 'fxBookingCurrency' = 'USD'));
-select t.pass('G3 دفع الباقي ٩٠ يورو بسعر ٠٫٩', t.fx('st1', 'G1', 90, 'EUR', 0.9));
-select t.eqn('G3 المدفوع ٢٠٠', t.fn('G1', 'amount_paid'), 200);
-select t.eq('G3 متحصّل بالكامل', t.f('G1', 'settled'), 'true');
+-- كل حاجة بعملتها: حجز بالدولار + غسيل 200 جنيه + كافيتيريا 50 جنيه - من غير أي سعر صرف
+select t.pass('G1 حجز ١٢٠ دولار', t.ins('st1', 'G1', 601, 60, 62, 60, 120));
+select t.pass('G1 الموظف يضيف غسيل وكافيتيريا بالجنيه', t.upd('st1', 'G1', 'other_charges = ''{"EGP":{"laundry":200,"cafeteria":50,"tours":0,"pickup":0}}''::jsonb'));
+select t.reject('G1 الموظف مايكتبش المدفوع بالجنيه مباشرة', t.upd('st1', 'G1', 'other_paid = ''{"EGP":250}''::jsonb'), 'مش بتعديل مباشر');
+select t.reject('G1 خدمة بعملة الحجز مكانها الخدمات العادية', t.upd('st1', 'G1', 'other_charges = ''{"USD":{"laundry":5}}''::jsonb'), 'بعملة الحجز');
+select t.reject('G1 خدمة بمبلغ سالب مرفوضة', t.upd('st1', 'G1', 'other_charges = ''{"EGP":{"laundry":-5}}''::jsonb'), 'صفر أو أكتر');
+select t.reject('G1 مدير الحجوزات مايسجّلش تحصيل', t.fx('res1', 'G1', 100, 'EGP'), 'موظف الشيفت');
+select t.reject('G1 عملة الحجز من الدفع العادي', t.fx('st1', 'G1', 50, 'USD'), 'عملة الحجز');
+select t.reject('G1 عملة مفيش عليها خدمات', t.fx('st1', 'G1', 50, 'EUR'), 'مفيش متبقي');
+select t.reject('G1 أكبر من المتبقي بالجنيه مرفوض', t.fx('st1', 'G1', 300, 'EGP'), 'أكبر من المتبقي');
+select t.eq('G1 الحالة مش مدفوعة', t.f('G1', 'settled'), 'false');
+select t.pass('G2 دفع ١٠٠ جنيه (بتسدّد الكافيتيريا ٥٠ الأول)', t.fx('st1', 'G1', 100, 'EGP'));
+select t.eqn('G2 منها كافيتيريا ٥٠', (current_setting('t.last_fx', true)::jsonb ->> 'cafeteria')::numeric, 50);
+select t.eqn('G2 المتبقي بالجنيه ١٥٠', (current_setting('t.last_fx', true)::jsonb ->> 'left')::numeric, 150);
+select t.eqn('G2 المدفوع بالجنيه', (select (other_paid ->> 'EGP')::numeric from bookings where id = (select id from t.ids where name = 'G1')), 100);
+select t.eqn('G2 المدفوع بالدولار ما اتلمسش', t.fn('G1', 'amount_paid'), 0);
+select t.chk('G2 صف اليومية بالجنيه ٥٠ (غرفة) وصف كافيتيريا بالجنيه ٥٠ - من غير تحويل', exists (select 1 from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and el ->> 'room' = '601' and el ->> 'bookingId' = (select id::text from t.ids where name = 'G1')
+  and (el ->> 'collectionAmt')::numeric = 50 and el ->> 'collectionCurrency' = 'EGP') and exists (select 1 from shift_records s, jsonb_array_elements(s.cafeteria_rows) el where el ->> 'bookingId' = (select id::text from t.ids where name = 'G1') and (el ->> 'collectionAmt')::numeric = 50 and el ->> 'collectionCurrency' = 'EGP'));
+select t.pass('G2 حفظ الخدمات من الشاشة (من غير cafeteriaPaid) مابيمسحش اللي اتحصّل', t.upd('st1', 'G1', 'other_charges = ''{"EGP":{"laundry":200,"cafeteria":50,"tours":0,"pickup":0}}''::jsonb'));
+select t.eq('G2 cafeteriaPaid فضل ٥٠', (select other_charges #>> '{EGP,cafeteriaPaid}' from bookings where id = (select id from t.ids where name = 'G1')), '50');
+select t.pass('G3 باقي الجنيه ١٥٠', t.fx('st1', 'G1', 150, 'EGP', 'كاش'));
+select t.eq('G3 لسه مش مدفوع بالكامل (الدولار لسه)', t.f('G1', 'settled'), 'false');
+select t.pass('G3 الدولار بالدفع العادي', t.maint('G1', 'amount_paid = 120'));
+select t.eq('G3 مدفوع بالكامل لما كل العملات اتغطّت', t.f('G1', 'settled'), 'true');
+select t.reject('G3 حجز عليه مدفوع بالجنيه مايتمسحش', t.dml('res1', $q$delete from bookings where guest_name = 'G1'$q$), 'حركة فلوس');
+select t.reject('G3 دالة سعر الصرف القديمة اتقفلت', t.try('st1', $q$select record_booking_payment_fx((select id from t.ids where name = 'G1'), 10, 'EUR', 1, 'كاش')$q$), 'permission denied');
 
 select t.pass('G4 حجز تاني في غرفة 602', t.ins('st1', 'G4', 602, 60, 63, 100, 300));
 select t.pass('G4 حجز على غرفة 603 بعد يومين', t.ins('st1', 'G4x', 603, 62, 64, 100, 200));

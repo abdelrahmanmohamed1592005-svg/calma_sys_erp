@@ -48,7 +48,8 @@ try {
       else if (mode === 3) { await as(src, "st1", (c) => c.query("select record_booking_payment($1,40,'كاش','{}'::jsonb,null,null)", [id])); await as(src, "st1", (c) => c.query("select record_booking_payment($1,60,'فيزا',$2::jsonb,null,null)", [id, JSON.stringify({ senderNumber: "1111" })])); paid += 100; }
       else if (mode === 4) { await as(src, "st1", (c) => c.query("select record_booking_payment($1,100,'كاش','{}'::jsonb,null,null)", [id])); paid += 100;
              await as(src, "res1", (c) => c.query("update bookings set status='ملغي' where id=$1", [id])); }   // مفيش رد فلوس: بتفضل في الفندق
-      else { await as(src, "st1", (c) => c.query("select record_booking_payment_fx($1,5000,'EGP',50,'كاش')", [id])); paid += 100; }   // دفع بالجنيه بسعر صرف
+      else { await as(src, "st1", (c) => c.query("update bookings set other_charges = '{\"EGP\":{\"laundry\":500,\"cafeteria\":0,\"tours\":0,\"pickup\":0}}'::jsonb where id=$1", [id]));
+             await as(src, "st1", (c) => c.query("select record_booking_payment_other($1,500,'EGP','كاش')", [id])); }   // خدمة بالجنيه ومدفوعة بالجنيه (من غير تحويل)
     } catch (e) { errors.push(e.message.slice(0, 120)); }
   }
   for (let i = 0; i < 30; i++) { try { await as(src, "st1", (c) => c.query("select record_staff_cafeteria('Staff A', null, 'drill', 25, 'EGP', null, null)")); } catch (e) { errors.push("cafeteria: " + e.message.slice(0, 100)); break; } }

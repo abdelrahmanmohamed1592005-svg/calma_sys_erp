@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import { COMMON_CURRENCIES, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
+import { otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { PRINT_FIT_CSS } from "../lib/printFit";
 import { roomLabel, roomDisplay } from "../domain/constants";
 
@@ -470,32 +470,19 @@ export function PaymentDetailsInline({ method, details, onChange, disabled, comp
 
 /* حساب الحجز في سطر واحد واضح (نفس الشكل في لوحة الغرف وقايمة الحجوزات):
    الإجمالي | المدفوع | المتبقي (أو "مستحق رده" لو فيه فلوس زيادة). */
-/* عملة الدفعة: الموظف بيختار بنفسه (الافتراضي عملة الحجز). لو عملة تانية بيكتب سعر الصرف وقت الدفع
-   (١ عملة الحجز = كام من عملة الدفعة)، وبيشوف المقابل اللي هيتخصم من المتبقي قبل ما يسجّل. */
-export function fxPreview({ amount, currency, rate, bookingCurrency, due }) {
-  if (!currency || currency === bookingCurrency) return null;
-  const r = Number(rate) || 0;
-  const amt = amount === "" || amount == null ? (r > 0 ? Math.round(due * r * 100) / 100 : 0) : Number(amount) || 0;
-  const covered = r > 0 ? Math.round((amt / r) * 100) / 100 : 0;
-  return { amt, rate: r, covered };
+/* عملة الدفعة: الموظف بيختار بنفسه - كل عملة عليها متبقي لوحدها (من غير سعر صرف ولا تحويل).
+   القايمة فيها عملة الحجز + أي عملة عليها خدمات لسه ماتحصّلتش. */
+export function payCurrencyOptions(b) {
+  const lines = bookingDueLines(b);
+  return lines.length ? lines : [{ currency: b.currency, due: 0 }];
 }
-export function PayCurrencyFields({ bookingCurrency, currency, rate, onChange, amount, due, testid = "pay" }) {
-  const cur = currency || bookingCurrency;
-  const pv = fxPreview({ amount, currency: cur, rate, bookingCurrency, due });
+export function PayCurrencySelect({ booking, value, onChange, testid = "pay" }) {
+  const opts = payCurrencyOptions(booking);
+  if (opts.length < 2) return null;
   return (
-    <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-      <select className="cx-select" aria-label="عملة الدفعة" data-testid={testid + "-currency"} style={{ width: 92, fontSize: 13 }} value={cur} onChange={(e) => onChange({ currency: e.target.value === bookingCurrency ? "" : e.target.value, rate: "" })}>
-        {[...new Set([bookingCurrency, ...COMMON_CURRENCIES])].map((c) => <option key={c} value={c}>{c}</option>)}
-      </select>
-      {cur !== bookingCurrency && (
-        <span style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13, background: "var(--gold-soft)", borderRadius: 8, padding: "4px 8px" }}>
-          <span dir="ltr">1 {bookingCurrency} =</span>
-          <input className="cx-input" data-testid={testid + "-rate"} aria-label="سعر الصرف" type="number" min="0" step="any" placeholder="سعر الصرف" style={{ width: 96 }} value={rate} onChange={(e) => onChange({ currency: cur, rate: e.target.value })} />
-          <span dir="ltr">{cur}</span>
-          {pv && pv.rate > 0 && <b data-testid={testid + "-fx-preview"}>= {fmt(pv.covered)} {bookingCurrency} من المتبقي</b>}
-        </span>
-      )}
-    </span>
+    <select className="cx-select" aria-label="عملة الدفعة" data-testid={testid + "-currency"} style={{ width: 150, fontSize: 13 }} value={value || opts[0].currency} onChange={(e) => onChange(e.target.value)}>
+      {opts.map((o) => <option key={o.currency} value={o.currency}>{o.currency} (متبقي {fmt(o.due)})</option>)}
+    </select>
   );
 }
 
@@ -504,16 +491,31 @@ export function MoneyBox({ b }) {
   const online = !!b.paymentDetails?.onlinePaid;
   const cancelled = b.status === "ملغي";
   // الحالة بتتحسب لوحدها من المدفوع والإجمالي (مفيش علامة بتتعلّم بالإيد)
-  const state = cancelled ? null : due > 0 ? { text: paid > 0 ? "دفع جزئي" : "لسه مدفعش", color: "var(--rust)" } : total > 0 || paid > 0 ? { text: "مدفوع بالكامل", color: "var(--sage)" } : null;
+  const anyDue = due > 0 || Object.keys(otherDue(b)).length > 0;
+  const anyPaid = paid > 0 || Object.keys(otherPaidOf(b)).length > 0;
+  const state = cancelled ? null : anyDue ? { text: anyPaid ? "دفع جزئي" : "لسه مدفعش", color: "var(--rust)" } : total > 0 || paid > 0 ? { text: "مدفوع بالكامل", color: "var(--sage)" } : null;
   const cells = [["الإجمالي", fmt(total), null]];
   if (online) cells.push(["مدفوع أونلاين (سعر الغرفة)", fmt(onlineRoomCovered(b)), "var(--sage)"]);
   if (!online || paid > 0 || due > 0) cells.push([online ? "المتحصّل في الفندق" : "المدفوع", fmt(paid), null]);
   if (b.status !== "ملغي" && (due > 0 || !online)) cells.push([online ? "المتبقي في الفندق (خدمات/دخول مبكر/تمديد)" : "المتبقي", fmt(due), due > 0 ? "var(--rust)" : "var(--sage)"]);
+  // خدمات بعملات تانية (كل عملة لوحدها من غير تحويل)
+  const oT = otherTotals(b), oP = otherPaidOf(b), oD = otherDue(b);
+  const otherCurs = [...new Set([...Object.keys(oT), ...Object.keys(oP)])];
   return (
-    <div data-testid="money-box" style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", background: "#fff", borderRadius: 8, padding: "8px 12px" }}>
-      {state && <span data-testid="pay-state" className="cx-pill" style={{ background: state.color === "var(--sage)" ? "#EAF2EC" : "#FBE2E4", color: state.color }}>{state.text}</span>}
-      {cells.map(([label, val, color]) => (
-        <div key={label}><div style={{ color: "var(--muted)", fontSize: 12 }}>{label}</div><div style={{ fontWeight: 800, color: color || "inherit" }}>{val} {b.currency}</div></div>
+    <div data-testid="money-box" style={{ display: "flex", flexDirection: "column", gap: 6, background: "#fff", borderRadius: 8, padding: "8px 12px" }}>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+        {state && <span data-testid="pay-state" className="cx-pill" style={{ background: state.color === "var(--sage)" ? "#EAF2EC" : "#FBE2E4", color: state.color }}>{state.text}</span>}
+        {cells.map(([label, val, color]) => (
+          <div key={label}><div style={{ color: "var(--muted)", fontSize: 12 }}>{label}</div><div style={{ fontWeight: 800, color: color || "inherit" }}>{val} {b.currency}</div></div>
+        ))}
+      </div>
+      {otherCurs.map((cur) => (
+        <div key={cur} data-testid={"money-other-" + cur} style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", borderTop: "1px dashed var(--hair)", paddingTop: 6 }}>
+          <span className="cx-pill" style={{ background: "var(--paper2)" }}>خدمات بالـ {cur}</span>
+          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>الإجمالي</div><div style={{ fontWeight: 800 }}>{fmt(oT[cur] || 0)} {cur}</div></div>
+          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المدفوع</div><div style={{ fontWeight: 800 }}>{fmt(oP[cur] || 0)} {cur}</div></div>
+          {!cancelled && <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المتبقي</div><div style={{ fontWeight: 800, color: oD[cur] ? "var(--rust)" : "var(--sage)" }}>{fmt(oD[cur] || 0)} {cur}</div></div>}
+        </div>
       ))}
     </div>
   );
@@ -527,7 +529,7 @@ export function PayBreakdown({ payments, currency }) {
       <span style={{ color: "var(--muted)" }}>اتدفع بـ:</span>
       {payments.map((p, i) => {
         const d = describePaymentDetails(p.method, p.details);
-        return <span key={i} className="cx-pill" style={{ background: "#fff", border: "1px solid var(--hair)", fontWeight: 600 }}>{p.method}{d ? <b dir="ltr" style={{ marginInlineStart: 6 }}>{d}</b> : null} · {p.fx ? <>{fmt(p.fx.amount)} {p.fx.currency} <span style={{ color: "var(--muted)", fontWeight: 500 }}>(= {fmt(p.amount)} {currency} بسعر {fmt(p.fx.rate)})</span></> : <>{fmt(p.amount)} {currency}</>}</span>;
+        return <span key={i} className="cx-pill" style={{ background: "#fff", border: "1px solid var(--hair)", fontWeight: 600 }}>{p.method}{d ? <b dir="ltr" style={{ marginInlineStart: 6 }}>{d}</b> : null} · {p.fx ? <>{fmt(p.fx.amount)} {p.fx.currency} <span style={{ color: "var(--muted)", fontWeight: 500 }}>(= {fmt(p.amount)} {currency} بسعر {fmt(p.fx.rate)})</span></> : <>{fmt(p.amount)} {p.currency || currency}</>}</span>;
       })}
     </div>
   );

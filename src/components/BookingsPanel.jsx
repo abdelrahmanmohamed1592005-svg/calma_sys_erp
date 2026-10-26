@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock, Search, CalendarDays, Moon, Users, CreditCard, Globe, BedDouble, ClipboardList, Wallet, SearchX } from "lucide-react";
-import { PayCurrencyFields, fxPreview, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
-import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHotelTotal, refundStatusOf } from "../domain/money";
+import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
+import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHasDue, bookingDueLines, formatMoneyLines, bookingHotelTotal, refundStatusOf } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { getPaymentsIndex } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentFx } from "../data/payments";
+import { recordBookingPayment, recordBookingPaymentOther } from "../data/payments";
 import { guarded } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
 
@@ -34,34 +34,32 @@ function QuickPay({ booking, onDone, showToast }) {
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("كاش");
   const [details, setDetails] = useState(emptyPaymentDetails());
-  const [fxc, setFxc] = useState({ currency: "", rate: "" });
-  const due = bookingAmountDue(booking);
+  const [currency, setCurrency] = useState("");
+  // كل عملة لوحدها (من غير سعر صرف): عملة الحجز + أي عملة عليها خدمات لسه ماتحصّلتش
+  const opts = payCurrencyOptions(booking);
+  const cur = opts.some((o) => o.currency === currency) ? currency : opts[0].currency;
+  const due = opts.find((o) => o.currency === cur)?.due || 0;
   async function submit() {
     return guarded("quickpay:" + booking.id, async () => {
-      const fxCur = fxc.currency && fxc.currency !== booking.currency ? fxc.currency : "";
-      const fx = fxCur ? fxPreview({ amount, currency: fxCur, rate: fxc.rate, bookingCurrency: booking.currency, due }) : null;
-      if (fx && !(fx.rate > 0)) { showToast(`اكتب سعر الصرف: 1 ${booking.currency} = كام ${fxCur}`); return; }
-      const amt = Math.round((fx ? fx.amt : amount === "" ? due : Number(amount) || 0) * 100) / 100;
+      const amt = Math.round((amount === "" ? due : Number(amount) || 0) * 100) / 100;
       if (!(amt > 0)) { showToast("اكتب مبلغ الدفعة (أكبر من صفر)"); return; }
-      if (fx ? fx.covered - due > 0.01 : amt > due + 0.005) { showToast(`المبلغ (${fmt(amt)}${fx ? " " + fxCur : ""}) أكبر من المتبقي على النزيل (${fmt(due)} ${booking.currency})`); return; }
+      if (amt > due + 0.005) { showToast(`المبلغ (${fmt(amt)} ${cur}) أكبر من المتبقي على النزيل (${fmt(due)} ${cur})`); return; }
       const err = validatePaymentDetailsFor(method, details);
       if (err) { showToast(err); return; }
-      const res = fx
-        ? await recordBookingPaymentFx({ bookingId: booking.id, amount: amt, currency: fxCur, rate: fx.rate, method, details: cleanPaymentDetailsFor(method, details), note: "تحصيل", expectedUpdatedAt: booking.updatedAt })
-        : await recordBookingPayment({ bookingId: booking.id, amount: amt, method, details: cleanPaymentDetailsFor(method, details), note: "تحصيل", expectedUpdatedAt: booking.updatedAt });
+      const req = { bookingId: booking.id, amount: amt, method, details: cleanPaymentDetailsFor(method, details), note: "تحصيل", expectedUpdatedAt: booking.updatedAt };
+      const res = cur !== booking.currency ? await recordBookingPaymentOther({ ...req, currency: cur }) : await recordBookingPayment(req);
       if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
       if (onDone) await onDone();
-      const covered = fx ? Number(res.data?.covered) || fx.covered : amt;
-      setOpen(false); setAmount(""); setDetails(emptyPaymentDetails()); setMethod("كاش"); setFxc({ currency: "", rate: "" });
-      showToast(`تم تسجيل ${fmt(amt)} ${fx ? fxCur + ` (= ${fmt(covered)} ${booking.currency})` : booking.currency} (${method}) على ${booking.guestName} - المتبقي ${fmt(Math.max(0, Math.round((due - covered) * 100) / 100))} ${booking.currency}`);
+      setOpen(false); setAmount(""); setDetails(emptyPaymentDetails()); setMethod("كاش"); setCurrency("");
+      showToast(`تم تسجيل ${fmt(amt)} ${cur} (${method}) على ${booking.guestName} - المتبقي بالـ ${cur} ${fmt(Math.max(0, Math.round((due - amt) * 100) / 100))} ${cur}`);
     });
   }
   if (!open) return <button className="cx-btn cx-btn-soft" style={{ fontSize: 13 }} data-testid="quickpay-open" onClick={() => setOpen(true)}><Wallet size={14} aria-hidden="true" />تسجيل دفعة</button>;
   return (
     <div data-testid="quickpay-panel" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", background: "var(--paper2)", borderRadius: 8, padding: 6 }}>
-      <span style={{ fontSize: 13 }}>المتبقي {fmt(due)} {booking.currency}</span>
-      <input className="cx-input" data-testid="quickpay-amount" type="number" min="0" placeholder={`المبلغ (${fxc.currency && fxc.currency !== booking.currency ? fxc.currency : fmt(due)})`} style={{ width: 100 }} value={amount} onChange={(e) => setAmount(e.target.value)} />
-      <PayCurrencyFields testid="quickpay" bookingCurrency={booking.currency} currency={fxc.currency} rate={fxc.rate} amount={amount} due={due} onChange={setFxc} />
+      <span style={{ fontSize: 13 }}>المتبقي <bdi dir="ltr">{formatMoneyLines(bookingDueLines(booking))}</bdi></span>
+      <input className="cx-input" data-testid="quickpay-amount" type="number" min="0" placeholder={`المبلغ (${fmt(due)} ${cur})`} style={{ width: 160 }} value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <PayCurrencySelect testid="quickpay" booking={booking} value={cur} onChange={(c) => { setCurrency(c); setAmount(""); }} />
       <select className="cx-select" data-testid="quickpay-method" style={{ width: 130 }} value={method} onChange={(e) => { setMethod(e.target.value); setDetails(emptyPaymentDetails()); }}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
       <PaymentDetailsInline method={method} details={details} onChange={setDetails} testid="quickpay" />
       <button className="cx-btn cx-btn-gold" data-testid="quickpay-submit" onClick={submit}>سجّل</button>
@@ -596,7 +594,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
               </div>
               <div className="cx-no-print" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {b.status === "تم تسجيل الخروج" && <span className="cx-pill" style={{ background: "#00000010", color: "var(--teal)" }}>{b.status}</span>}
-                {perms.markPaymentReceived && !cancelled && bookingAmountDue(b) > 0 && <QuickPay booking={b} onDone={onRefresh} showToast={showToast} />}
+                {perms.markPaymentReceived && !cancelled && bookingHasDue(b) && <QuickPay booking={b} onDone={onRefresh} showToast={showToast} />}
                 {perms.editBookings && (<>
                   <button className="cx-btn cx-btn-outline" title="تعديل" onClick={() => startEdit(b)}><Pencil size={13} /></button>
                   {b.status !== "ملغي" && b.status !== "تم تسجيل الخروج" && (

@@ -2857,7 +2857,156 @@ drop trigger if exists shift_records_no_past_delete on shift_records;
 create trigger shift_records_no_past_delete before delete on shift_records
   for each row execute function prevent_past_shift_unclaim();
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 39 $$;
+-- --------------------------------------------------------------------------
+-- 40) أكتوبر ٢٠٢٦ - كل حاجة بعملتها (من غير سعر صرف):
+--   * خدمة بعملة غير عملة الحجز (مثلاً غسيل 200 جنيه على حجز بالدولار) بتتسجّل في other_charges بعملتها:
+--       {"EGP": {"laundry":200, "cafeteria":0, "tours":0, "pickup":0, "cafeteriaPaid":0}}
+--   * الدفع بالعملة دي بيتسجّل في other_paid بعملتها {"EGP": 200} - من record_booking_payment_other بس.
+--   * المتبقي بيبان لكل عملة لوحدها، والحالة "مدفوع بالكامل" لازم كل العملات تتغطّى.
+--   * دفع بسعر صرف (record_booking_payment_fx من قسم ٣٩) اتقفل - مفيش تحويل بين العملات.
+-- --------------------------------------------------------------------------
+alter table bookings add column if not exists other_charges jsonb not null default '{}'::jsonb;
+alter table bookings add column if not exists other_paid jsonb not null default '{}'::jsonb;
+
+revoke execute on function record_booking_payment_fx(uuid, numeric, text, numeric, text, jsonb, timestamptz, text) from authenticated, public, anon;
+
+create or replace function calma_other_total(c jsonb) returns numeric language sql immutable as $$
+  select calma_num(c ->> 'laundry') + calma_num(c ->> 'cafeteria') + calma_num(c ->> 'tours') + calma_num(c ->> 'pickup')
+$$;
+
+-- المتبقي لكل عملة تانية: {"EGP": 150} (العملات اللي مفيهاش متبقي مش بتظهر)
+create or replace function booking_other_due(b bookings) returns jsonb language sql immutable as $$
+  select coalesce(jsonb_object_agg(k, d), '{}'::jsonb) from (
+    select k, calma_other_total(coalesce(b.other_charges -> k, '{}'::jsonb)) - calma_num(b.other_paid ->> k) as d
+    from (select jsonb_object_keys(coalesce(b.other_charges, '{}'::jsonb)) k) x
+  ) y where d > 0.004
+$$;
+
+create or replace function bookings_other_money_guard()
+returns trigger language plpgsql as $$
+declare k text; v jsonb; f text; old_c jsonb; maint boolean := auth.uid() is null; pay boolean := coalesce(current_setting('calma.pay_rpc', true), '') = '1';
+begin
+  if jsonb_typeof(coalesce(new.other_charges, '{}'::jsonb)) <> 'object' then new.other_charges := '{}'::jsonb; end if;
+  if jsonb_typeof(coalesce(new.other_paid, '{}'::jsonb)) <> 'object' then raise exception 'other_paid غير صالح'; end if;
+  -- المدفوع بالعملات التانية بيتغيّر من دالة التحصيل بس (زي amount_paid)
+  if not maint and not pay then
+    if TG_OP = 'INSERT' and new.other_paid <> '{}'::jsonb then raise exception 'المدفوع بيتسجّل بعد حفظ الحجز من خانة تسجيل دفعة'; end if;
+    if TG_OP = 'UPDATE' and new.other_paid is distinct from old.other_paid then
+      raise exception 'المدفوع على الحجز بيتغيّر من تسجيل دفعة بس - مش بتعديل مباشر';
+    end if;
+  end if;
+  for k, v in select * from jsonb_each(new.other_charges) loop
+    if k !~ '^[A-Z]{3}$' or k not in ('EGP', 'USD', 'EUR', 'SAR', 'GBP') then raise exception 'عملة الخدمة غير صالحة: %', k; end if;
+    if k = new.currency then raise exception 'الخدمة بعملة الحجز (%) بتتسجّل في الخدمات العادية', k; end if;
+    if jsonb_typeof(v) <> 'object' then raise exception 'خدمات العملة % غير صالحة', k; end if;
+    for f in select jsonb_object_keys(v) loop
+      if f not in ('laundry', 'cafeteria', 'tours', 'pickup', 'cafeteriaPaid') then raise exception 'نوع خدمة غير معروف: %', f; end if;
+      if calma_num(v ->> f) < 0 or calma_num(v ->> f) > 10000000 then raise exception 'مبلغ الخدمة لازم يكون صفر أو أكتر'; end if;
+    end loop;
+  end loop;
+  for k, v in select * from jsonb_each(new.other_paid) loop
+    if k not in ('EGP', 'USD', 'EUR', 'SAR', 'GBP') or jsonb_typeof(v) <> 'number' or (v #>> '{}')::numeric < 0 then raise exception 'المدفوع بعملة % غير صالح', k; end if;
+  end loop;
+  -- اللي اتحصّل من كافيتيريا النزيل بكل عملة بيتغيّر من دالة التحصيل بس (حفظ الخدمات من الشاشة مابيمسحوش)،
+  -- وعملة عليها مدفوع مابتختفيش من الخدمات
+  if not maint and not pay and TG_OP = 'UPDATE' then
+    for k, v in select * from jsonb_each(coalesce(old.other_charges, '{}'::jsonb)) loop
+      old_c := coalesce(new.other_charges -> k, '{"laundry":0,"cafeteria":0,"tours":0,"pickup":0}'::jsonb);
+      if v ? 'cafeteriaPaid' then old_c := jsonb_set(old_c, '{cafeteriaPaid}', v -> 'cafeteriaPaid'); else old_c := old_c - 'cafeteriaPaid'; end if;
+      new.other_charges := jsonb_set(new.other_charges, array[k], old_c);
+    end loop;
+    for k in select jsonb_object_keys(new.other_charges) loop
+      if not (coalesce(old.other_charges, '{}'::jsonb) ? k) and (new.other_charges -> k) ? 'cafeteriaPaid' then
+        new.other_charges := jsonb_set(new.other_charges, array[k], (new.other_charges -> k) - 'cafeteriaPaid');
+      end if;
+    end loop;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists bookings_other_money_guard on bookings;
+create trigger bookings_other_money_guard before insert or update on bookings
+  for each row execute function bookings_other_money_guard();
+
+-- الحالة "مدفوع بالكامل": عملة الحجز + كل عملة تانية عليها خدمات
+create or replace function bookings_auto_settled()
+returns trigger language plpgsql as $$
+begin
+  new.settled := new.status is distinct from 'ملغي' and coalesce(new.amount_paid, 0) >= booking_hotel_total(new)
+                 and booking_other_due(new) = '{}'::jsonb;
+  return new;
+end;
+$$;
+
+-- الحجز اللي عليه مدفوع بعملة تانية مايتمسحش (زي أي حجز عليه فلوس)
+create or replace function bookings_no_delete_other_paid()
+returns trigger language plpgsql as $$
+begin
+  if exists (select 1 from jsonb_each(coalesce(old.other_paid, '{}'::jsonb)) e where (e.value #>> '{}')::numeric > 0) then
+    raise exception 'الحجز ده عليه حركة فلوس (مدفوع) - استخدم حالة "ملغي" بدل الحذف';
+  end if;
+  return old;
+end;
+$$;
+drop trigger if exists bookings_no_delete_other_paid on bookings;
+create trigger bookings_no_delete_other_paid before delete on bookings
+  for each row execute function bookings_no_delete_other_paid();
+
+-- دفعة بعملة غير عملة الحجز: بتسدّد خدمات العملة دي بس (كافيتيريا النزيل الأول)، ومفيش أي تحويل
+create or replace function record_booking_payment_other(p_booking uuid, p_amount numeric, p_currency text, p_method text,
+  p_details jsonb default '{}'::jsonb, p_expected timestamptz default null, p_note text default 'تحصيل')
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  b bookings%rowtype; sr shift_records; amt numeric := round(p_amount, 2); cur text := upper(btrim(coalesce(p_currency, ''))); due numeric; err text; det jsonb;
+  c jsonb; cafe_out numeric; cafe numeric := 0; v_rows jsonb; v_caf jsonb; note text := left(coalesce(nullif(btrim(p_note), ''), 'تحصيل'), 60);
+begin
+  if not is_staff() then raise exception 'تسجيل التحصيل من صلاحية موظف الشيفت بس'; end if;
+  if amt is null or amt <= 0 then raise exception 'اكتب مبلغ الدفعة (أكبر من صفر)'; end if;
+  if cur not in ('EGP', 'USD', 'EUR', 'SAR', 'GBP') then raise exception 'اختار عملة الدفعة'; end if;
+  if not calma_valid_method(p_method) then raise exception 'وسيلة الدفع غير صالحة'; end if;
+  err := calma_details_err(p_method, coalesce(p_details, '{}'::jsonb));
+  if err is not null then raise exception '%', err; end if;
+  det := calma_clean_details(p_method, coalesce(p_details, '{}'::jsonb));
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if b.status = 'ملغي' then raise exception 'الحجز ملغي - مينفعش يتحصّل عليه'; end if;
+  if cur = b.currency then raise exception 'دي عملة الحجز - سجّلها من الدفع العادي'; end if;
+  if p_expected is not null and b.updated_at is distinct from p_expected then
+    raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني';
+  end if;
+  c := coalesce(b.other_charges -> cur, '{}'::jsonb);
+  due := greatest(0, calma_other_total(c) - calma_num(b.other_paid ->> cur));
+  if due <= 0 then raise exception 'مفيش متبقي على النزيل بالـ %', cur; end if;
+  if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل بالـ % (%)', cur, trim_scale(due); end if;
+  sr := calma_my_open_shift();
+  cafe_out := greatest(0, calma_num(c ->> 'cafeteria') - calma_num(c ->> 'cafeteriaPaid'));
+  cafe := least(amt, cafe_out);
+  if cafe > 0 then c := jsonb_set(c, '{cafeteriaPaid}', to_jsonb(calma_num(c ->> 'cafeteriaPaid') + cafe)); end if;
+  perform set_config('calma.pay_rpc', '1', true);
+  update bookings set other_paid = jsonb_set(coalesce(other_paid, '{}'::jsonb), array[cur], to_jsonb(calma_num(other_paid ->> cur) + amt)),
+                      other_charges = jsonb_set(other_charges, array[cur], c)
+    where id = p_booking;
+  perform set_config('calma.pay_rpc', '', true);
+  v_rows := coalesce(sr.rows, '[]'::jsonb);
+  if amt - cafe > 0 then
+    v_rows := calma_apply_room_collection(v_rows, b.room, b.id, p_method, cur, det, amt - cafe,
+      note || coalesce(' - ' || nullif(b.guest_name, ''), '') || ' (+' || trim_scale(amt - cafe) || ' ' || cur || ')');
+  end if;
+  v_caf := coalesce(sr.cafeteria_rows, '[]'::jsonb);
+  if cafe > 0 then
+    v_caf := calma_apply_cafe_collection(v_caf, 'guest', b.id::text, b.guest_name, b.room, p_method, cur, det, cafe,
+      'خدمة كافيتيريا' || coalesce(' - ' || nullif(b.guest_name, ''), '') || ' (+' || trim_scale(cafe) || ' ' || cur || ')');
+  end if;
+  update shift_records set rows = v_rows, cafeteria_rows = v_caf,
+    booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
+    where date = sr.date and shift_key = sr.shift_key;
+  return jsonb_build_object('amount', amt, 'currency', cur, 'cafeteria', cafe, 'left', due - amt, 'method', p_method, 'details', det, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
+end;
+$$;
+revoke all on function record_booking_payment_other(uuid, numeric, text, text, jsonb, timestamptz, text) from public, anon;
+grant execute on function record_booking_payment_other(uuid, numeric, text, text, jsonb, timestamptz, text) to authenticated;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 40 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

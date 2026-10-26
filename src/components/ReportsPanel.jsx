@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble } from "lucide-react";
 import { DateRange, Logo, RoomName } from "./shared";
-import { emptyMoney, computeShiftTotals, methodTransactions, bookingGrandTotal, bookingHotelTotal, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
+import { emptyMoney, computeShiftTotals, methodTransactions, bookingDueLines, formatMoneyLines, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, HOTEL_NAME } from "../domain/constants";
 import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getJournaledBookingIds, getShiftRecord, getShiftRecordsInRange } from "../data/shifts";
@@ -110,16 +110,11 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   // بيتابعه بالعمولة) - فمينفعش يفضل ظاهر كـ"متبقي" تاني هنا. اللي ممكن
   // يفضل متبقي بس هو أي خدمة إضافية (غسيل/كافيتيريا/جولات/بيك أب/دخول مبكر)
   // اتاخدت في الفندق ومتحصّلتش لسه - دي لوحدها المحسوبة هنا للحجز الأونلاين.
+  // المتبقي لكل عملة لوحدها (عملة الحجز + خدمات بعملات تانية من غير تحويل)
   const outstanding = [];
   inRange.forEach((b) => {
-    const gt = bookingGrandTotal(b);
-    if (b.paymentDetails?.onlinePaid) {
-      const due = bookingHotelTotal(b) - (Number(b.amountPaid) || 0);
-      if (due > 0) outstanding.push({ ...b, due, onlineExtrasOnly: true });
-    } else {
-      const due = gt - (Number(b.amountPaid) || 0);
-      if (due > 0) outstanding.push({ ...b, due, onlineExtrasOnly: false });
-    }
+    const lines = bookingDueLines(b);
+    if (lines.length) outstanding.push({ ...b, dueLines: lines, onlineExtrasOnly: !!b.paymentDetails?.onlinePaid });
   });
   return { count: onlineBookings.length, totalCount: revenueBookings.length, grossRevenue, items, outstanding, byMethodCurrency };
 }
@@ -442,7 +437,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
                 {bAgg.outstanding.map((b) => (
                   <div key={b.id} style={{ fontSize: 13, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}>
                     <span><RoomName rooms={rooms} number={b.room} /> · <span className="cx-iso">{b.guestName}</span> {b.onlineExtrasOnly && <span style={{ color: "var(--muted)", fontSize: 12 }}>(خدمات إضافية - الحجز مدفوع أونلاين)</span>}</span>
-                    <span style={{ color: "var(--rust)", fontWeight: 700 }}>{fmt(b.due)} {b.currency}</span>
+                    <span style={{ color: "var(--rust)", fontWeight: 700 }}><bdi dir="ltr">{formatMoneyLines(b.dueLines)}</bdi></span>
                   </div>
                 ))}
               </div>

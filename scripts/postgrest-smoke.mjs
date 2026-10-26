@@ -28,13 +28,15 @@ let s = await st.rpc("record_staff_cafeteria", { p_name: "Sara", p_username: nul
 ok(!s.error && s.data.paid === false, "staff cafeteria later", s);
 s = await st.rpc("settle_staff_cafeteria", { p_name: "Sara", p_username: null, p_currency: "EGP", p_amount: 15, p_method: "فودافون كاش", p_details: { senderName: "Sara", senderNumber: "01012345678" } });
 ok(!s.error && s.data.left === 25, "settle partial", s);
-// دفع بعملة تانية (جنيه على حجز بالدولار) + نقل النزيل + إلغاء من غير رد فلوس
-let fx = await st.rpc("record_booking_payment_fx", { p_booking: id, p_amount: 2500, p_currency: "EGP", p_rate: 50, p_method: "كاش", p_details: {}, p_expected: null, p_note: "تحصيل" });
-ok(!fx.error && Number(fx.data.covered) === 50, "fx payment via real PostgREST (2500 EGP @50 = 50 USD)", fx);
+// خدمة بالجنيه على حجز بالدولار ودفعها بالجنيه (من غير سعر صرف) + نقل النزيل + إلغاء من غير رد فلوس
+let oc = await st.from("bookings").update({ other_charges: { EGP: { laundry: 2500, cafeteria: 0, tours: 0, pickup: 0 } } }).eq("id", id).select().single();
+ok(!oc.error, "staff adds an EGP service on a USD booking", oc.error);
+let fx = await st.rpc("record_booking_payment_other", { p_booking: id, p_amount: 2500, p_currency: "EGP", p_method: "كاش", p_details: {}, p_expected: null, p_note: "تحصيل" });
+ok(!fx.error && Number(fx.data.left) === 0, "EGP payment via real PostgREST (no conversion)", fx);
 let mv = await res.rpc("move_booking_room", { p_booking: id, p_room: 602, p_expected: null });
 ok(!mv.error && mv.data.to === 602, "move guest via real PostgREST", mv);
 let c = await res.from("bookings").update({ status: "ملغي" }).eq("id", id).select().single();
-ok(!c.error && c.data.refund_pending === false && Number(c.data.amount_paid) === 100, "cancel keeps the money (no refund request)", c.error || c.data);
+ok(!c.error && c.data.refund_pending === false && Number(c.data.amount_paid) === 50 && Number(c.data.other_paid.EGP) === 2500, "cancel keeps the money (no refund request)", c.error || c.data);
 // صلاحيات: رد الفلوس مقفول على الكل، anon مايقدرش ينادي الدوال
 let bad = await res.rpc("decide_booking_refund", { p_booking: id, p_decision: "refund", p_expected: null, p_method: "كاش" });
 ok(bad.error, "refund rpc is closed", bad);

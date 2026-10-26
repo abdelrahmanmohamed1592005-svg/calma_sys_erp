@@ -338,6 +338,36 @@ export function bookingAmountDue(b) {
   return Math.max(0, bookingHotelTotal(b) - (Number(b.amountPaid) || 0));
 }
 
+/* خدمات بعملة غير عملة الحجز (من غير سعر صرف - كل عملة لوحدها، زي booking_other_due في القاعدة):
+   otherCharges = { EGP: { laundry, cafeteria, tours, pickup, cafeteriaPaid } }، otherPaid = { EGP: 200 } */
+export const EXTRA_KEYS = ["laundry", "cafeteria", "tours", "pickup"];
+export const otherChargeTotal = (c) => EXTRA_KEYS.reduce((s, k) => s + (Number(c?.[k]) || 0), 0);
+export function otherTotals(b) {
+  const out = {};
+  for (const [cur, c] of Object.entries(b?.otherCharges || {})) { const t = otherChargeTotal(c); if (t > 0) out[cur] = Math.round(t * 100) / 100; }
+  return out;
+}
+export function otherPaidOf(b) {
+  const out = {};
+  for (const [cur, v] of Object.entries(b?.otherPaid || {})) if (Number(v) > 0) out[cur] = Number(v);
+  return out;
+}
+export function otherDue(b) {
+  const out = {};
+  for (const [cur, t] of Object.entries(otherTotals(b))) { const d = Math.round((t - (Number(b?.otherPaid?.[cur]) || 0)) * 100) / 100; if (d > 0.004) out[cur] = d; }
+  return out;
+}
+/* كل المتبقي على الحجز لكل عملة: [{ currency, due }] - عملة الحجز الأول */
+export function bookingDueLines(b) {
+  const lines = [];
+  const d = bookingAmountDue(b);
+  if (d > 0.004) lines.push({ currency: b.currency, due: d });
+  for (const [cur, v] of Object.entries(otherDue(b))) lines.push({ currency: cur, due: v });
+  return lines;
+}
+export const bookingHasDue = (b) => bookingDueLines(b).length > 0;
+export const formatMoneyLines = (lines) => lines.map((l) => `${fmt(l.due ?? l.amount)} ${l.currency}`).join(" + ");
+
 /* المبلغ المطلوب رده للنزيل لو فيه طلب رد فلوس معلّق (refundPending):
    حجز ملغي => كل المدفوع، حجز لسه شغال/خرج بدري => الزيادة عن الإجمالي بس.
    نفس حساب decide_booking_refund في قاعدة البيانات بالظبط. */

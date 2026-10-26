@@ -10,7 +10,10 @@ function bookingFromRow(r) {
     earlyCheckin: r.early_checkin || { applied: false, fee: 0, note: "" },
     guestCodes: Array.isArray(r.guest_codes) ? r.guest_codes.map((c) => String(c ?? "")) : [],
     paymentMethod: r.payment_method, paymentDetails: r.payment_details || { senderName: "", senderNumber: "", ref: "", onlinePaid: false },
-    amountPaid: Number(r.amount_paid) || 0, amountTendered: Number(r.amount_tendered) || 0,
+    amountPaid: Number(r.amount_paid) || 0,
+    // خدمات ودفعات بعملة غير عملة الحجز (قسم ٤٠): كل عملة لوحدها من غير تحويل
+    otherCharges: r.other_charges && typeof r.other_charges === "object" ? r.other_charges : {}, otherPaid: r.other_paid && typeof r.other_paid === "object" ? r.other_paid : {},
+    amountTendered: Number(r.amount_tendered) || 0,
     source: r.source, status: r.status, approvalStatus: r.approval_status, settled: !!r.settled, notes: r.notes || "",
     imported: !!r.imported, needsRoomReview: !!r.needs_room_review, createdAt: new Date(r.created_at).getTime(),
     // createdBy بيبان في سجل النشاط/التدقيق مين أنشأ الحجز فعليًا (القيمة
@@ -37,7 +40,7 @@ function bookingToRow(b) {
   return {
     code: b.code || null, room: b.room, guest_name: b.guestName, phone: b.phone, pax: Number(b.pax) || 1,
     checkin: b.checkin, checkout: b.checkout, price_night: Number(b.priceNight) || 0, currency: b.currency,
-    total_room: Number(b.totalRoom) || 0, extras: b.extras || {}, early_checkin: b.earlyCheckin || { applied: false, fee: 0, note: "" },
+    total_room: Number(b.totalRoom) || 0, extras: b.extras || {}, other_charges: b.otherCharges || {}, early_checkin: b.earlyCheckin || { applied: false, fee: 0, note: "" },
     payment_method: b.paymentMethod, payment_details: b.paymentDetails || {},
     amount_paid: Number(b.amountPaid) || 0,
     source: b.source, status: b.status, approval_status: b.approvalStatus || "approved",

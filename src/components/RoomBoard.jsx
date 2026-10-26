@@ -1,13 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Pencil, Check, X, Plus, ArrowLeftRight, Eye, AlertTriangle, Search, Wallet, Receipt, BedDouble, CalendarDays, Moon, Users, Hash, LogIn, LogOut } from "lucide-react";
-import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
+import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, bookingDueLines, formatMoneyLines, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
 import { todayStr, shiftDayNow, nightsBetween, addDays } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentFx, moveBookingRoom } from "../data/payments";
+import { recordBookingPayment, recordBookingPaymentOther, moveBookingRoom } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { roomOptionLabel, PayCurrencyFields, fxPreview, DateRange, RoomName, AutoText, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
+import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
@@ -48,7 +48,7 @@ function TodayStrip({ rooms, bookings, overrides, date, onOpen }) {
               {list.slice(0, 4).map((b) => (
                 <li key={b.id}><button type="button" onClick={() => onOpen(b.room)}>
                   <span className="r"><RoomName rooms={rooms} number={b.room} /></span><span className="g">{b.guestName}</span>
-                  {k === "due" && <span className="d">{fmt(bookingAmountDue(b))} {b.currency}</span>}
+                  {k === "due" && <span className="d"><bdi dir="ltr">{formatMoneyLines(bookingDueLines(b))}</bdi></span>}
                 </button></li>
               ))}
               {list.length > 4 && <li className="cx-hint" style={{ padding: "2px 6px" }}>+ {list.length - 4} كمان</li>}
@@ -78,6 +78,8 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
   const [extrasDraft, setExtrasDraft] = useState(null);
   const [addSvc, setAddSvc] = useState("laundry");
   const [addAmt, setAddAmt] = useState("");
+  const [addCur, setAddCur] = useState("");             // "" = عملة الحجز
+  const [otherDraft, setOtherDraft] = useState({});     // تصحيح خدمات العملات التانية: { EGP: { laundry: ... } }
   const [addLock, setAddLock] = useState(false);
   const [fixMode, setFixMode] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -89,13 +91,8 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
   // زرار التحصيل بيتقفل وقت الحفظ ولحظة بعده: دوسات ورا بعض (دبل/تريبل كليك) ماتسجّلش "كامل المتبقي" تاني
   const [payLock, setPayLock] = useState(false);
   const [pay, setPay] = useState({ amount: "", method: "كاش", details: emptyPaymentDetails(), currency: "", rate: "" });
-  // تحصيل رسم الدخول المبكر ليه وسيلته وتفاصيله المستقلة (مايتخلطوش مع خانات الدفعة العادية)
-  const [epay, setEpay] = useState({ method: "كاش", details: emptyPaymentDetails() });
   const [codeQuery, setCodeQuery] = useState("");
   const [extendNights, setExtendNights] = useState(1);
-  const [ecFee, setEcFee] = useState("");
-  const [ecNote, setEcNote] = useState("");
-  const [ecCollect, setEcCollect] = useState(true);
   const [codesDraft, setCodesDraft] = useState([]);
   const [payBreakdown, setPayBreakdown] = useState(null);
   const date = todayStr();
@@ -104,8 +101,8 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- مربوط بالغرفة وبقيم الرسوم المحفوظة عمدًا - إضافة كائن الحجز كانت هتمسح اللي الموظف بيكتبه مع كل تحديث
   useEffect(() => { if (status?.booking) setExtrasDraft({ laundry: status.booking.extras?.laundry || "", cafeteria: status.booking.extras?.cafeteria || "", tours: status.booking.extras?.tours || "", pickup: status.booking.extras?.pickup || "" }); else setExtrasDraft(null); if (status?.booking) extrasBaseRef.current = normExtras(status.booking.extras); }, [selected, status?.booking?.id]);
-  useEffect(() => { setPay({ amount: "", method: "كاش", details: emptyPaymentDetails(), currency: "", rate: "" }); setAddAmt(""); setFixMode(false); setMoveOpen(false); setMoveTo(""); }, [selected, status?.booking?.id]);
-  useEffect(() => { setExtendNights(1); setEcFee(""); setEcNote(""); setEcCollect(true); setEpay({ method: "كاش", details: emptyPaymentDetails() }); }, [selected, status?.booking?.id]);
+  useEffect(() => { setPay({ amount: "", method: "كاش", details: emptyPaymentDetails(), currency: "" }); setAddAmt(""); setAddCur(""); setFixMode(false); setMoveOpen(false); setMoveTo(""); }, [selected, status?.booking?.id]);
+  useEffect(() => { setExtendNights(1); }, [selected, status?.booking?.id]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- مربوط بالغرفة/الحجز وعدد الأفراد وأكواده (JSON) عمدًا لنفس السبب
   useEffect(() => { if (status?.booking) setCodesDraft(normalizeGuestCodes(status.booking.guestCodes, status.booking.pax)); else setCodesDraft([]); }, [selected, status?.booking?.id, status?.booking?.pax, JSON.stringify(status?.booking?.guestCodes || [])]);
 
@@ -165,14 +162,15 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
   }
   async function recordPaymentInner(booking) {
     if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
-    const due = bookingAmountDue(booking);
-    const fxCur = pay.currency && pay.currency !== booking.currency ? pay.currency : "";
-    const fx = fxCur ? fxPreview({ amount: pay.amount, currency: fxCur, rate: pay.rate, bookingCurrency: booking.currency, due }) : null;
-    if (fx && !(fx.rate > 0)) { showToast(`اكتب سعر الصرف: 1 ${booking.currency} = كام ${fxCur}`); return; }
-    const typed = fx ? fx.amt : pay.amount === "" ? due : Number(pay.amount);
+    // كل عملة لوحدها: الموظف بيختار العملة اللي هيدفع بيها والمبلغ بيتخصم من متبقي نفس العملة (من غير تحويل)
+    const opts = payCurrencyOptions(booking);
+    const cur = pay.currency && opts.some((o) => o.currency === pay.currency) ? pay.currency : opts[0].currency;
+    const due = opts.find((o) => o.currency === cur)?.due || 0;
+    const other = cur !== booking.currency;
+    const typed = pay.amount === "" ? due : Number(pay.amount);
     const amount = Math.round((Number(typed) || 0) * 100) / 100;
     if (!(amount > 0)) { showToast("اكتب مبلغ الدفعة (أكبر من صفر)"); return; }
-    if (fx ? fx.covered - due > 0.01 : amount > due) { showToast(`المبلغ أكبر من المتبقي على النزيل (${fmt(due)} ${booking.currency}${fx ? ` = ${fmt(Math.round(due * fx.rate * 100) / 100)} ${fxCur}` : ""})`); return; }
+    if (amount > due + 0.004) { showToast(`المبلغ أكبر من المتبقي على النزيل بالـ ${cur} (${fmt(due)} ${cur})`); return; }
     const detailsErr = validatePaymentDetailsFor(pay.method, pay.details);
     if (detailsErr) { showToast(detailsErr); return; }
     if (!myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - التحصيل لازم يتسجّل في يومية شيفتك"); return; }
@@ -180,45 +178,21 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     const rawDetails = pay.details;
     const before = { ...pay };
     // الخانات بتتصفّر فورًا (القيم اتحفظت فوق) عشان اللي بيتكتب بعد كده مايضيعش وقت الحفظ
-    setPay({ amount: "", method: "كاش", details: emptyPaymentDetails(), currency: "", rate: "" });
+    setPay({ amount: "", method: "كاش", details: emptyPaymentDetails(), currency: "" });
     // عملية واحدة ذرية في القاعدة: المدفوع على الحجز + صف الوسيلة في اليومية + (لو عليه كافيتيريا) صف الكافيتيريا
-    const res = fx
-      ? await recordBookingPaymentFx({ bookingId: booking.id, amount, currency: fxCur, rate: fx.rate, method, details: rawDetails, note: "تحصيل", expectedUpdatedAt: booking.updatedAt })
-      : await recordBookingPayment({ bookingId: booking.id, amount, method, details: rawDetails, note: "تحصيل", expectedUpdatedAt: booking.updatedAt });
+    const req = { bookingId: booking.id, amount, method, details: rawDetails, note: "تحصيل", expectedUpdatedAt: booking.updatedAt };
+    const res = other ? await recordBookingPaymentOther({ ...req, currency: cur }) : await recordBookingPayment(req);
     if (res?.error) { showToast(res.error); if (onRefresh) onRefresh(); setPay({ ...before, amount: String(amount) }); return; }
     const out = res.data || {};
     const details = out.details || cleanPaymentDetailsFor(method, rawDetails);
     const detailsText = describePaymentDetails(method, details) ? "\u2066" + describePaymentDetails(method, details) + "\u2069" : "";
-    const covered = fx ? Number(out.covered) || fx.covered : amount;
-    const paidText = fx ? `${fmt(amount)} ${fxCur} (= ${fmt(covered)} ${booking.currency} بسعر ${fmt(fx.rate)})` : `${fmt(amount)} ${booking.currency}`;
+    const paidText = `${fmt(amount)} ${cur}`;
     onLog(`تحصيل ${paidText} (${method}${detailsText ? " " + detailsText : ""}) - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
     if (onRefresh) await onRefresh();
     getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); });     // تفصيل المدفوع بالوسيلة بعد ما اليومية اتحدّثت
     const cafe = Number(out.cafeteria) || 0;
-    const left = Math.max(0, Math.round((due - covered) * 100) / 100);
-    showToast(`تم تسجيل ${paidText} (${method}${detailsText ? " " + detailsText : ""})${cafe > 0 ? ` - منها ${fmt(cafe)} ${booking.currency} كافيتيريا` : ""} - ${left > 0 ? `المتبقي ${fmt(left)} ${booking.currency}` : "الحجز مدفوع بالكامل"}`);
-  }
-  // دخول مبكر: رسم بيتضاف على الحجز (بيزوّد الإجمالي)، وممكن يتحصّل في نفس اللحظة فيدخل اليومية والتقرير والتوتال.
-  async function applyEarlyCheckin(booking) { return guarded("early:" + booking.id, () => applyEarlyCheckinInner(booking)); }
-  async function applyEarlyCheckinInner(booking) {
-    if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
-    const fee = Math.max(0, Math.round((Number(ecFee) || 0) * 100) / 100);
-    if (!(fee > 0)) { showToast("اكتب رسم الدخول المبكر (أكبر من صفر)"); return; }
-    const collectNow = !!perms.markPaymentReceived && ecCollect;
-    if (collectNow) { const detailsErr = validatePaymentDetailsFor(epay.method, epay.details); if (detailsErr) { showToast(detailsErr); return; } }
-    const next = { ...booking, earlyCheckin: { applied: true, fee, note: sanitizeText(ecNote, 300) } };
-    const res = await onUpdateBooking(booking.id, next);
-    if (res?.error) { showToast(res.error); return; }
-    onLog(`دخول مبكر ${fee} ${booking.currency} - ${roomLabel(rooms, booking.room)} - ${booking.guestName}${collectNow ? ` (اتحصّل - ${epay.method})` : " (لسه ماتحصّلش)"}`);
-    let warn = "";
-    if (collectNow) {
-      // الرسم اتسجّل على الحجز (زوّد المتبقي) فدلوقتي بنحصّله بعملية ذرية: الحجز + اليومية
-      const pr = await recordBookingPayment({ bookingId: booking.id, amount: fee, method: epay.method, details: epay.details, note: "رسم دخول مبكر", expectedUpdatedAt: res?.data?.updatedAt });
-      if (pr?.error) warn = " — لكن التحصيل ماتسجّلش: " + pr.error + " (الرسم لسه متبقي على النزيل - سجّله من خانة تسجيل دفعة)";
-      else { if (onRefresh) await onRefresh(); getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); }); }
-    }
-    setEcFee(""); setEcNote("");
-    showToast(`تم تسجيل الدخول المبكر (${fmt(fee)} ${booking.currency})${collectNow && !warn ? " واتحصّل" : " - لسه متبقي على النزيل، سجّله من خانة (تسجيل دفعة)"}` + warn);
+    const left = opts.map((o) => (o.currency === cur ? { ...o, due: Math.max(0, Math.round((o.due - amount) * 100) / 100) } : o)).filter((o) => o.due > 0.004);
+    showToast(`تم تسجيل ${paidText} (${method}${detailsText ? " " + detailsText : ""})${cafe > 0 ? ` - منها ${fmt(cafe)} ${cur} كافيتيريا` : ""} - ${left.length ? `المتبقي ${formatMoneyLines(left)}` : "الحجز مدفوع بالكامل"}`);
   }
   // غادر مبكرًا: بيقصّر الإقامة لحد النهارده (الحد الأدنى ليلة). مفيش رد فلوس: لو كان دافع زيادة، الفلوس بتفضل في الفندق.
   async function earlyLeave(booking) { return guarded("leave:" + booking.id, () => earlyLeaveInner(booking)); }
@@ -300,14 +274,25 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     const amt = Math.round((Number(addAmt) || 0) * 100) / 100;
     if (!(amt > 0)) { showToast("اكتب سعر الخدمة (أكبر من صفر)"); return; }
     const kind = EXTRA_KINDS.find(([k]) => k === addSvc) || EXTRA_KINDS[0];
-    const cur = Number(booking.extras?.[kind[0]]) || 0;
-    const res = await onUpdateBooking(booking.id, { ...booking, extras: { ...(booking.extras || {}), [kind[0]]: Math.round((cur + amt) * 100) / 100 } });
+    const cur = addCur && addCur !== booking.currency ? addCur : booking.currency;
+    let next, before;
+    if (cur === booking.currency) {
+      before = Number(booking.extras?.[kind[0]]) || 0;
+      next = { ...booking, extras: { ...(booking.extras || {}), [kind[0]]: Math.round((before + amt) * 100) / 100 } };
+    } else {
+      // خدمة بعملة تانية: بتتسجّل بعملتها (من غير تحويل) والمتبقي بتاعها بيبان لوحده
+      const oc = booking.otherCharges || {};
+      const c = { laundry: 0, cafeteria: 0, tours: 0, pickup: 0, ...(oc[cur] || {}) };
+      before = Number(c[kind[0]]) || 0;
+      next = { ...booking, otherCharges: { ...oc, [cur]: { ...c, [kind[0]]: Math.round((before + amt) * 100) / 100 } } };
+    }
+    const res = await onUpdateBooking(booking.id, next);
     if (res?.error) { showToast(res.error); return; }
     setAddAmt("");
     const saved = res?.data;
     if (saved) { setExtrasDraft({ laundry: saved.extras?.laundry || "", cafeteria: saved.extras?.cafeteria || "", tours: saved.extras?.tours || "", pickup: saved.extras?.pickup || "" }); extrasBaseRef.current = normExtras(saved.extras); }
-    onLog(`إضافة خدمة ${kind[1]} ${fmt(amt)} ${booking.currency} - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
-    showToast(`اتضاف ${kind[1]} ${fmt(amt)} ${booking.currency} - إجمالي ${kind[1]} على الحجز بقى ${fmt(cur + amt)} ${booking.currency}`);
+    onLog(`إضافة خدمة ${kind[1]} ${fmt(amt)} ${cur} - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
+    showToast(`اتضاف ${kind[1]} ${fmt(amt)} ${cur} - إجمالي ${kind[1]} بالـ ${cur} على الحجز بقى ${fmt(before + amt)} ${cur}`);
   }
   // نقل النزيل: الحجز كله (التواريخ والفلوس والأكواد والرسوم) بيتنقل للغرفة الجديدة - القاعدة بتتأكد إنها فاضية
   async function moveGuest(booking) {
@@ -342,7 +327,12 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
       return;
     }
     const clamped = { laundry: Math.max(0, Number(extrasDraft.laundry) || 0), cafeteria: Math.max(0, Number(extrasDraft.cafeteria) || 0), tours: Math.max(0, Number(extrasDraft.tours) || 0), pickup: Math.max(0, Number(extrasDraft.pickup) || 0) };
-    const res = await onUpdateBooking(booking.id, { ...booking, extras: { ...(booking.extras || {}), ...clamped } });   // cafeteriaPaid بيفضل زي ما هو
+    // تصحيح خدمات العملات التانية (كل عملة لوحدها) في نفس الحفظة
+    const oc = { ...(booking.otherCharges || {}) };
+    for (const [cur, d] of Object.entries(otherDraft || {})) {
+      oc[cur] = { ...(oc[cur] || {}), ...Object.fromEntries(["laundry", "cafeteria", "tours", "pickup"].map((k) => [k, Math.max(0, Number(d[k]) || 0)])) };
+    }
+    const res = await onUpdateBooking(booking.id, { ...booking, extras: { ...(booking.extras || {}), ...clamped }, otherCharges: oc });   // cafeteriaPaid بيفضل زي ما هو
     if (res?.error) { showToast(res.error); return; }
     setExtrasDraft(clamped); extrasBaseRef.current = normExtras(clamped);
     onLog(`تصحيح مبالغ الخدمات الإضافية - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
@@ -397,14 +387,14 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
       <div className={"cx-board" + (room && status ? " has-panel" : "")}>
       <div className="cx-tiles">
         {shownRooms.length === 0 && <div style={{ gridColumn: "1 / -1", color: "var(--muted)", padding: 30, textAlign: "center" }}>مفيش غرف بالحالة دي دلوقتي</div>}
-        {shownRooms.map((r) => { const s = statusOf(r.number); const dueT = s.booking && (s.key === "occupied_unpaid") ? bookingAmountDue(s.booking) : 0; return (
+        {shownRooms.map((r) => { const s = statusOf(r.number); const dueT = s.booking && (s.key === "occupied_unpaid") ? bookingDueLines(s.booking) : []; return (
           <div key={r.number} role="button" tabIndex={0} aria-pressed={selected === r.number} onClick={() => setSelected(r.number)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(r.number); } }}
             className={"cx-tile " + (selected === r.number ? "selected" : "")} style={{ "--st": STATUS_COLORS[s.key], background: `linear-gradient(180deg, ${STATUS_TINTS[s.key] || "#fff"} 0%, #fff 78%)` }}>
             <span className="cx-tile-st" style={{ color: STATUS_TEXT[s.key] }}>{TILE_LABEL[s.key]}</span>
             <div style={{ fontWeight: 700, fontSize: r.name ? 16 : 22, lineHeight: 1.25, overflowWrap: "anywhere", color: "var(--ink)" }}><RoomName rooms={rooms} number={r.number} prefix={false} /></div>
             {s.guest && <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.guest}</div>}
             {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 12.5, color: "var(--muted)" }}>{fmt(s.booking.priceNight)} {s.booking.currency} / ليلة</div>}
-            {dueT > 0 && <div style={{ fontSize: 12.5, color: "var(--rust)", fontWeight: 600, marginTop: "auto" }}>متبقي {fmt(dueT)} {s.booking.currency}</div>}
+            {dueT.length > 0 && <div style={{ fontSize: 12.5, color: "var(--rust)", fontWeight: 600, marginTop: "auto" }}>متبقي <bdi dir="ltr">{formatMoneyLines(dueT)}</bdi></div>}
             {s.booking?.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>تسكين مكرر</span>}
           </div>
         ); })}
@@ -416,13 +406,19 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         const occupiedNow = status.key === "occupied_paid" || status.key === "occupied_unpaid";
         const canAct = (perms.editBookings || perms.markPaymentReceived) && !offShift;
         const online = !!b?.paymentDetails?.onlinePaid;
-        const due = b ? bookingAmountDue(b) : 0;
+        const dueLines = b ? bookingDueLines(b) : [];
+        const payOpts = b ? payCurrencyOptions(b) : [];
+        const payCur = payOpts.some((o) => o.currency === pay.currency) ? pay.currency : payOpts[0]?.currency;
+        const payDue = payOpts.find((o) => o.currency === payCur)?.due || 0;
+        // الخدمات اللي على الحجز - كل خدمة بعملتها (عملة الحجز + أي عملة تانية) من غير تحويل
+        const chip = (label, amt, cur, paidPart) => [label, amt, cur, paidPart];
         const extrasList = b ? [
-          b.extras?.laundry > 0 && ["غسيل", b.extras.laundry],
-          b.extras?.cafeteria > 0 && [Number(b.extras.cafeteriaPaid) > 0 ? `كافيتيريا (اتسدّد ${fmt(b.extras.cafeteriaPaid)})` : "كافيتيريا", b.extras.cafeteria],
-          b.extras?.tours > 0 && ["جولات", b.extras.tours],
-          b.extras?.pickup > 0 && ["بيك أب", b.extras.pickup],
-          b.earlyCheckin?.applied && ["دخول مبكر", b.earlyCheckin.fee || 0],
+          b.extras?.laundry > 0 && chip("غسيل", b.extras.laundry, b.currency),
+          b.extras?.cafeteria > 0 && chip("كافيتيريا", b.extras.cafeteria, b.currency, Number(b.extras.cafeteriaPaid) || 0),
+          b.extras?.tours > 0 && chip("جولات", b.extras.tours, b.currency),
+          b.extras?.pickup > 0 && chip("بيك أب", b.extras.pickup, b.currency),
+          b.earlyCheckin?.applied && chip("دخول مبكر", b.earlyCheckin.fee || 0, b.currency),
+          ...Object.entries(b.otherCharges || {}).flatMap(([cur, c]) => EXTRA_KINDS.filter(([k]) => Number(c?.[k]) > 0).map(([k, l]) => chip(l, Number(c[k]), cur, k === "cafeteria" ? Number(c.cafeteriaPaid) || 0 : 0))),
         ].filter(Boolean) : [];
         const codes = b ? guestCodeEntries(b) : [];
         return (
@@ -468,12 +464,12 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
 
               {/* الأفعال الأساسية: تحصيل / غادر مبكرًا */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                {perms.markPaymentReceived && !offShift && b.status !== "ملغي" && due > 0 && (
+                {perms.markPaymentReceived && !offShift && b.status !== "ملغي" && dueLines.length > 0 && (
                   <div data-testid="pay-panel" style={{ width: "100%", background: "#fff", borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700 }}>{online ? "تسجيل تحصيل الخدمات/الدخول المبكر" : "تسجيل دفعة"} <span style={{ fontWeight: 400, color: "var(--muted)" }}>(سيب المبلغ فاضي = كامل المتبقي {fmt(due)} {b.currency})</span></div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{online ? "تسجيل تحصيل الخدمات/الدخول المبكر" : "تسجيل دفعة"} <span style={{ fontWeight: 400, color: "var(--muted)" }}>(سيب المبلغ فاضي = كامل المتبقي {fmt(payDue)} {payCur})</span></div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start" }}>
-                      <input className="cx-input" data-testid="pay-amount" type="number" min="0" placeholder={`المبلغ (${pay.currency && pay.currency !== b.currency ? pay.currency : fmt(due)})`} style={{ width: 120 }} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} />
-                      <PayCurrencyFields bookingCurrency={b.currency} currency={pay.currency} rate={pay.rate || ""} amount={pay.amount} due={due} onChange={(c) => setPay({ ...pay, ...c })} />
+                      <input className="cx-input" data-testid="pay-amount" type="number" min="0" placeholder={`المبلغ (${fmt(payDue)} ${payCur})`} style={{ width: 160 }} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} />
+                      <PayCurrencySelect booking={b} value={payCur} onChange={(c) => setPay({ ...pay, currency: c, amount: "" })} />
                       <select className="cx-select" aria-label="وسيلة الدفع" data-testid="collect-method" style={{ fontSize: 13, width: 150 }} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
                       <PaymentDetailsInline compact={false} testid="pay" method={pay.method} details={pay.details} onChange={(d) => setPay({ ...pay, details: d })} />
                       <button className="cx-btn cx-btn-gold" data-testid="pay-record" style={{ fontSize: 13 }} disabled={payLock} aria-busy={payLock} onClick={() => recordPayment(b)}><Check size={13} /> تسجيل التحصيل</button>
@@ -509,52 +505,52 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
 
               {/* باقي التفاصيل مطوية عشان الشاشة تفضل بسيطة */}
               {(extrasList.length > 0 || (canAct && occupiedNow)) && (
-                <Sec id="sec-extras" title="خدمات إضافية ودخول مبكر" badge={extrasList.length ? extrasList.length : null}>
+                <Sec id="sec-extras" title="خدمات إضافية" badge={extrasList.length ? extrasList.length : null}>
                   {extrasList.length > 0 && (
                     <div data-testid="extras-current" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
                       <span style={{ fontSize: 12.5, color: "var(--muted)" }}>على الحجز دلوقتي:</span>
-                      {extrasList.map(([label, amt]) => <span key={label} className="cx-pill" style={{ background: "var(--paper2)" }}>{label}: {fmt(amt)} {b.currency}</span>)}
+                      {extrasList.map(([label, amt, cur, paidPart]) => <span key={label + cur} className="cx-pill" style={{ background: "var(--paper2)" }}>{label}: {fmt(amt)} {cur}{paidPart > 0 ? <span style={{ color: "var(--sage)", fontWeight: 600 }}> · اتحصّل {paidPart >= amt ? "كله" : fmt(paidPart)}</span> : null}</span>)}
                     </div>
                   )}
                   {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift && b.status !== "ملغي" && (
                     <div>
-                      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>إضافة خدمة: اختار الخدمة واكتب سعرها - بيتضاف على اللي موجود (مش بيمسحه)</div>
+                      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>إضافة خدمة: اختار الخدمة واكتب سعرها واختار عملتها - السعر بيتجمع على اللي موجود، وكل عملة بيتحاسب عليها لوحدها</div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                         <select className="cx-select" aria-label="نوع الخدمة" data-testid="extra-add-kind" style={{ width: 130 }} value={addSvc} onChange={(e) => setAddSvc(e.target.value)}>
                           {EXTRA_KINDS.filter(([k]) => profile?.role !== "reservations" || k === "tours" || k === "pickup").map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                         </select>
-                        <input className="cx-input" aria-label="سعر الخدمة" data-testid="extra-add-amount" type="number" min="0" placeholder={`السعر (${b.currency})`} style={{ width: 120 }} value={addAmt} onChange={(e) => setAddAmt(e.target.value)} />
+                        <input className="cx-input" aria-label="سعر الخدمة" data-testid="extra-add-amount" type="number" min="0" placeholder={`السعر (${addCur || b.currency})`} style={{ width: 120 }} value={addAmt} onChange={(e) => setAddAmt(e.target.value)} />
+                        <select className="cx-select" aria-label="عملة الخدمة" data-testid="extra-add-currency" style={{ width: 90 }} value={addCur || b.currency} onChange={(e) => setAddCur(e.target.value === b.currency ? "" : e.target.value)}>
+                          {[b.currency, ...COMMON_CURRENCIES.filter((c) => c !== b.currency)].map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
                         <button className="cx-btn cx-btn-gold" data-testid="extra-add" style={{ fontSize: 13 }} disabled={addLock} onClick={() => addExtra(b)}><Plus size={13} /> إضافة الخدمة</button>
-                        <button type="button" className="cx-btn cx-btn-outline" data-testid="extras-fix-toggle" style={{ fontSize: 12.5 }} onClick={() => setFixMode((v) => !v)}>{fixMode ? "قفل التصحيح" : "تصحيح المبالغ"}</button>
+                        <button type="button" className="cx-btn cx-btn-outline" data-testid="extras-fix-toggle" style={{ fontSize: 12.5 }} onClick={() => { if (!fixMode) setOtherDraft(Object.fromEntries(Object.entries(b.otherCharges || {}).map(([cur, c]) => [cur, Object.fromEntries(["laundry", "cafeteria", "tours", "pickup"].map((k) => [k, c?.[k] || ""]))]))); setFixMode((v) => !v); }}>{fixMode ? "قفل التصحيح" : "تصحيح المبالغ"}</button>
                       </div>
                       {fixMode && (
                         <div data-testid="extras-fix" style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "var(--gold-soft)" }}>
                           <div style={{ fontSize: 12.5, color: "#7A5A12", marginBottom: 6, fontWeight: 600 }}>تصحيح: الأرقام دي هي الإجمالي لكل خدمة - اللي هتكتبه هيحل مكان القديم (مش هيتضاف عليه)</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>الخدمات بالـ {b.currency}</div>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
                             {EXTRA_KINDS.filter(([k]) => profile?.role !== "reservations" || k === "tours" || k === "pickup").map(([k, l]) => (
                               <div key={k}><label style={{ fontSize: 11.5, color: "var(--muted)" }}>{l}</label><input className="cx-input" aria-label={l} type="number" min="0" value={extrasDraft[k]} onChange={(e) => setExtrasDraft({ ...extrasDraft, [k]: e.target.value })} /></div>
                             ))}
                           </div>
+                          {Object.keys(otherDraft || {}).map((cur) => (
+                            <div key={cur} style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>الخدمات بالـ {cur}</div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 6 }}>
+                                {EXTRA_KINDS.filter(([k]) => profile?.role !== "reservations" || k === "tours" || k === "pickup").map(([k, l]) => (
+                                  <div key={k}><label style={{ fontSize: 11.5, color: "var(--muted)" }}>{l} ({cur})</label><input className="cx-input" aria-label={`${l} ${cur}`} type="number" min="0" value={otherDraft[cur][k]} onChange={(e) => setOtherDraft({ ...otherDraft, [cur]: { ...otherDraft[cur], [k]: e.target.value } })} /></div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
                           <button className="cx-btn cx-btn-gold" style={{ marginTop: 8, fontSize: 13 }} onClick={() => saveExtras(b)}><Check size={13} /> حفظ التصحيح</button>
                         </div>
                       )}
                     </div>
                   )}
                   {b.earlyCheckin?.applied && b.earlyCheckin.note && <div style={{ marginTop: 6, fontSize: 13, color: "var(--muted)" }}>ملاحظة الدخول المبكر: {b.earlyCheckin.note}</div>}
-                  {occupiedNow && !b.earlyCheckin?.applied && canAct && (
-                    <div data-testid="early-checkin-panel" style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--hair)" }}>
-                      <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>النزيل دخل بدري قبل معاد الحجز؟ سجّل رسم الدخول المبكر - بيزوّد إجمالي الحجز{perms.markPaymentReceived ? "، ولو حصّلته دلوقتي بيتسجّل في اليومية والتقرير" : ""}</div>
-                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                        <input className="cx-input" data-testid="early-fee" type="number" min="0" placeholder="الرسم" value={ecFee} onChange={(e) => setEcFee(e.target.value)} style={{ width: 90 }} />
-                        <AutoText className="cx-input" data-testid="early-note" placeholder="ملاحظة (اختياري)" value={ecNote} onChange={(e) => setEcNote(e.target.value)} style={{ width: 160 }} />
-                        {perms.markPaymentReceived && (<>
-                          <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}><input type="checkbox" data-testid="early-collect" checked={ecCollect} onChange={(e) => setEcCollect(e.target.checked)} /> حصّلته دلوقتي</label>
-                          {ecCollect && <><select className="cx-select" aria-label="وسيلة دفع رسم الدخول المبكر" data-testid="early-method" style={{ fontSize: 13, width: 130 }} value={epay.method} onChange={(e) => setEpay({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select><PaymentDetailsInline compact={false} testid="early" method={epay.method} details={epay.details} onChange={(d) => setEpay({ ...epay, details: d })} /></>}
-                        </>)}
-                        <button className="cx-btn cx-btn-gold" data-testid="early-apply" style={{ fontSize: 13 }} onClick={() => applyEarlyCheckin(b)}><Check size={13} /> تسجيل الدخول المبكر</button>
-                      </div>
-                    </div>
-                  )}
                 </Sec>
               )}
 

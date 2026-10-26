@@ -126,14 +126,17 @@ function paymentsFromRecords(recs, bookings) {
   const per = new Map();
   recs.forEach((r) => [...(r.rows || []), ...(r.cafeteriaRows || [])].forEach((x) => {
     if (!x.bookingId || !cur.has(x.bookingId)) return;
-    const fx = x.fxCovered != null && (x.collectionCurrency || "EGP") !== cur.get(x.bookingId);
-    // دفعة بعملة تانية: بتتحسب على الحجز بمقابلها بعملته (fxCovered) وبتتعرض بالمبلغ الفعلي وعملته
+    const rowCur = x.collectionCurrency || "EGP";
+    // دفعة قديمة بسعر صرف (قسم ٣٩): بتتحسب على الحجز بمقابلها بعملته (fxCovered) وبتتعرض بالمبلغ الفعلي وعملته
+    const fx = x.fxCovered != null && rowCur !== cur.get(x.bookingId);
     const amt = fx ? Number(x.fxCovered) || 0 : Number(x.collectionAmt) || 0;
-    if (!amt || (!fx && (x.collectionCurrency || "EGP") !== cur.get(x.bookingId))) return;
+    if (!amt) return;
+    // دفعة بعملة الخدمات التانية (قسم ٤٠): بتتعرض بعملتها - من غير تحويل
+    const currency = fx ? cur.get(x.bookingId) : rowCur;
     const d = x.paymentDetails || {};
-    const key = [x.collectionMethod, d.senderName || "", d.senderNumber || "", fx ? x.collectionCurrency + "@" + x.fxRate : ""].join("|");
+    const key = [x.collectionMethod, d.senderName || "", d.senderNumber || "", currency, fx ? x.collectionCurrency + "@" + x.fxRate : ""].join("|");
     const m = per.get(x.bookingId) || new Map();
-    const e = m.get(key) || { method: x.collectionMethod, details: d, amount: 0, ...(fx ? { fx: { currency: x.collectionCurrency, rate: Number(x.fxRate) || 0, amount: 0 } } : {}) };
+    const e = m.get(key) || { method: x.collectionMethod, details: d, amount: 0, currency, ...(fx ? { fx: { currency: x.collectionCurrency, rate: Number(x.fxRate) || 0, amount: 0 } } : {}) };
     e.amount += amt; if (fx) e.fx.amount += Number(x.collectionAmt) || 0;
     m.set(key, e); per.set(x.bookingId, m);
   }));

@@ -18,13 +18,22 @@ select 'خطأ' as level, 'المدفوع على الحجز مش مطابق لت
 from bookings b left join per_booking p on p.booking_id = b.id::text and p.cur = b.currency
 where coalesce(b.amount_paid, 0) <> coalesce(p.led, 0)
 union all
-select 'خطأ', 'تحصيل في اليومية لحجز بعملة مختلفة أو حجز مش موجود', p.booking_id, format('%s %s', p.led, p.cur)
+select 'خطأ', 'تحصيل في اليومية لحجز مش موجود', p.booking_id, format('%s %s', p.led, p.cur)
 from per_booking p left join bookings b on b.id::text = p.booking_id
-where b.id is null or (b.currency <> p.cur and p.led <> 0)
+where b.id is null and p.led <> 0
+union all
+-- خدمات/دفعات بعملة غير عملة الحجز (other_paid): كل عملة لازم تطابق تحصيلها في اليومية بنفس العملة
+select 'خطأ', 'المدفوع بعملة تانية على الحجز مش مطابق لتحصيله في اليومية', b.id::text,
+       format('%s غرفة %s: مدفوع %s %s / في اليومية %s', b.guest_name, b.room, coalesce(nullif(b.other_paid ->> c.cur, '')::numeric, 0), c.cur, coalesce(p.led, 0))
+from bookings b
+cross join lateral (select jsonb_object_keys(coalesce(b.other_paid, '{}'::jsonb)) as cur
+                    union select p2.cur from per_booking p2 where p2.booking_id = b.id::text and p2.cur <> b.currency) c
+left join per_booking p on p.booking_id = b.id::text and p.cur = c.cur
+where c.cur <> b.currency and coalesce(nullif(b.other_paid ->> c.cur, '')::numeric, 0) <> coalesce(p.led, 0)
 union all
 select 'خطأ', 'حالة "مدفوع بالكامل" مش مطابقة للمعادلة', b.id::text, format('%s: settled=%s مدفوع %s من %s', b.guest_name, b.settled, b.amount_paid, booking_hotel_total(b))
 from bookings b
-where b.settled is distinct from (b.status is distinct from 'ملغي' and coalesce(b.amount_paid, 0) >= booking_hotel_total(b))
+where b.settled is distinct from (b.status is distinct from 'ملغي' and coalesce(b.amount_paid, 0) >= booking_hotel_total(b) and booking_other_due(b) = '{}'::jsonb)
 union all
 select 'خطأ', 'مدفوع كافيتيريا النزيل أكبر من قيمة الكافيتيريا', b.id::text, format('%s: مدفوع %s من %s', b.guest_name, b.extras ->> 'cafeteriaPaid', b.extras ->> 'cafeteria')
 from bookings b

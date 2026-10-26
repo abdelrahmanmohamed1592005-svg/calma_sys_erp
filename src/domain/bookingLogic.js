@@ -1,5 +1,5 @@
 import { addDays, todayStr, nightsBetween } from "./dates";
-import { bookingAmountDue } from "./money";
+import { bookingHasDue } from "./money";
 import { STATUS_LABELS } from "./constants";
 
 export function isOverrideStillActive(ov, dateStr) {
@@ -25,7 +25,7 @@ export function computeRoomStatus(roomNumber, bookings, overrides, dateStr) {
     // علامة settled لوحدها: لو الإجمالي زاد (تمديد/رسوم) والمدفوع لسه أقل،
     // الغرفة لازم تظهر "متبقي عليها فلوس" حتى لو العلامة القديمة لسه موجودة.
     // حجز أونلاين: سعر الغرفة متسدّد، لكن لو عليه خدمات/دخول مبكر لسه ماتحصّلتش بيفضل "متبقي عليها فلوس"
-    const paid = bookingAmountDue(active) <= 0;
+    const paid = !bookingHasDue(active);
     return { key: paid ? "occupied_paid" : "occupied_unpaid", label: paid ? "مشغولة - متحصّل بالكامل" : "مشغولة - متبقي عليها فلوس", guest: active.guestName, booking: active, paid };
   }
   const departed = bookings.find((b) => b.room === roomNumber && b.leftEarly && b.status !== "ملغي" && b.checkout === dateStr);

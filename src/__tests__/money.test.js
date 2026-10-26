@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { onlineRoomCovered, bookingHotelTotal, computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, emptyPaymentDetails, directBookingPaymentsByMethod, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, applyCollectionToRows, refundDueAmount, rebaseShiftRecord, refundStatusOf } from "../domain/money";
+import { onlineRoomCovered, bookingHotelTotal, computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, emptyPaymentDetails, directBookingPaymentsByMethod, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, applyCollectionToRows, refundDueAmount, rebaseShiftRecord, refundStatusOf , otherTotals, otherDue, bookingDueLines, formatMoneyLines, bookingHasDue } from "../domain/money";
 
 // انستاباي والتحويل البنكي وسيلة واحدة فعليًا - اتدمجوا في خيار واحد بدل
 // خيارين مختلفين، وفضلت العملات المعتمدة خمسة بس.
@@ -454,5 +454,21 @@ describe("الحجز المدفوع أونلاين: المنصة دفعت سعر
   });
   it("حجز مش أونلاين: الفندق بيحصّل كله", () => {
     expect(bookingHotelTotal({ ...ob, paymentDetails: { onlinePaid: false } })).toBe(350);
+  });
+});
+
+describe("خدمات بعملات تانية (كل عملة لوحدها من غير تحويل)", () => {
+  const b = { currency: "USD", totalRoom: 120, amountPaid: 120, extras: { laundry: 0, cafeteria: 0, tours: 30, pickup: 0 }, paymentDetails: {},
+    otherCharges: { EGP: { laundry: 200, cafeteria: 50, tours: 0, pickup: 0, cafeteriaPaid: 50 } }, otherPaid: { EGP: 50 } };
+  it("المتبقي لكل عملة لوحدها", () => {
+    expect(otherTotals(b)).toEqual({ EGP: 250 });
+    expect(otherDue(b)).toEqual({ EGP: 200 });
+    expect(bookingDueLines(b)).toEqual([{ currency: "USD", due: 30 }, { currency: "EGP", due: 200 }]);
+    expect(formatMoneyLines(bookingDueLines(b))).toBe("30 USD + 200 EGP");
+    expect(bookingHasDue(b)).toBe(true);
+  });
+  it("مدفوع بالكامل بس لما كل العملات تتغطّى", () => {
+    expect(bookingHasDue({ ...b, amountPaid: 150 })).toBe(true);
+    expect(bookingHasDue({ ...b, amountPaid: 150, otherPaid: { EGP: 250 } })).toBe(false);
   });
 });
