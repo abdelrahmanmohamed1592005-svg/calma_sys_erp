@@ -4,8 +4,9 @@
 -- ============================================================================
 with ledger as (
   select (x ->> 'bookingId') as booking_id,
-         coalesce(nullif(x ->> 'collectionCurrency', ''), 'EGP') as cur,
-         case when trim(coalesce(x ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(x ->> 'collectionAmt')::numeric else 0 end as amt
+         coalesce(nullif(x ->> 'fxBookingCurrency', ''), nullif(x ->> 'collectionCurrency', ''), 'EGP') as cur,  -- دفع بعملة تانية: بيتحسب بالمغطّى بعملة الحجز
+         case when trim(coalesce(x ->> 'fxBookingCurrency', '')) <> '' then (case when trim(coalesce(x ->> 'fxCovered', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(x ->> 'fxCovered')::numeric else 0 end)
+              when trim(coalesce(x ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(x ->> 'collectionAmt')::numeric else 0 end as amt
   from shift_records s, lateral jsonb_array_elements(coalesce(to_jsonb(s) -> 'rows', '[]'::jsonb)) x
   where coalesce(x ->> 'bookingId', '') <> ''
 ), per_booking as (select booking_id, cur, sum(amt) as led from ledger group by 1, 2)

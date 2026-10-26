@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock, Search, CalendarDays, Moon, Users, CreditCard, Globe, BedDouble, ClipboardList, Wallet, SearchX } from "lucide-react";
-import { DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
+import { PayCurrencyFields, fxPreview, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHotelTotal, refundStatusOf } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { getPaymentsIndex } from "../data/shifts";
-import { recordBookingPayment } from "../data/payments";
+import { recordBookingPayment, recordBookingPaymentFx } from "../data/payments";
 import { guarded } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
 
@@ -34,26 +34,34 @@ function QuickPay({ booking, onDone, showToast }) {
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("كاش");
   const [details, setDetails] = useState(emptyPaymentDetails());
+  const [fxc, setFxc] = useState({ currency: "", rate: "" });
   const due = bookingAmountDue(booking);
   async function submit() {
     return guarded("quickpay:" + booking.id, async () => {
-      const amt = Math.round((amount === "" ? due : Number(amount) || 0) * 100) / 100;
+      const fxCur = fxc.currency && fxc.currency !== booking.currency ? fxc.currency : "";
+      const fx = fxCur ? fxPreview({ amount, currency: fxCur, rate: fxc.rate, bookingCurrency: booking.currency, due }) : null;
+      if (fx && !(fx.rate > 0)) { showToast(`اكتب سعر الصرف: 1 ${booking.currency} = كام ${fxCur}`); return; }
+      const amt = Math.round((fx ? fx.amt : amount === "" ? due : Number(amount) || 0) * 100) / 100;
       if (!(amt > 0)) { showToast("اكتب مبلغ الدفعة (أكبر من صفر)"); return; }
-      if (amt > due + 0.005) { showToast(`المبلغ (${fmt(amt)}) أكبر من المتبقي على النزيل (${fmt(due)} ${booking.currency})`); return; }
+      if (fx ? fx.covered - due > 0.01 : amt > due + 0.005) { showToast(`المبلغ (${fmt(amt)}${fx ? " " + fxCur : ""}) أكبر من المتبقي على النزيل (${fmt(due)} ${booking.currency})`); return; }
       const err = validatePaymentDetailsFor(method, details);
       if (err) { showToast(err); return; }
-      const res = await recordBookingPayment({ bookingId: booking.id, amount: amt, method, details: cleanPaymentDetailsFor(method, details), note: "تحصيل", expectedUpdatedAt: booking.updatedAt });
+      const res = fx
+        ? await recordBookingPaymentFx({ bookingId: booking.id, amount: amt, currency: fxCur, rate: fx.rate, method, details: cleanPaymentDetailsFor(method, details), note: "تحصيل", expectedUpdatedAt: booking.updatedAt })
+        : await recordBookingPayment({ bookingId: booking.id, amount: amt, method, details: cleanPaymentDetailsFor(method, details), note: "تحصيل", expectedUpdatedAt: booking.updatedAt });
       if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
       if (onDone) await onDone();
-      setOpen(false); setAmount(""); setDetails(emptyPaymentDetails()); setMethod("كاش");
-      showToast(`تم تسجيل ${fmt(amt)} ${booking.currency} (${method}) على ${booking.guestName} - المتبقي ${fmt(Math.max(0, due - amt))} ${booking.currency}`);
+      const covered = fx ? Number(res.data?.covered) || fx.covered : amt;
+      setOpen(false); setAmount(""); setDetails(emptyPaymentDetails()); setMethod("كاش"); setFxc({ currency: "", rate: "" });
+      showToast(`تم تسجيل ${fmt(amt)} ${fx ? fxCur + ` (= ${fmt(covered)} ${booking.currency})` : booking.currency} (${method}) على ${booking.guestName} - المتبقي ${fmt(Math.max(0, Math.round((due - covered) * 100) / 100))} ${booking.currency}`);
     });
   }
   if (!open) return <button className="cx-btn cx-btn-soft" style={{ fontSize: 13 }} data-testid="quickpay-open" onClick={() => setOpen(true)}><Wallet size={14} aria-hidden="true" />تسجيل دفعة</button>;
   return (
     <div data-testid="quickpay-panel" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", background: "var(--paper2)", borderRadius: 8, padding: 6 }}>
       <span style={{ fontSize: 13 }}>المتبقي {fmt(due)} {booking.currency}</span>
-      <input className="cx-input" data-testid="quickpay-amount" type="number" min="0" placeholder={`المبلغ (${fmt(due)})`} style={{ width: 100 }} value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <input className="cx-input" data-testid="quickpay-amount" type="number" min="0" placeholder={`المبلغ (${fxc.currency && fxc.currency !== booking.currency ? fxc.currency : fmt(due)})`} style={{ width: 100 }} value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <PayCurrencyFields testid="quickpay" bookingCurrency={booking.currency} currency={fxc.currency} rate={fxc.rate} amount={amount} due={due} onChange={setFxc} />
       <select className="cx-select" data-testid="quickpay-method" style={{ width: 130 }} value={method} onChange={(e) => { setMethod(e.target.value); setDetails(emptyPaymentDetails()); }}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
       <PaymentDetailsInline method={method} details={details} onChange={setDetails} testid="quickpay" />
       <button className="cx-btn cx-btn-gold" data-testid="quickpay-submit" onClick={submit}>سجّل</button>
@@ -62,7 +70,7 @@ function QuickPay({ booking, onDone, showToast }) {
   );
 }
 
-export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onRefresh, onDecideRefund, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
+export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onRefresh, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
   const [form, setForm] = useState(null);
   const formBaseRef = React.useRef(null);   // نسخة الحجز اللي الفورم اتفتح عليها (لدمج تعديلاتي مع آخر نسخة لو اتغيّر من مكان تاني)
   const [filter, setFilter] = useState("");
@@ -211,8 +219,13 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       if (detailsErr) { showToast(detailsErr); return; }
     }
     const payMethod = advance > 0 ? payNow.method : (originalBooking?.paymentMethod || "كاش");
+    // أونلاين: المنصة دفعت سعر الغرفة اللي اتحجز (onlineRoomAmount). لو الحجز كان أونلاين واتمدّد في الفندق بعد كده
+    // (نفس الدخول وخروج أبعد) المبلغ اللي اتدفع أونلاين بيفضل زي ما هو والليالي الزيادة بتتحصّل في الفندق.
+    const origPd = originalBooking?.paymentDetails || {};
+    const keepCover = origPd.onlinePaid && origPd.onlineRoomAmount != null && originalBooking.checkin === form.checkin && form.checkout >= originalBooking.checkout
+      && Number(originalBooking.priceNight) === priceNightNum && (form.checkout > originalBooking.checkout || Number(originalBooking.totalRoom) === totalRoomNum);
     const cleanPaymentDetails = online
-      ? { ...emptyPaymentDetails(), onlinePaid: true, ref: sanitizeText(pd.ref, 200) }
+      ? { ...emptyPaymentDetails(), onlinePaid: true, ref: sanitizeText(pd.ref, 200), onlineRoomAmount: keepCover ? Number(origPd.onlineRoomAmount) : totalRoomNum }
       : advance > 0 ? cleanPaymentDetailsFor(payNow.method, payNow.details) : (originalBooking?.paymentDetails || emptyPaymentDetails());
     let cleaned = {
       ...form, room: Number(form.room), guestName: sanitizeText(form.guestName, 120), phone: sanitizeText(form.phone, 40), code: sanitizeText(form.code, 60), notes: sanitizeText(form.notes, 1000),
@@ -236,7 +249,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     if (advance > 0 && advance > bookingHotelTotal(cleaned)) { showToast(`المدفوع (${fmt(advance)}) أكبر من الإجمالي (${fmt(bookingHotelTotal(cleaned))} ${cleaned.currency})`); return; }
     // "تسكين مكرر" (الخطة اتأكدت فوق إنها سليمة): لكل حجز قديم متعارض -
     // - بدأ قبل الجديد: نقصّر تاريخ خروجه لتاريخ دخول الجديد ونعلّمه "غادر مبكرًا"
-    //   (مش "ملغي"؛ بيتحاسب على الليالي اللي قعدها والزيادة المدفوعة طلب رد).
+    //   (مش "ملغي"؛ بيتحاسب على الليالي اللي قعدها، وأي زيادة مدفوعة بتفضل في الفندق).
     // - نزل نفس يوم الجديد وخرج: بيتسجّل "غادر مبكرًا" برضه (خروجه = دخوله)
     //   وبيتحاسب ليلة واحدة (الحد الأدنى).
     // لو حفظ الحجز الجديد فشل بعد كده، كل اللي اتغيّر بيترجع تاني تلقائيًا.
@@ -286,10 +299,10 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       if (payRes.error) { payFailed = `⚠ الحجز اتحفظ لكن الدفعة (${fmt(advance)} ${cleaned.currency} - ${payMethod}) ماتسجّلتش: ${payRes.error} - سجّلها من زرار "تسجيل دفعة" على الحجز في القايمة`; }
       else if (onRefresh) await onRefresh();
     }
-    refundRequests.forEach((c) => { note += ` — ${c.guestName} غادر مبكرًا: اتحاسب على الليالي اللي قعدها، و${fmt((Number(c.amountPaid) || 0) - bookingGrandTotal(c))} ${c.currency} زيادة مدفوعة عن الليالي اللي ماقعدهاش اتبعتت كطلب رد فلوس لمدير الحجوزات`; });
+    refundRequests.forEach((c) => { note += ` — ${c.guestName} غادر مبكرًا: اتحاسب على الليالي اللي قعدها، والـ ${fmt((Number(c.amountPaid) || 0) - bookingGrandTotal(c))} ${c.currency} الزيادة المدفوعة فضلت في الفندق`; });
     const paidAfter = Number(cleaned.amountPaid) || 0;
-    if (!cleaned.paymentDetails?.onlinePaid && isExistingBooking && paidAfter > bookingGrandTotal(cleaned) && cleaned.status !== "ملغي") note += ` — ⚠ المدفوع (${fmt(paidAfter)}) بقى أكبر من الإجمالي الجديد بـ ${fmt(paidAfter - bookingGrandTotal(cleaned))} ${cleaned.currency} - فيه فلوس زيادة لازم تترد للنزيل`;
-    if (cleaned.status === "ملغي" && originalBooking?.status !== "ملغي" && paidAfter > 0) note += ` — الحجز اتلغى وفيه ${fmt(paidAfter)} ${cleaned.currency} متحصّل: اتبعت طلب رد فلوس لمدير الحجوزات (هو اللي يقرر يرد أو يرفض، ولو رد بيتشال من التحصيل واليومية)`;
+    if (!cleaned.paymentDetails?.onlinePaid && isExistingBooking && paidAfter > bookingGrandTotal(cleaned) && cleaned.status !== "ملغي") note += ` — المدفوع (${fmt(paidAfter)}) بقى أكبر من الإجمالي الجديد بـ ${fmt(paidAfter - bookingGrandTotal(cleaned))} ${cleaned.currency} - الزيادة بتفضل في الفندق`;
+    if (cleaned.status === "ملغي" && originalBooking?.status !== "ملغي" && paidAfter > 0) note += ` — الحجز اتلغى والـ ${fmt(paidAfter)} ${cleaned.currency} المتحصّلة فضلت في الفندق`;
     // حجز اتلغى وعليه فلوس: ماينفعش طلب الرد يختفي من القايمة بسبب فلتر "الشغّالة" أو نص بحث
     if (cleaned.status === "ملغي" && originalBooking?.status !== "ملغي" && paidAfter > 0) { if (statusFilter === "active") setStatusFilter("all"); setFilter(""); }
     setForm(null); showToast(payFailed ? payFailed + note : "تم الحفظ" + note);
@@ -424,14 +437,14 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
           )}
           {form.status === "ملغي" && (isExistingBooking ? originalBooking?.status !== "ملغي" : true) && (Number(isExistingBooking ? originalBooking?.amountPaid : form.amountPaid) || 0) > 0 && (
             <div style={{ marginTop: 10, fontSize: 13, color: "var(--rust)", background: "#F4E7E2", borderRadius: 8, padding: 8 }}>
-              <AlertTriangle size={13} style={{ verticalAlign: -2 }} /> الحجز ده عليه {fmt(originalBooking?.amountPaid ?? form.amountPaid)} {form.currency} متحصّل - بعد الإلغاء هيتفتح طلب رد فلوس ليك في قائمة الحجوزات: تقدر ترد الفلوس (بتتشال من التحصيل واليومية والتقرير) أو ترفض الرد وتسيبها متحصّلة. الحجز نفسه بيفضل ظاهر في القائمة كحجز ملغي.
+              <AlertTriangle size={13} style={{ verticalAlign: -2 }} /> الحجز ده عليه {fmt(originalBooking?.amountPaid ?? form.amountPaid)} {form.currency} متحصّل - بعد الإلغاء الفلوس دي بتفضل في الفندق (مفيش رد فلوس). الحجز نفسه بيفضل ظاهر في القائمة كحجز ملغي.
             </div>
           )}
 
           {conflict && duplicatePlan?.ok && (
             <div data-testid="duplicate-plan" style={{ marginTop: 10, fontSize: 13.5, background: "#E8F0F0", color: "var(--teal)", borderRadius: 8, padding: 10 }}>
               <div style={{ fontWeight: 800, marginBottom: 4 }}>الغرفة دي عليها نزيل دلوقتي ({clashesNow.map(clashLabel).join(" / ")})</div>
-              لو كمّلت: {duplicatePlan.actions.map((act) => `${act.clash.guestName} هيتسجّل "غادر مبكرًا"${act.action === "trim" ? ` وخروجه يتقصّر لـ ${act.checkout}` : " (دخل وخرج في نفس اليوم)"} - بيتحاسب على الليالي اللي قعدها (الحد الأدنى ليلة)${(Number(act.clash.amountPaid) || 0) > 0 ? " والزيادة المدفوعة تتحوّل لطلب رد فلوس" : ""}`).join(" · ")}، والنزيل الجديد يتسكّن مكانه.
+              لو كمّلت: {duplicatePlan.actions.map((act) => `${act.clash.guestName} هيتسجّل "غادر مبكرًا"${act.action === "trim" ? ` وخروجه يتقصّر لـ ${act.checkout}` : " (دخل وخرج في نفس اليوم)"} - بيتحاسب على الليالي اللي قعدها (الحد الأدنى ليلة)${(Number(act.clash.amountPaid) || 0) > 0 ? " وأي زيادة مدفوعة تفضل في الفندق" : ""}`).join(" · ")}، والنزيل الجديد يتسكّن مكانه.
             </div>
           )}
           {conflict && duplicatePlan && !duplicatePlan.ok && (
@@ -587,7 +600,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                 {perms.editBookings && (<>
                   <button className="cx-btn cx-btn-outline" title="تعديل" onClick={() => startEdit(b)}><Pencil size={13} /></button>
                   {b.status !== "ملغي" && b.status !== "تم تسجيل الخروج" && (
-                    <span data-testid="cancel-booking"><TwoStepButton label="إلغاء الحجز" confirmLabel={`تأكيد الإلغاء؟ ${(Number(b.amountPaid) || 0) > 0 ? `(عليه ${fmt(b.amountPaid)} ${b.currency} متحصّل - هيتفتح طلب رد فلوس لمدير الحجوزات)` : "(مفيش فلوس متحصّلة - مفيش رد)"}`} icon={<Ban size={13} />} onConfirm={() => cancelBooking(b)} /></span>
+                    <span data-testid="cancel-booking"><TwoStepButton label="إلغاء الحجز" confirmLabel={`تأكيد الإلغاء؟ ${(Number(b.amountPaid) || 0) > 0 ? `(عليه ${fmt(b.amountPaid)} ${b.currency} متحصّل - بتفضل في الفندق، مفيش رد)` : "(مفيش فلوس متحصّلة)"}`} icon={<Ban size={13} />} onConfirm={() => cancelBooking(b)} /></span>
                   )}
                 </>)}
               </div>
@@ -597,7 +610,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
             </div>
             <MoneyBox b={b} />
             <PayBreakdown payments={payIndex?.get(b.id)} currency={b.currency} />
-            <RefundBox b={b} canDecide={!!perms.decideRefund} onDecide={onDecideRefund} />
+            <RefundBox b={b} />
           </div>
         ); })}
       </div>

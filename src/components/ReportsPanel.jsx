@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble } from "lucide-react";
 import { DateRange, Logo, RoomName } from "./shared";
-import { emptyMoney, computeShiftTotals, methodTransactions, bookingGrandTotal, refundDueAmount, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
+import { emptyMoney, computeShiftTotals, methodTransactions, bookingGrandTotal, bookingHotelTotal, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, HOTEL_NAME } from "../domain/constants";
 import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getJournaledBookingIds, getShiftRecord, getShiftRecordsInRange } from "../data/shifts";
@@ -94,7 +94,7 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   const items = [];
   onlineBookings.forEach((b) => {
     // سعر الغرفة بس: الخدمات/الدخول المبكر على الحجز الأونلاين بيتحصّلوا في الفندق ويدخلوا من اليومية (متحسبوش مرتين)
-    const gross = Number(b.totalRoom) || 0;
+    const gross = onlineRoomCovered(b);
     grossRevenue[b.currency] = (grossRevenue[b.currency] || 0) + gross;
     items.push({ id: b.id, room: b.room, guestName: b.guestName, checkin: b.checkin, checkout: b.checkout, currency: b.currency, gross, paymentDetails: b.paymentDetails });
   });
@@ -102,9 +102,8 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   // المبالغ اللي بتتسجل وقت "تسجيل تحصيل" على الحجز نفسه (فيزا/انستاباي/
   // فودافون كاش/تحويل بنكي...) ومش بتمر على يومية الشيفت، فلازم تتجمع هنا
   // عشان تظهر في التقرير.
-  // حجز ملغي مدير الحجوزات رفض رد فلوسه (refundDecision = "kept") الفلوس بتفضل
-  // متحصّلة فعلاً - بتتحسب هنا برضه (مش إيراد غرفة، لكن تحصيل حقيقي).
-  const keptCancelled = bookings.filter((b) => b.status === "ملغي" && b.refundDecision === "kept" && (Number(b.amountPaid) || 0) > 0 && b.checkin >= fromDate && b.checkin < toDate2);
+  // حجز ملغي وعليه فلوس: مفيش رد فلوس، فالفلوس بتفضل متحصّلة فعلاً - بتتحسب هنا برضه (مش إيراد غرفة، لكن تحصيل حقيقي).
+  const keptCancelled = bookings.filter((b) => b.status === "ملغي" && (Number(b.amountPaid) || 0) > 0 && b.checkin >= fromDate && b.checkin < toDate2);
   const byMethodCurrency = directBookingPaymentsByMethod([...directBookings, ...keptCancelled], journaledIds);
   // المبالغ المتبقية على النزلاء: للحجز المدفوع أونلاين، سعر الغرفة نفسه
   // متسوّى بالفعل عن طريق منصة الحجز (ده اللي قسم "الحجوزات الأونلاين" فوق
@@ -115,20 +114,14 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   inRange.forEach((b) => {
     const gt = bookingGrandTotal(b);
     if (b.paymentDetails?.onlinePaid) {
-      const extrasTotal = gt - (Number(b.totalRoom) || 0);
-      const due = extrasTotal - (Number(b.amountPaid) || 0);
+      const due = bookingHotelTotal(b) - (Number(b.amountPaid) || 0);
       if (due > 0) outstanding.push({ ...b, due, onlineExtrasOnly: true });
     } else {
       const due = gt - (Number(b.amountPaid) || 0);
       if (due > 0) outstanding.push({ ...b, due, onlineExtrasOnly: false });
     }
   });
-  // حجوزات اتلغت وفلوسها لسه ما اترّدتش للنزيل (refundPending) - مش إيراد ولا
-  // متبقي على نزيل، دي التزام على الفندق لحد ما موظف الشيفت يسجّل الرد
-  // (بعدها بيتسجل في يومية الشيفت بالسالب وبيتشال من التحصيل). بتظهر بغض
-  // النظر عن الفترة المختارة لأنها رصيد مستحق لحظي زي المتبقي بالظبط.
-  const refundsPending = bookings.filter((b) => b.refundPending && refundDueAmount(b) > 0);
-  return { count: onlineBookings.length, totalCount: revenueBookings.length, grossRevenue, items, outstanding, byMethodCurrency, refundsPending };
+  return { count: onlineBookings.length, totalCount: revenueBookings.length, grossRevenue, items, outstanding, byMethodCurrency };
 }
 
 export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
@@ -456,20 +449,6 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
             </div>
           )}
 
-          {bAgg.refundsPending.length > 0 && (
-            <div className="cx-card" style={{ padding: 12, marginBottom: 14, borderColor: "var(--rust)" }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2, color: "var(--rust)" }}>طلبات رد فلوس منتظرة قرار مدير الحجوزات ({bAgg.refundsPending.length})</div>
-              <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>مدير الحجوزات بيوافق أو يرفض من شاشة الحجوزات أو الشريط اللي فوق.</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {bAgg.refundsPending.map((b) => (
-                  <div key={b.id} style={{ fontSize: 13, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--hair)", padding: "4px 0" }}>
-                    <span><RoomName rooms={rooms} number={b.room} /> · <span className="cx-iso">{b.guestName}</span> <span style={{ color: "var(--muted)", fontSize: 12 }}>(<DateRange from={b.checkin} to={b.checkout} /> · {b.paymentMethod})</span></span>
-                    <span style={{ color: "var(--rust)", fontWeight: 700 }}>{fmt(refundDueAmount(b))} {b.currency}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {agg.flaggedShifts.length > 0 && (
             <div className="cx-card" style={{ padding: 12, marginBottom: 14, borderColor: "var(--rust)" }}>

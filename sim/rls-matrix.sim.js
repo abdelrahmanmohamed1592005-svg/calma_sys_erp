@@ -19,8 +19,8 @@ describe.skipIf(!enabled)("مصفوفة الصلاحيات", () => {
     await db.q("insert into profiles(id, username, name, role, active) values ('00000000-0000-0000-0000-0000000000aa', 'off1', 'off1', 'staff', false)");
     db.ids.off1 = "00000000-0000-0000-0000-0000000000aa";
     [{ id: bookingId }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room) values (601, 'M', $1::date, $1::date + 1, 100, 100) returning id", [today]);
-    await db.q("insert into shift_claims(date, shift_key, username, name) values ($1, 'morning', 'st1', 'st1')", [today]);
-    await db.q("insert into shift_records(date, shift_key, staff_name, staff_username) values ($1, 'morning', 'st1', 'st1')", [today]);
+    await db.q("insert into shift_claims(date, shift_key, username, name) values ($1, 'night', 'st1', 'st1')", [today]);
+    await db.q("insert into shift_records(date, shift_key, staff_name, staff_username) values ($1, 'night', 'st1', 'st1')", [today]);
     await db.q("insert into activity_log(user_name, username, role, action) values ('x', 'st2', 'staff', 'a'), ('y', 'res1', 'reservations', 'b')");
     await db.q("insert into staff_cafeteria(consumer_name, amount) values ('s', 10)");
     await db.q("insert into room_overrides(room_number, status) values (602, 'cleaning')");
@@ -57,7 +57,7 @@ describe.skipIf(!enabled)("مصفوفة الصلاحيات", () => {
     ["profiles: تعديل", "update profiles set name = name where username = 'st1'", ["gm1"]],
     ["shift_claims: قراءة", "select count(*) n from shift_claims", ALL, "read"],
     // (st1 عنده اختيار شيفت النهارده فعلاً، وكل موظف شيفت واحد في اليوم) فبس الموظف التاني يقدر يختار شيفت جديد
-    ["shift_claims: إضافة (موظف بس، شيفت تاني، مرة واحدة في اليوم)", "insert into shift_claims(date, shift_key, username, name) select hotel_today(), 'night', username, name from profiles where id = auth.uid()", ["st2"]],
+    ["shift_claims: إضافة (موظف بس، شيفت تاني، مرة واحدة في اليوم)", "insert into shift_claims(date, shift_key, username, name) select hotel_today(), 'evening', username, name from profiles where id = auth.uid()", ["st2"]],
     ["shift_claims: تعديل", "update shift_claims set name = name", ["gm1"]],
     ["shift_claims: مسح", "delete from shift_claims", ["gm1"]],
     ["shift_records: قراءة", "select count(*) n from shift_records", ALL, "read"],

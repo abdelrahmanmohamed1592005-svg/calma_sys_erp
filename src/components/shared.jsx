@@ -1,6 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import { getBookingPayments } from "../data/shifts";
-import { ONLINE_METHODS, methodOptionsFor, refundStatusOf, refundDueAmount, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
+import { COMMON_CURRENCIES, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { PRINT_FIT_CSS } from "../lib/printFit";
 import { roomLabel, roomDisplay } from "../domain/constants";
 
@@ -471,18 +470,45 @@ export function PaymentDetailsInline({ method, details, onChange, disabled, comp
 
 /* حساب الحجز في سطر واحد واضح (نفس الشكل في لوحة الغرف وقايمة الحجوزات):
    الإجمالي | المدفوع | المتبقي (أو "مستحق رده" لو فيه فلوس زيادة). */
+/* عملة الدفعة: الموظف بيختار بنفسه (الافتراضي عملة الحجز). لو عملة تانية بيكتب سعر الصرف وقت الدفع
+   (١ عملة الحجز = كام من عملة الدفعة)، وبيشوف المقابل اللي هيتخصم من المتبقي قبل ما يسجّل. */
+export function fxPreview({ amount, currency, rate, bookingCurrency, due }) {
+  if (!currency || currency === bookingCurrency) return null;
+  const r = Number(rate) || 0;
+  const amt = amount === "" || amount == null ? (r > 0 ? Math.round(due * r * 100) / 100 : 0) : Number(amount) || 0;
+  const covered = r > 0 ? Math.round((amt / r) * 100) / 100 : 0;
+  return { amt, rate: r, covered };
+}
+export function PayCurrencyFields({ bookingCurrency, currency, rate, onChange, amount, due, testid = "pay" }) {
+  const cur = currency || bookingCurrency;
+  const pv = fxPreview({ amount, currency: cur, rate, bookingCurrency, due });
+  return (
+    <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      <select className="cx-select" aria-label="عملة الدفعة" data-testid={testid + "-currency"} style={{ width: 92, fontSize: 13 }} value={cur} onChange={(e) => onChange({ currency: e.target.value === bookingCurrency ? "" : e.target.value, rate: "" })}>
+        {[...new Set([bookingCurrency, ...COMMON_CURRENCIES])].map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      {cur !== bookingCurrency && (
+        <span style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13, background: "var(--gold-soft)", borderRadius: 8, padding: "4px 8px" }}>
+          <span dir="ltr">1 {bookingCurrency} =</span>
+          <input className="cx-input" data-testid={testid + "-rate"} aria-label="سعر الصرف" type="number" min="0" step="any" placeholder="سعر الصرف" style={{ width: 96 }} value={rate} onChange={(e) => onChange({ currency: cur, rate: e.target.value })} />
+          <span dir="ltr">{cur}</span>
+          {pv && pv.rate > 0 && <b data-testid={testid + "-fx-preview"}>= {fmt(pv.covered)} {bookingCurrency} من المتبقي</b>}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function MoneyBox({ b }) {
   const total = bookingGrandTotal(b), paid = Number(b.amountPaid) || 0, due = bookingAmountDue(b);
-  const owed = refundDueAmount(b);
   const online = !!b.paymentDetails?.onlinePaid;
   const cancelled = b.status === "ملغي";
   // الحالة بتتحسب لوحدها من المدفوع والإجمالي (مفيش علامة بتتعلّم بالإيد)
   const state = cancelled ? null : due > 0 ? { text: paid > 0 ? "دفع جزئي" : "لسه مدفعش", color: "var(--rust)" } : total > 0 || paid > 0 ? { text: "مدفوع بالكامل", color: "var(--sage)" } : null;
   const cells = [["الإجمالي", fmt(total), null]];
-  if (online) cells.push(["مدفوع أونلاين (سعر الغرفة)", fmt(Number(b.totalRoom) || 0), "var(--sage)"]);
+  if (online) cells.push(["مدفوع أونلاين (سعر الغرفة)", fmt(onlineRoomCovered(b)), "var(--sage)"]);
   if (!online || paid > 0 || due > 0) cells.push([online ? "المتحصّل في الفندق" : "المدفوع", fmt(paid), null]);
-  if (b.status !== "ملغي" && (due > 0 || !online)) cells.push([online ? "المتبقي (خدمات/دخول مبكر)" : "المتبقي", fmt(due), due > 0 ? "var(--rust)" : "var(--sage)"]);
-  if (owed > 0) cells.push(["مستحق رده للنزيل", fmt(owed), "var(--rust)"]);
+  if (b.status !== "ملغي" && (due > 0 || !online)) cells.push([online ? "المتبقي في الفندق (خدمات/دخول مبكر/تمديد)" : "المتبقي", fmt(due), due > 0 ? "var(--rust)" : "var(--sage)"]);
   return (
     <div data-testid="money-box" style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", background: "#fff", borderRadius: 8, padding: "8px 12px" }}>
       {state && <span data-testid="pay-state" className="cx-pill" style={{ background: state.color === "var(--sage)" ? "#EAF2EC" : "#FBE2E4", color: state.color }}>{state.text}</span>}
@@ -501,81 +527,19 @@ export function PayBreakdown({ payments, currency }) {
       <span style={{ color: "var(--muted)" }}>اتدفع بـ:</span>
       {payments.map((p, i) => {
         const d = describePaymentDetails(p.method, p.details);
-        return <span key={i} className="cx-pill" style={{ background: "#fff", border: "1px solid var(--hair)", fontWeight: 600 }}>{p.method}{d ? <b dir="ltr" style={{ marginInlineStart: 6 }}>{d}</b> : null} · {fmt(p.amount)} {currency}</span>;
+        return <span key={i} className="cx-pill" style={{ background: "#fff", border: "1px solid var(--hair)", fontWeight: 600 }}>{p.method}{d ? <b dir="ltr" style={{ marginInlineStart: 6 }}>{d}</b> : null} · {p.fx ? <>{fmt(p.fx.amount)} {p.fx.currency} <span style={{ color: "var(--muted)", fontWeight: 500 }}>(= {fmt(p.amount)} {currency} بسعر {fmt(p.fx.rate)})</span></> : <>{fmt(p.amount)} {currency}</>}</span>;
       })}
     </div>
   );
 }
 
-/* طلب رد الفلوس / حالته بنفس الشكل في كل مكان (قايمة الحجوزات، لوحة الغرف، شريط الطلبات):
-   - طلب معلّق: السبب والمبلغ، ومدير الحجوزات بضغطة واحدة يوافق ويرد (بيتخصم من اليومية) أو يرفض.
-   - اتقرر: النتيجة بنص واضح (اترد X / رُفض الرد / مفيش رد). */
-export function RefundBox({ b, canDecide, onDecide }) {
-  const [method, setMethod] = useState(b.paymentMethod);
-  const [paid, setPaid] = useState(null);                 // اللي اتدفع فعلًا بكل وسيلة (من اليومية): [{ method, details, amount }]
-  const [confirmKeep, setConfirmKeep] = useState(false);
-  const touched = useRef(false);                       // المدير اختار وسيلة بإيده: القراءة المتأخرة ماتغيّرهاش
+/* حالة الفلوس لحجز ملغي (أو رد قديم اتعمل قبل ما الرد يتشال) - سطر واحد. مفيش رد فلوس تاني: المدفوع بيفضل في الفندق. */
+export function RefundBox({ b }) {
   const rs = refundStatusOf(b);
-  const pending = rs?.kind === "pending";
-  // وسيلة الرد الافتراضية = الوسيلة اللي عليها أكبر رصيد من تحصيل الحجز ده (مش آخر وسيلة دفع بس)، وبنوري اتدفع بإيه فعلًا
-  useEffect(() => {
-    if (!pending || !canDecide) return undefined;
-    let cancelled = false;
-    getBookingPayments(b).then((r) => {
-      if (cancelled || !r) return;
-      setPaid(r);
-      const pos = r.filter((p) => p.amount > 0.004);
-      if (pos.length && !touched.current) setMethod(pos.reduce((a, c) => (c.amount > a.amount ? c : a)).method);
-    });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- بيتعاد لما الحجز نفسه يتغيّر (id/updatedAt) بس؛ إضافة b كانت هتعيد القراءة مع كل render
-  }, [b.id, b.updatedAt, pending, canDecide]);
-  if (!rs) return null;
-  if (!pending) {
-    return (
-      <div className="cx-no-print" data-testid="refund-status" style={{ width: "100%", fontSize: 13, fontWeight: 700, color: rs.kind === "refunded" ? "var(--sage)" : rs.kind === "none" ? "var(--muted)" : "var(--rust)" }}>
-        {rs.kind === "refunded" ? "✓ " : "• "}{rs.text}
-      </div>
-    );
-  }
-  const reason = b.status === "ملغي" ? "الحجز اتلغى" : "النزيل مشي بدري / الإقامة اتقصّرت والمدفوع زاد عن الإجمالي";
-  const positive = (paid || []).filter((p) => p.amount > 0.004);
-  const methodBal = positive.filter((p) => p.method === method).reduce((a, p) => a + p.amount, 0);
-  const noBalance = paid !== null && positive.length > 0 && methodBal <= 0.004;
+  if (!rs || rs.kind === "pending") return null;
   return (
-    <div className="cx-no-print" data-testid="refund-request" style={{ width: "100%", background: "#FBE2E4", borderRadius: 8, padding: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-      <span style={{ fontSize: 13, color: "var(--rust)", fontWeight: 700 }}>
-        ⚠ طلب رد فلوس: {fmt(refundDueAmount(b))} {b.currency} - {reason}
-      </span>
-      {canDecide ? (
-        <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <select className="cx-select" title="وسيلة رد الفلوس للنزيل (اللي هتتخصم من اليومية)" style={{ width: 130 }} value={method} onChange={(e) => { touched.current = true; setMethod(e.target.value); }}>
-            {methodOptionsFor(method).map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
-          <button className="cx-btn cx-btn-gold" data-testid="refund-approve" onClick={() => onDecide(b, "refund", method)}>رد الفلوس</button>
-          {confirmKeep ? (
-            <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-              <button className="cx-btn cx-btn-danger" data-testid="refund-reject-confirm" onClick={() => { setConfirmKeep(false); onDecide(b, "keep", method); }}>تأكيد رفض الرد - الفلوس تفضل ومفيش رجوع</button>
-              <button className="cx-btn cx-btn-outline" onClick={() => setConfirmKeep(false)}>إلغاء</button>
-            </span>
-          ) : (
-            <button className="cx-btn cx-btn-outline" data-testid="refund-reject" onClick={() => setConfirmKeep(true)}>رفض الرد (الفلوس تفضل)</button>
-          )}
-        </span>
-      ) : (
-        <span style={{ fontSize: 12.5, color: "var(--muted)" }}>في انتظار موافقة مدير الحجوزات</span>
-      )}
-      {canDecide && positive.length > 0 && (
-        <div data-testid="refund-paid-breakdown" style={{ width: "100%", fontSize: 13, color: "var(--ink)" }}>
-          اتدفع بـ: {positive.map((p, i) => { const d = describePaymentDetails(p.method, p.details); return <span key={i} style={{ marginInlineEnd: 8, fontWeight: 700 }}>{p.method}{d ? " " + "\u2066" + d + "\u2069" : ""} {fmt(p.amount)}</span>; })}
-          <span style={{ color: "var(--muted)" }}> - الرد بيتوزّع عليهم وبتبدأ بالوسيلة المختارة</span>
-        </div>
-      )}
-      {canDecide && noBalance && (
-        <div data-testid="refund-no-balance-warning" style={{ width: "100%", fontSize: 13, color: "var(--rust)", fontWeight: 700 }}>
-          ⚠ النزيل ماتدفعش بـ "{method}" - لو رديت بيها الرد كله هيتسجّل على وسيلة ماحصّلتش، وأرصدة الوسائل الحقيقية (الكاش/الفيزا) مش هتنقص. اختار وسيلة من اللي اتدفع بيها.
-        </div>
-      )}
+    <div className="cx-no-print" data-testid="refund-status" style={{ width: "100%", fontSize: 13, fontWeight: 700, color: rs.kind === "refunded" ? "var(--sage)" : "var(--muted)" }}>
+      {rs.kind === "refunded" ? "✓ " : "• "}{rs.text}
     </div>
   );
 }

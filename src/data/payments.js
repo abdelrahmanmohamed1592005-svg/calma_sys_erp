@@ -24,6 +24,15 @@ async function rpc(name, args) {
 export const recordBookingPayment = ({ bookingId, amount, method, details, note, expectedUpdatedAt }) =>
   rpc("record_booking_payment", { p_booking: bookingId, p_amount: amount, p_method: method, p_details: details || {}, p_expected: expectedUpdatedAt || null, p_note: note || "تحصيل" });
 
+/* دفعة بعملة غير عملة الحجز: rate = كام من عملة الدفعة يساوي ١ من عملة الحجز (مثلًا ١ USD = ٥٠ EGP).
+   الخزينة/اليومية بتسجّل المبلغ بعملته، والمتبقي على الحجز بيتخصم بالمقابل (المبلغ ÷ السعر). قسم ٣٩ في schema.sql. */
+export const recordBookingPaymentFx = ({ bookingId, amount, currency, rate, method, details, note, expectedUpdatedAt }) =>
+  rpc("record_booking_payment_fx", { p_booking: bookingId, p_amount: amount, p_currency: currency, p_rate: rate, p_method: method, p_details: details || {}, p_expected: expectedUpdatedAt || null, p_note: note || "تحصيل" });
+
+/* نقل النزيل (الحجز كله) لغرفة تانية فاضية في نفس التواريخ */
+export const moveBookingRoom = ({ bookingId, room, expectedUpdatedAt }) =>
+  rpc("move_booking_room", { p_booking: bookingId, p_room: Number(room), p_expected: expectedUpdatedAt || null });
+
 export const recordStaffCafeteria = ({ name, username, description, amount, currency, method, details }) =>
   rpc("record_staff_cafeteria", { p_name: name, p_username: username || null, p_desc: description || "", p_amount: amount, p_currency: currency, p_method: method || null, p_details: details || null });
 

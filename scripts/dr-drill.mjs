@@ -28,7 +28,7 @@ try {
   const rooms = (await src.query("select number from rooms order by number limit 12")).rows.map((r) => r.number);
   // --- بيانات تركيبية: ٢٤٠ حجز، دفعات (كاش/فيزا/تحويل)، إلغاء + رد، كافيتيريا استاف
   const tSeed = t0();
-  let n = 0, paid = 0, refunded = 0, errors = [];
+  let n = 0, paid = 0, errors = [];
   const claimOnce = async () => {
     await src.query("insert into shift_claims(date,shift_key,username,name) values ($1,'morning','st1','st1') on conflict do nothing", [today]);
     await src.query("insert into shift_records(date,shift_key,staff_name,staff_username) values ($1,'morning','st1','st1') on conflict do nothing", [today]);
@@ -46,13 +46,13 @@ try {
       if (mode === 0) { /* غير مدفوع */ }
       else if (mode === 1 || mode === 2) { await as(src, "st1", (c) => c.query("select record_booking_payment($1,100,$2,$3::jsonb,null,null)", [id, mode === 1 ? "كاش" : "فيزا", JSON.stringify(mode === 2 ? { senderNumber: "4242" } : {})])); paid += 100; }
       else if (mode === 3) { await as(src, "st1", (c) => c.query("select record_booking_payment($1,40,'كاش','{}'::jsonb,null,null)", [id])); await as(src, "st1", (c) => c.query("select record_booking_payment($1,60,'فيزا',$2::jsonb,null,null)", [id, JSON.stringify({ senderNumber: "1111" })])); paid += 100; }
-      else { await as(src, "st1", (c) => c.query("select record_booking_payment($1,100,'كاش','{}'::jsonb,null,null)", [id])); paid += 100;
-             await as(src, "res1", (c) => c.query("update bookings set status='ملغي' where id=$1", [id]));
-             await as(src, "res1", (c) => c.query("select decide_booking_refund($1,'refund',null,'كاش')", [id])); refunded += 100; }
+      else if (mode === 4) { await as(src, "st1", (c) => c.query("select record_booking_payment($1,100,'كاش','{}'::jsonb,null,null)", [id])); paid += 100;
+             await as(src, "res1", (c) => c.query("update bookings set status='ملغي' where id=$1", [id])); }   // مفيش رد فلوس: بتفضل في الفندق
+      else { await as(src, "st1", (c) => c.query("select record_booking_payment_fx($1,5000,'EGP',50,'كاش')", [id])); paid += 100; }   // دفع بالجنيه بسعر صرف
     } catch (e) { errors.push(e.message.slice(0, 120)); }
   }
   for (let i = 0; i < 30; i++) { try { await as(src, "st1", (c) => c.query("select record_staff_cafeteria('Staff A', null, 'drill', 25, 'EGP', null, null)")); } catch (e) { errors.push("cafeteria: " + e.message.slice(0, 100)); break; } }
-  out.steps.seed = { seconds: sec(tSeed), bookings: n, grossPaidUSD: paid, refundedUSD: refunded, errors: [...new Set(errors)].slice(0, 5), shiftKey: key };
+  out.steps.seed = { seconds: sec(tSeed), bookings: n, grossPaidUSD: paid, errors: [...new Set(errors)].slice(0, 5), shiftKey: key };
 
   const fingerprint = async (pool) => {
     const q = async (s) => (await pool.query(s)).rows;

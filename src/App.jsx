@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { RoomName, GlobalStyle, BackToTop, LoadingScreen, ConfigWarningBanner, RefundBox, SchemaOutdatedBanner } from "./components/shared";
+import { GlobalStyle, BackToTop, LoadingScreen, ConfigWarningBanner, SchemaOutdatedBanner } from "./components/shared";
 import { checkSchemaVersion, REQUIRED_SCHEMA_VERSION } from "./data/schemaCheck";
 import { Header, TabBar, PageHead } from "./components/Header";
 import { SetupScreen, LoginScreen, LogoutReportScreen } from "./components/AuthScreens";
@@ -15,13 +15,11 @@ import { supabaseConfigured } from "./lib/supabaseClient";
 import { subscribeToAllChanges } from "./lib/realtime";
 import { signUpUser, signIn, signOut, getSession, onAuthStateChange, getMyProfile, listProfiles, checkSetupNeeded, changeOwnPassword as authChangeOwnPassword } from "./lib/auth";
 import { getRooms, getRoomOverrides, setRoomOverride } from "./data/rooms";
-import { getBookings, insertBooking, updateBookingIfUnchanged, decideBookingRefund } from "./data/bookings";
+import { getBookings, insertBooking, updateBookingIfUnchanged } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
 
-import { PERMISSIONS, ROOMS_DEFAULT, roomLabel } from "./domain/constants";
+import { PERMISSIONS, ROOMS_DEFAULT } from "./domain/constants";
 import { todayStr, isSameDay, uid } from "./domain/dates";
-import { refundDueAmount, fmt, describePaymentDetails } from "./domain/money";
-import { guarded } from "./lib/busy";
 
 export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -74,23 +72,6 @@ export default function App() {
   // كان شغال وقت الكتابة (بدأ قبلها) ورجع بعدها، مانكتبش نتيجته القديمة فوق
   // التعديل الجديد (بنعيد التحميل بدلها).
   const mutationSeq = useRef(0);
-
-  // إشعار مدير الحجوزات بطلبات رد الفلوس المعلّقة: أي حجز اتلغى (أو اتقصّر)
-  // وعليه فلوس متحصّلة بيظهر هنا فورًا (البث اللحظي) كشريط تنبيه + عداد على
-  // تبويب الحجوزات + رسالة لحظة وصول طلب جديد.
-  const pendingRefunds = bookings.filter((b) => b.refundPending && refundDueAmount(b) > 0);
-  const prevRefundIds = useRef(null);
-  useEffect(() => {
-    // أول تحميل للبيانات بس بيسجّل الطلبات الموجودة أصلاً (من غير رسالة "جديد")
-    if (currentProfile?.role !== "reservations" || loadingData) { prevRefundIds.current = null; return; }
-    const ids = new Set(pendingRefunds.map((b) => b.id));
-    if (prevRefundIds.current) {
-      const fresh = pendingRefunds.filter((b) => !prevRefundIds.current.has(b.id));
-      if (fresh.length > 0) showToast(`طلب رد فلوس جديد: ${fresh.map((b) => b.guestName).join("، ")} - راجعه من تبويب الحجوزات`);
-    }
-    prevRefundIds.current = ids;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, currentProfile?.role, loadingData]);
 
   // البث اللحظي: أي تغيير في أي جدول بيبلّغ كل الشاشات المفتوحة تعيد تحميل
   // بياناتها. الاشتراك بيتعمل بعد تسجيل الدخول (مش وقت فتح الصفحة قبله) عشان
@@ -172,7 +153,7 @@ export default function App() {
   const loadedOnce = useRef(false);
   useEffect(() => {
     setBookings([]); setActivity([]); setOverrides({}); setAllProfiles([]); setLoadingData(true); setTab("board");
-    setSchemaState({ ok: null }); loadedOnce.current = false; prevRefundIds.current = null; setJump(null); setPaletteOpen(false);
+    setSchemaState({ ok: null }); loadedOnce.current = false; setJump(null); setPaletteOpen(false);
   }, [currentProfile?.id]);
 
   useEffect(() => {
@@ -227,43 +208,12 @@ export default function App() {
     mutationSeq.current++; // بعد الكتابة كمان: تحميل بدأ وقت الكتابة ماينفعش يكتب نتيجته فوقها
     if (res.conflict) { setDataVersion((v) => v + 1); return { error: "في حد عدّل نفس الحجز ده في نفس اللحظة - البيانات اتحدّثت، راجعي وجرّبي تاني" }; }
     if (res.data) {
-      // طلب الرد اللي أنا اللي فتحته (إلغاء/تقصير من عندي) مش محتاج إشعار "جديد" يغطّي رسالة العملية نفسها
-      if (res.data.refundPending && prevRefundIds.current) prevRefundIds.current.add(res.data.id);
       setBookings((prev) => prev.map((b) => (b.id === id ? res.data : b)));
     }
     return res;
   }
   async function handleInsertBooking(booking) { mutationSeq.current++; const res = await insertBooking(booking); mutationSeq.current++; if (res.data) { setBookings((prev) => [res.data, ...prev]); setDataVersion((v) => v + 1); } return res; }
   async function handleUpdateBooking(id, booking) { return safeUpdateBooking(id, booking); }
-  // قرار مدير الحجوزات في طلب رد فلوس (رد فعلي / إبقاء الفلوس) - معاملة واحدة
-  // في قاعدة البيانات (decide_booking_refund)، وبعدها نحدّث الحجوزات واليومية.
-  async function handleDecideRefund(booking, decision, method) {
-    mutationSeq.current++;
-    const res = await decideBookingRefund(booking.id, decision, booking.updatedAt, method);
-    mutationSeq.current++;
-    setDataVersion((v) => v + 1);
-    return res;
-  }
-
-  // قرار طلب رد الفلوس (من أي شاشة): "refund" = رد فعلي بيتخصم من اليومية، "keep" = رفض والفلوس تفضل متحصّلة
-  async function runRefund(b, decision, method) {
-    return guarded("refund:" + b.id, async () => {
-      const amount = refundDueAmount(b);
-      const res = await handleDecideRefund(b, decision, method);
-      if (res?.error) { showToast(res.error); return; }
-      if (decision === "keep") {
-        logActivity(`رفض رد فلوس - ${roomLabel(rooms, b.room)} - ${b.guestName} - ${fmt(amount)} ${b.currency} (الفلوس فضلت متحصّلة)`);
-        showToast("تم رفض الرد - الفلوس فضلت متحصّلة على الحجز");
-        return;
-      }
-      // الرد بيتوزّع على وسائل الدفع الأصلية: نقول للريسيبشن بالظبط يسلّم النزيل كام بكل وسيلة (وسجل الحركة بنفس التفصيل)
-      const splits = (res?.data?.splits || []).filter((s) => Number(s.amount) > 0);
-      const splitText = splits.length ? splits.map((s) => { const d = describePaymentDetails(s.method, s.details); return `${fmt(s.amount)} ${s.method}${d ? " " + "\u2066" + d + "\u2069" : ""}`; }).join(" + ") : method;
-      logActivity(`رد فلوس - ${roomLabel(rooms, b.room)} - ${b.guestName} - ${fmt(res?.data?.amount ?? amount)} ${b.currency} (${splitText})`);
-      showToast(`تم رد ${fmt(res?.data?.amount ?? amount)} ${b.currency}: ${splitText} - اتشالت من التحصيل واليومية`);
-    });
-  }
-
   async function handleSetup({ name, username, pw }) {
     const res = await signUpUser({ username, password: pw, name, role: "gm" });
     if (res.error) return { error: res.error };
@@ -307,29 +257,15 @@ export default function App() {
     <div className="calma-app cx-shell" dir="rtl">
       <GlobalStyle />
       <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} onOpenSearch={() => setPaletteOpen(true)} />
-      <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={perms.decideRefund ? { bookings: pendingRefunds.length } : {}} />
+      <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={{}} />
       <main className="cx-main">
       {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
       <PageHead tab={activeTab} />
-      {pendingRefunds.length > 0 && perms.tabs.includes("bookings") && activeTab !== "bookings" && (
-        <div className="cx-no-print cx-card" data-testid="refund-banner" style={{ background: "var(--bad-bg)", borderColor: "#EBC3B9", margin: "14px 22px 0", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ color: "var(--rust)", fontSize: 14, fontWeight: 700 }}>
-            🔔 طلبات رد فلوس منتظرة ({pendingRefunds.length}){perms.decideRefund ? "" : " - مدير الحجوزات هو اللي بيوافق"}
-            {!perms.decideRefund && <span style={{ fontWeight: 400, marginInlineStart: 8 }}>{pendingRefunds.map((b) => `${roomLabel(rooms, b.room)} ${b.guestName}`).join(" · ")}</span>}
-          </div>
-          {perms.decideRefund && pendingRefunds.map((b) => (
-            <div key={b.id} data-testid="refund-inbox-item" style={{ fontSize: 12.5 }}>
-              <div style={{ fontWeight: 700, marginBottom: 2 }}><RoomName rooms={rooms} number={b.room} /> · <span className="cx-iso">{b.guestName}</span></div>
-              <RefundBox b={b} canDecide onDecide={runRefund} />
-            </div>
-          ))}
-        </div>
-      )}
       {loadingData ? <LoadingScreen /> : (
         <>
-          {activeTab === "board" && <RoomBoard jumpRoom={jump?.room != null ? jump : null} onJumpDone={() => setJump(null)} rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onEditBooking={requestEditBooking} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "board" && <RoomBoard jumpRoom={jump?.room != null ? jump : null} onJumpDone={() => setJump(null)} rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "ledger" && <DailyLedger rooms={rooms} bookings={bookings} profiles={allProfiles} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "bookings" && <BookingsPanel jumpQuery={jump?.query != null ? jump : null} onJumpDone={() => setJump(null)} rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onDecideRefund={runRefund} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
+          {activeTab === "bookings" && <BookingsPanel jumpQuery={jump?.query != null ? jump : null} onJumpDone={() => setJump(null)} rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
           {activeTab === "activity" && <ActivityPanel activity={activity} />}
           {activeTab === "users" && <UsersPanel users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}

@@ -33,7 +33,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
   const updateRow = touch;
   return (
     <div className="cx-card" style={{ padding: 14 }}>
-      <SectionHead icon={DoorOpen} tone="teal" title="حركة الغرف" hint="مصاريف وتحصيل كل غرفة في الشيفت ده" />
+      <SectionHead icon={DoorOpen} tone="teal" title="حركة الغرف" hint="تحصيل كل غرفة في الشيفت ده (الغرف مابتصرفش - المصاريف في بنود مصاريف الفندق)" />
     <div style={{ overflowX: "auto" }}>
       {!locked && (hiddenRooms.length > 0 || all) && (
         <div className="cx-no-print" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 4px", fontSize: 13, color: "var(--muted)" }}>
@@ -47,24 +47,14 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
           <button type="button" className="cx-btn cx-btn-outline" data-testid="ledger-show-all" style={{ fontSize: 12.5, padding: "2px 8px" }} onClick={() => setAll(!all)}>{all ? "إخفاء الغرف الفاضية" : "عرض كل الغرف"}</button>
         </div>
       )}
-      <table className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 860 }}>
-        <thead><tr><th className="cx-th" style={{ width: 60 }}>الغرفة</th><th className="cx-th">المصاريف</th><th className="cx-th">التحصيل</th><th className="cx-th">تفاصيل الدفع (فيزا / تحويل)</th><th className="cx-th">ملاحظات</th></tr></thead>
+      <table className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 680 }}>
+        <thead><tr><th className="cx-th" style={{ width: 60 }}>الغرفة</th><th className="cx-th">التحصيل</th><th className="cx-th">تفاصيل الدفع (فيزا / تحويل)</th><th className="cx-th">ملاحظات</th></tr></thead>
         <tbody>
           {record.rows.map((row, idx) => (!visible(row) ? null : (
             <tr key={row.room + "-" + idx}>
               {/* ممكن يكون لنفس الغرفة أكتر من صف (لو اتحصّل عليها بوسيلتين دفع أو
                   عملتين مختلفتين، أو اتردّ ليها فلوس) - الصف الإضافي بيتعلّم. */}
               <td data-label="الغرفة" style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}><RoomName rooms={rooms} number={row.room} />{record.rows.findIndex((r) => r.room === row.room) !== idx && <div style={{ fontSize: 11.5, fontWeight: 400, color: "var(--muted)" }}>صف إضافي</div>}</td>
-              <td data-label="المصاريف">
-                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <select className="cx-select" style={{ fontSize: 12.5 }} disabled={locked} value={row.expenseCategory} onChange={(e) => updateRow(idx, { expenseCategory: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                  <AutoText className="cx-input" placeholder="البيان" disabled={locked} value={row.expenseDesc} onChange={(e) => updateRow(idx, { expenseDesc: e.target.value })} />
-                  <div style={{ display: "flex", gap: 3 }}>
-                    <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.expenseAmt} onChange={(e) => updateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
-                    <CurrencyPicker value={row.expenseCurrency} disabled={locked} onChange={(v) => updateRow(idx, { expenseCurrency: v })} />
-                  </div>
-                </div>
-              </td>
               <td data-label="التحصيل">
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
@@ -73,6 +63,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
                     <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.collectionAmt} onChange={(e) => updateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
                     <CurrencyPicker value={row.collectionCurrency} disabled={locked} onChange={(v) => updateRow(idx, { collectionCurrency: v })} />
                   </div>
+                  {(Number(row.expenseAmt) || 0) !== 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>مصروف قديم مسجّل على الغرفة: {row.expenseDesc || row.expenseCategory} - {fmt(row.expenseAmt)} {row.expenseCurrency}</div>}
                 </div>
               </td>
               <td data-label="تفاصيل الدفع"><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => updateRow(idx, { paymentDetails: d })} /></td>
@@ -88,16 +79,15 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
 
 const hotelRowsOf = (record) => (record.hotelRows && record.hotelRows.length ? record.hotelRows : [emptyLedgerRow(HOTEL_ROW_LABEL)]);
 
-/* بنود "مصاريف وإيرادات الفندق": مش مرتبطة بغرفة (كهرباء، إيجار قاعة، مشتريات...). بنفس خانات
-   صف الكافيتيريا (مصروف + إيراد) لكن الموظف يقدر يضيف منها بنود حسب الحاجة. */
+/* بنود "مصاريف الفندق": مش مرتبطة بغرفة (كهرباء، صيانة، مشتريات...). الفندق بيصرف بس - الإيراد بيجي من الغرف والكافيتيريا. */
 function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) {
   const rows = hotelRowsOf(record);
   return (
     <div className="cx-card" data-testid="hotel-rows" style={{ marginTop: 14, padding: 12 }}>
-      <SectionHead icon={Building2} tone="slate" title="مصاريف وإيرادات الفندق" hint="بنود مش مرتبطة بغرفة (كهرباء، إيجار قاعة، مشتريات...). المصروف بيتخصم من الخزينة (كاش) والإيراد بيتضاف زي أي تحصيل، وبيدخلوا في إجماليات اليومية والتقارير." />
+      <SectionHead icon={Building2} tone="slate" title="مصاريف الفندق" hint="بنود مش مرتبطة بغرفة (كهرباء، صيانة، مشتريات...). المصروف بيتخصم من الخزينة وبيدخل في إجماليات اليومية والتقارير." />
       <div style={{ overflowX: "auto" }}>
-        <table className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 760 }}>
-          <thead><tr><th className="cx-th" style={{ width: 70 }}>البند</th><th className="cx-th">المصاريف</th><th className="cx-th">الإيرادات</th><th className="cx-th">تفاصيل الدفع (فيزا / تحويل)</th><th className="cx-th">ملاحظات</th>{!locked && <th className="cx-th" style={{ width: 36 }} />}</tr></thead>
+        <table className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 560 }}>
+          <thead><tr><th className="cx-th" style={{ width: 70 }}>البند</th><th className="cx-th">المصاريف</th><th className="cx-th">ملاحظات</th>{!locked && <th className="cx-th" style={{ width: 36 }} />}</tr></thead>
           <tbody>
             {rows.map((row, idx) => (
               <tr key={idx} data-testid={"hotel-row-" + idx}>
@@ -110,19 +100,9 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
                       <input className="cx-input" type="number" placeholder="مبلغ المصروف" disabled={locked} value={row.expenseAmt} onChange={(e) => onUpdateRow(idx, { expenseAmt: e.target.value })} style={{ flex: 1 }} />
                       <CurrencyPicker value={row.expenseCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { expenseCurrency: v })} />
                     </div>
+                    {(Number(row.collectionAmt) || 0) !== 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>إيراد قديم مسجّل على البند: {row.collectionDesc || "—"} - {fmt(row.collectionAmt)} {row.collectionCurrency} ({row.collectionMethod})</div>}
                   </div>
                 </td>
-                <td data-label="الإيرادات">
-                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => onUpdateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                    <AutoText className="cx-input" placeholder="بيان الإيراد" disabled={locked} value={row.collectionDesc} onChange={(e) => onUpdateRow(idx, { collectionDesc: e.target.value })} />
-                    <div style={{ display: "flex", gap: 3 }}>
-                      <input className="cx-input" type="number" placeholder="مبلغ الإيراد" disabled={locked} value={row.collectionAmt} onChange={(e) => onUpdateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
-                      <CurrencyPicker value={row.collectionCurrency} disabled={locked} onChange={(v) => onUpdateRow(idx, { collectionCurrency: v })} />
-                    </div>
-                  </div>
-                </td>
-                <td data-label="تفاصيل الدفع"><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => onUpdateRow(idx, { paymentDetails: d })} /></td>
                 <td data-label="ملاحظات"><AutoText className="cx-input" disabled={locked} value={row.notes} onChange={(e) => onUpdateRow(idx, { notes: e.target.value })} /></td>
                 {!locked && <td style={{ textAlign: "center" }}>{rows.length > 1 && <button className="cx-btn cx-btn-outline" title="شيل البند ده" aria-label={"شيل بند فندق " + (idx + 1)} style={{ padding: "3px 8px" }} onClick={() => onRemoveRow(idx)}>×</button>}</td>}
               </tr>
@@ -130,7 +110,7 @@ function HotelRowsTable({ record, locked, onUpdateRow, onAddRow, onRemoveRow }) 
           </tbody>
         </table>
       </div>
-      {!locked && <button className="cx-btn cx-btn-outline cx-no-print" data-testid="hotel-row-add" style={{ marginTop: 8, fontSize: 13 }} onClick={onAddRow}><Plus size={13} /> إضافة بند مصاريف/إيرادات فندق</button>}
+      {!locked && <button className="cx-btn cx-btn-outline cx-no-print" data-testid="hotel-row-add" style={{ marginTop: 8, fontSize: 13 }} onClick={onAddRow}><Plus size={13} /> إضافة بند مصاريف فندق</button>}
     </div>
   );
 }

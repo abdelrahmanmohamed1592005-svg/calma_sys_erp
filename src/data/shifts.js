@@ -126,13 +126,16 @@ function paymentsFromRecords(recs, bookings) {
   const per = new Map();
   recs.forEach((r) => [...(r.rows || []), ...(r.cafeteriaRows || [])].forEach((x) => {
     if (!x.bookingId || !cur.has(x.bookingId)) return;
-    const amt = Number(x.collectionAmt) || 0;
-    if (!amt || (x.collectionCurrency || "EGP") !== cur.get(x.bookingId)) return;
+    const fx = x.fxCovered != null && (x.collectionCurrency || "EGP") !== cur.get(x.bookingId);
+    // دفعة بعملة تانية: بتتحسب على الحجز بمقابلها بعملته (fxCovered) وبتتعرض بالمبلغ الفعلي وعملته
+    const amt = fx ? Number(x.fxCovered) || 0 : Number(x.collectionAmt) || 0;
+    if (!amt || (!fx && (x.collectionCurrency || "EGP") !== cur.get(x.bookingId))) return;
     const d = x.paymentDetails || {};
-    const key = [x.collectionMethod, d.senderName || "", d.senderNumber || ""].join("|");
+    const key = [x.collectionMethod, d.senderName || "", d.senderNumber || "", fx ? x.collectionCurrency + "@" + x.fxRate : ""].join("|");
     const m = per.get(x.bookingId) || new Map();
-    const e = m.get(key) || { method: x.collectionMethod, details: d, amount: 0 };
-    e.amount += amt; m.set(key, e); per.set(x.bookingId, m);
+    const e = m.get(key) || { method: x.collectionMethod, details: d, amount: 0, ...(fx ? { fx: { currency: x.collectionCurrency, rate: Number(x.fxRate) || 0, amount: 0 } } : {}) };
+    e.amount += amt; if (fx) e.fx.amount += Number(x.collectionAmt) || 0;
+    m.set(key, e); per.set(x.bookingId, m);
   }));
   const out = new Map();
   per.forEach((m, id) => out.set(id, Array.from(m.values()).filter((p) => Math.abs(p.amount) > 0.004)));

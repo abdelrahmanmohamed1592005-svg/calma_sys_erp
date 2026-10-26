@@ -16,14 +16,14 @@ describe.skipIf(!enabled)("سجل التدقيق", () => {
       const pay = await db.tx("st1", (c) => c.query("select record_booking_payment($1, 100, 'كاش', '{}'::jsonb, null, null)", [id]));
       expect(pay.ok, pay.err?.message).toBe(true);
       expect((await db.tx("res1", (c) => c.query("update bookings set status='ملغي' where id=$1", [id]))).ok).toBe(true);
-      expect((await db.tx("res1", (c) => c.query("select decide_booking_refund($1,'refund',null,'كاش')", [id]))).ok).toBe(true);
+      expect((await db.tx("res1", (c) => c.query("select move_booking_room($1, 602)", [id]))).ok).toBe(false);   // الملغي مايتنقلش
       expect((await db.tx("gm1", (c) => c.query("update profiles set role='accounts' where username='st2'"))).ok).toBe(true);
 
       const rows = await db.q("select actor, tbl, action, old_val, new_val from money_audit order by id");
       const bk = rows.filter((r) => r.tbl === "bookings");
       expect(bk.some((r) => r.actor === "st1" && r.old_val.amount_paid === 0 && r.new_val.amount_paid === 100)).toBe(true);     // الدفع بهوية الموظف
       expect(bk.some((r) => r.actor === "res1" && r.new_val.status === "ملغي")).toBe(true);
-      expect(bk.some((r) => r.new_val.amount_paid === 0 && r.old_val.amount_paid === 100)).toBe(true);                          // الرد
+      expect(bk.some((r) => r.new_val.amount_paid === 0 && r.old_val.amount_paid === 100)).toBe(false);                         // مفيش رد فلوس
       expect(rows.some((r) => r.tbl === "profiles" && r.actor === "gm1" && r.old_val.role === "staff" && r.new_val.role === "accounts")).toBe(true);
 
       // تعديل من غير هوية (محرر SQL) لسه بيتسجّل، من غير اسم منفّذ

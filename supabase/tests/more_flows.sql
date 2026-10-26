@@ -3,10 +3,8 @@
 -- ======================================================================
 select t.pass('C11 نزيل مدفوع جزئيًا (٣٠٠ من ٤٠٠)', t.ins('st1', 'C11', 608, -2, 2, 100, 400, 300, false));
 select t.pass('C11 يغادر بعد ليلتين (الإجمالي ٢٠٠)', t.upd('st1', 'C11', 'checkout = hotel_today(), total_room = 200, status = ''تم تسجيل الخروج'', left_early = true'));
-select t.eq('C11 طلب رد للزيادة', t.f('C11', 'refund_pending'), 'true');
-select t.pass('C11 رد الزيادة', t.decide('res1', 'C11', 'refund'));
-select t.eqn('C11 المردود = ٣٠٠ - ٢٠٠', (current_setting('t.last_decision')::jsonb ->> 'amount')::numeric, 100);
-select t.eqn('C11 المدفوع بعد الرد = الإجمالي', t.fn('C11', 'amount_paid'), 200);
+select t.eq('C11 مفيش طلب رد (الزيادة فضلت في الفندق)', t.f('C11', 'refund_pending'), 'false');
+select t.eqn('C11 المدفوع لسه ٣٠٠', t.fn('C11', 'amount_paid'), 300);
 select t.pass('C12 نزيل مدفوع قليل (١٠٠ من ٤٠٠)', t.ins('st1', 'C12', 606, -2, 2, 100, 400, 100, false));
 select t.pass('C12 يغادر بعد ليلتين', t.upd('st1', 'C12', 'checkout = hotel_today(), total_room = 200, status = ''تم تسجيل الخروج'', left_early = true'));
 select t.eq('C12 مفيش طلب رد (المدفوع أقل من الإجمالي الجديد)', t.f('C12', 'refund_pending'), 'false');
@@ -17,8 +15,8 @@ select t.pass('D3 حجز جديد', t.ins('st1', 'D3', 608, 5, 6, 100, 100, 0, f
 select t.pass('D3 رسوم إضافية جولات ٢٠', t.upd('st1', 'D3', 'extras = ''{"laundry":0,"cafeteria":0,"tours":20,"pickup":0}''::jsonb'));
 select t.pass('D3 تحصيل الإجمالي كله ١٢٠', t.maint('D3', 'amount_paid = 120'));
 select t.pass('D3 يتلغي', t.upd('res1', 'D3', 'status = ''ملغي'''));
-select t.pass('D3 رد كل المدفوع', t.decide('res1', 'D3', 'refund'));
-select t.eqn('D3 المردود ١٢٠ (غرفة + رسوم)', (current_setting('t.last_decision')::jsonb ->> 'amount')::numeric, 120);
+select t.eqn('D3 المدفوع ١٢٠ فضل في الفندق', t.fn('D3', 'amount_paid'), 120);
+select t.eq('D3 مفيش طلب رد', t.f('D3', 'refund_pending'), 'false');
 
 -- ======================================================================
 -- G) يومية الشيفت: ملكية، قفل، إعادة فتح، تصحيح بعد الإقفال
@@ -85,8 +83,7 @@ select t.reject('A15 الموظف مايمسحش حجز', t.dml('st1', $q$delete
 select t.reject('A15 المدير العام مايمسحش حجز', t.dml('gm1', $q$delete from bookings where guest_name = 'A15'$q$), 'NO_ROWS');
 select t.reject('A15 مدير الحجوزات مايمسحش حجز عليه فلوس (يلغيه بدل كده)', t.dml('res1', $q$delete from bookings where guest_name = 'A15p'$q$), 'حركة فلوس');
 select t.pass('A15 مدير الحجوزات يمسح حجز من غير فلوس', t.dml('res1', $q$delete from bookings where guest_name = 'A15'$q$));
-select t.pass('A16 حجز اتلغى ورُدّت فلوسه', t.ins('st1', 'A16', 602, 40, 41, 100, 100, 100, true));
+select t.pass('A16 حجز مدفوع', t.ins('st1', 'A16', 602, 40, 41, 100, 100, 100, true));
 select t.pass('A16 يتلغي', t.upd('res1', 'A16', 'status = ''ملغي'''));
-select t.pass('A16 رد الفلوس', t.decide('res1', 'A16', 'refund'));
-select t.reject('A16 حجز اتردّت فلوسه مايتمسحش (سجل مالي)', t.dml('res1', $q$delete from bookings where guest_name = 'A16'$q$), 'حركة فلوس');
+select t.reject('A16 حجز ملغي عليه فلوس مايتمسحش (سجل مالي)', t.dml('res1', $q$delete from bookings where guest_name = 'A16'$q$), 'حركة فلوس');
 

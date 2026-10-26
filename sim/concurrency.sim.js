@@ -72,18 +72,18 @@ describe.skipIf(!enabled)("تزامن حقيقي", () => {
     } finally { await db.close(); }
   });
 
-  it("قرارين رد فلوس على نفس الحجز في نفس اللحظة: الرد بيتنفّذ مرة واحدة بس", async () => {
+  it("نقل نزيلين لنفس الغرفة الفاضية في نفس اللحظة: واحد بس بيتنقل، ومفيش حجز مزدوج", async () => {
     const { db, today } = await setup();
     try {
-      const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, amount_paid, currency) values (603, 'Refund Race', $1, $2, 100, 100, 100, 'USD') returning id", [today, addDays(today, 1)]);
-      await db.q("update shift_records set rows = jsonb_set(rows, '{2}', rows->2 || '{\"bookingId\":\"" + id + "\",\"collectionAmt\":100,\"collectionMethod\":\"فيزا\",\"collectionCurrency\":\"USD\",\"paymentDetails\":{\"senderName\":\"\",\"senderNumber\":\"7777\",\"ref\":\"\",\"onlinePaid\":false}}'::jsonb)");
-      const c = await db.tx("res1", (x) => x.query("update bookings set status = 'ملغي' where id = $1", [id])); expect(c.ok).toBe(true);
-      const results = await Promise.all(Array.from({ length: 5 }, () => db.tx("res1", (x) => x.query("select decide_booking_refund($1, 'refund', null, 'فيزا') r", [id]))));
-      expect(results.filter((r) => r.ok)).toHaveLength(1);
-      const [b] = await db.q("select amount_paid::float paid, refunded_amount::float ra from bookings where id = $1", [id]);
-      expect(b).toEqual({ paid: 0, ra: 100 });
-      const [rec] = await db.q("select rows from shift_records");
-      expect(rec.rows.reduce((a, x) => a + (Number(x.collectionAmt) || 0), 0)).toBe(0);
+      const ids = [];
+      for (const room of [603, 604]) {
+        const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency) values ($1, 'Move Race', $2, $3, 100, 200, 'USD') returning id", [room, today, addDays(today, 2)]);
+        ids.push(id);
+      }
+      const results = await Promise.all([...ids, ...ids].map((id, i) => db.tx(i % 2 ? "res1" : "st1", (x) => x.query("select move_booking_room($1, 605) r", [id]))));
+      expect(results.filter((r) => r.ok).length).toBeGreaterThanOrEqual(1);
+      expect(await db.q("select 1 from bookings where room = 605 and status <> 'ملغي'")).toHaveLength(1);
+      expect(await db.q("select 1 from bookings where room in (603, 604)")).toHaveLength(1);
     } finally { await db.close(); }
   });
 
@@ -131,21 +131,19 @@ describe.skipIf(!enabled)("تزامن حقيقي", () => {
     } finally { await db.close(); }
   });
 
-  it("رد فلوس لحجز المدفوع عليه أكبر من المسجّل في اليومية (بيانات قديمة): اليومية بتتطابق مع المبلغ اللي اترد، وقرارين متزامنين = رد واحد بس", async () => {
+  it("دفعتين بعملة تانية في نفس اللحظة على نفس المتبقي: واحدة بس بتعدّي، واليومية = المدفوع بعملة الحجز", async () => {
     const { db, today } = await setup();
     try {
-      const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency, amount_paid, payment_method) values (601, 'Legacy', $1, $2, 100, 200, 'USD', 150, 'كاش') returning id", [today, addDays(today, 2)]);
-      const row = { ...emptyRow(601), bookingId: id, collectionDesc: "تحصيل", collectionAmt: 100, collectionMethod: "كاش", collectionCurrency: "USD" };
-      await db.q("update shift_records set rows = $1::jsonb", [JSON.stringify([row, emptyRow(602)])]);
-      expect((await db.tx("res1", (c) => c.query("update bookings set status = 'ملغي' where id = $1", [id]))).ok).toBe(true);
-      const rs = await Promise.all(["res1", "gm1", "res1", "gm1"].map((u) => db.tx(u, (c) => c.query("select decide_booking_refund($1, 'refund', null, 'كاش') r", [id]))));
+      const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency) values (601, 'FX Race', $1, $2, 100, 200, 'USD') returning id", [today, addDays(today, 2)]);
+      const rs = await Promise.all(Array.from({ length: 4 }, () => db.tx("st1", (c) => c.query("select record_booking_payment_fx($1, 10000, 'EGP', 50, 'كاش') r", [id]))));
       expect(rs.filter((r) => r.ok)).toHaveLength(1);
-      const [b] = await db.q("select amount_paid::float paid, refunded_amount::float ref from bookings where id = $1", [id]);
+      const [b] = await db.q("select amount_paid::float paid, settled from bookings where id = $1", [id]);
+      expect(b).toEqual({ paid: 200, settled: true });
       const [rec] = await db.q("select rows from shift_records");
-      const ledger = rec.rows.filter((x) => x.bookingId === id).reduce((a, x) => a + (Number(x.collectionAmt) || 0), 0);
-      expect(b.ref).toBe(150);
-      expect(b.paid).toBe(0);
-      expect(ledger).toBe(100 - 150); // المسجّل قبل الرد (١٠٠) ناقص كل اللي خرج فعلًا (١٥٠)
+      const mine = rec.rows.filter((x) => x.bookingId === id);
+      expect(mine.reduce((a, x) => a + Number(x.fxCovered), 0)).toBe(200);
+      expect(mine.reduce((a, x) => a + Number(x.collectionAmt), 0)).toBe(10000);
+      expect(mine.every((x) => x.collectionCurrency === "EGP" && x.fxBookingCurrency === "USD")).toBe(true);
     } finally { await db.close(); }
   });
 

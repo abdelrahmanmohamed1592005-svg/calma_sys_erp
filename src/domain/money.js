@@ -322,9 +322,17 @@ export function bookingGrandTotal(b) {
    - حجز عادي: الإجمالي الكلي (غرفة + خدمات + دخول مبكر).
    - حجز مدفوع أونلاين: سعر الغرفة اتدفع للمنصة، فالفندق بيحصّل بس الخدمات الإضافية
      والدخول المبكر (الإجمالي - سعر الغرفة). amountPaid في الحالتين = اللي الفندق حصّله فعلاً. */
+/* سعر الغرفة اللي اتدفع أونلاين: المنصة دفعت سعر الغرفة اللي اتحجز بس - الرسوم والدخول المبكر وليالي التمديد
+   في الفندق بتتحصّل في الفندق (onlineRoomAmount؛ لو مش موجود = إجمالي الغرفة). نفس booking_hotel_total في القاعدة. */
+export function onlineRoomCovered(b) {
+  const room = Number(b?.totalRoom) || 0;
+  const pd = b?.paymentDetails || {};
+  if (!pd.onlinePaid) return 0;
+  return pd.onlineRoomAmount != null && pd.onlineRoomAmount !== "" ? Math.min(room, Number(pd.onlineRoomAmount) || 0) : room;
+}
 export function bookingHotelTotal(b) {
   const gt = bookingGrandTotal(b);
-  return b.paymentDetails?.onlinePaid ? Math.max(0, gt - (Number(b.totalRoom) || 0)) : gt;
+  return b.paymentDetails?.onlinePaid ? Math.max(0, gt - onlineRoomCovered(b)) : gt;
 }
 export function bookingAmountDue(b) {
   return Math.max(0, bookingHotelTotal(b) - (Number(b.amountPaid) || 0));
@@ -390,7 +398,6 @@ export function refundStatusOf(b) {
   if (b.refundPending && refundDueAmount(b) > 0) return { kind: "pending", text: `طلب رد فلوس معلّق: ${fmtN(refundDueAmount(b))} ${cur} - منتظر قرار مدير الحجوزات` };
   if (b.refundDecision === "refunded" && Number(b.refundedAmount) > 0) return { kind: "refunded", text: `اترد للنزيل ${fmtN(b.refundedAmount)} ${cur}${b.refundedBy ? " (بواسطة " + b.refundedBy + ")" : ""}` };
   if (b.status !== "ملغي") return null;
-  if (b.refundDecision === "kept") return { kind: "kept", text: `رُفض الرد - ${fmtN(paid)} ${cur} فضلت متحصّلة على الحجز` };
-  if (paid > 0) return { kind: "holding", text: `لسه على الحجز ${fmtN(paid)} ${cur} متحصّلة - محدش قرر رد` };
-  return { kind: "none", text: "ملغي من غير فلوس متحصّلة - مفيش رد مطلوب" };
+  if (paid > 0) return { kind: "kept", text: `ملغي - الـ ${fmtN(paid)} ${cur} المتحصّلة فضلت في الفندق` };
+  return { kind: "none", text: "ملغي من غير فلوس متحصّلة" };
 }

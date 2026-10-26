@@ -48,25 +48,6 @@ select t.chk('GU9 كل حجز عنده كودات مش أكتر من عدد أف
 select t.reject('GU10 الموظف مايعمل أكتر من ١٠٠ فرد', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source) values (604, 'GU10', hotel_today() + 120, hotel_today() + 121, 1, 1, 150, 'USD', 'مباشر')$q$), 'check constraint');
 
 -- ======================================================================
--- رد الفلوس بيتخصم من صف نفس الحجز (تحصيل التسكين المكرر منفصل عن اللي قبله)
--- ======================================================================
-select t.pass('RB1 حجز قديم على غرفة 601', t.ins('st1', 'RB1', 601, 70, 72, 50, 100, 100, true));
-select t.pass('RB1 حجز جديد (بعده) على نفس الغرفة', t.ins('st1', 'RB2', 601, 72, 74, 30, 60, 60, true));
-update shift_records set rows = rows || jsonb_build_array(
-  jsonb_build_object('room', 601, 'bookingId', (select id from t.ids where name = 'RB1'), 'collectionAmt', 100, 'collectionMethod', 'كاش', 'collectionCurrency', 'USD', 'collectionDesc', 'تحصيل RB1', 'expenseAmt', '', 'expenseDesc', '', 'expenseCategory', 'أخرى', 'expenseCurrency', 'EGP', 'notes', ''),
-  jsonb_build_object('room', 601, 'bookingId', (select id from t.ids where name = 'RB2'), 'collectionAmt', 60, 'collectionMethod', 'كاش', 'collectionCurrency', 'USD', 'collectionDesc', 'تحصيل RB2', 'expenseAmt', '', 'expenseDesc', '', 'expenseCategory', 'أخرى', 'expenseCurrency', 'EGP', 'notes', ''))
-  where date = hotel_today() and shift_key = 'morning';
-select t.pass('RB2 مدير الحجوزات يلغي الحجز التاني', t.upd('res1', 'RB2', 'status = ''ملغي'''));
-select t.pass('RB2 ويرد فلوسه', t.decide('res1', 'RB2', 'refund'));
-select t.eqn('RB2 صف الحجز التاني بقى صفر', (select (el ->> 'collectionAmt')::numeric from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and s.shift_key = 'morning' and el ->> 'bookingId' = (select id::text from t.ids where name = 'RB2')), 0);
-select t.eqn('RB2 صف الحجز الأول (القديم) ما اتلمسش', (select (el ->> 'collectionAmt')::numeric from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and s.shift_key = 'morning' and el ->> 'bookingId' = (select id::text from t.ids where name = 'RB1')), 100);
-select t.chk('RB2 مفيش صف جديد اتضاف (الرد اتخصم من صف نفس الحجز)', (select count(*) = 2 from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and s.shift_key = 'morning' and el ->> 'room' = '601' and el ? 'bookingId'));
-select t.pass('RB3 حجز تالت من غير صف في اليومية (تحصيل قديم)', t.ins('st1', 'RB3', 602, 80, 82, 50, 100, 100, true));
-select t.pass('RB3 يتلغي', t.upd('res1', 'RB3', 'status = ''ملغي'''));
-select t.pass('RB3 الرد بيتسجّل في صف جديد مربوط بيه', t.decide('res1', 'RB3', 'refund'));
-select t.chk('RB3 الصف الجديد فيه bookingId الحجز وقيمته -١٠٠', exists (select 1 from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and s.shift_key = 'morning' and el ->> 'bookingId' = (select id::text from t.ids where name = 'RB3') and (el ->> 'collectionAmt')::numeric = -100));
-
--- ======================================================================
 -- بنود مصاريف وإيرادات الفندق في اليومية
 -- ======================================================================
 select t.pass('HR1 الموظف يضيف بنود مصاريف/إيرادات فندق في يوميته المفتوحة', t.dml('st1', $q$update shift_records set hotel_rows = '[{"room":"فندق","expenseDesc":"كهرباء","expenseAmt":120,"expenseCategory":"كهرباء ومياه","expenseCurrency":"EGP","collectionDesc":"إيجار قاعة","collectionAmt":500,"collectionMethod":"كاش","collectionCurrency":"EGP","paymentDetails":{},"notes":""}]'::jsonb where date = hotel_today() and shift_key = 'morning'$q$));

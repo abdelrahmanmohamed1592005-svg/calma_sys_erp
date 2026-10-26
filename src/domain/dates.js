@@ -54,6 +54,14 @@ export function shiftDayNow(now = new Date()) {
 
 export const SHIFT_ORDER = ["morning", "evening", "night"];
 
+/* نهاية معاد الشيفت (توقيت الجهاز = القاهرة): الصباحي ٤م، المسائي ١٢ص، الليلي ٨ص اليوم اللي بعده.
+   نفس calma_shift_end في قاعدة البيانات - بعدها اختيار الشيفت ويوميته مايتلغوش. */
+export function shiftEndTime(dateStr, key) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, key === "morning" ? 16 : key === "evening" ? 24 : 32, 0, 0);
+}
+export const isShiftOver = (dateStr, key, now = new Date()) => now.getTime() >= shiftEndTime(dateStr, key).getTime();
+
 export function defaultShiftForNow() {
   const h = new Date().getHours();
   if (h >= 8 && h < 16) return "morning";

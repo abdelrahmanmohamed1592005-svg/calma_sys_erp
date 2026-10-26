@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Info, UserPlus, Key, Check, AlertTriangle, CalendarClock } from "lucide-react";
 import { TwoStepButton, initials, SectionHead } from "./shared";
 import { ROLES, SHIFTS } from "../domain/constants";
-import { shiftDayNow } from "../domain/dates";
+import { shiftDayNow, isShiftOver } from "../domain/dates";
 import { getClaimsForDate, clearClaimRow, deleteShiftRecord, getShiftRecord } from "../data/shifts";
 import { adminCreateUser, setProfileActive, adminResetPassword } from "../lib/auth";
 import { validatePasswordStrength, validateUsername, sanitizeText } from "../domain/security";
@@ -23,6 +23,7 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
   // لو فيها خطأ حقيقي، المدير العام/مدير الحجوزات يراجعوها ويصلّحوها يدويًا
   // من شاشة الحجوزات/بلوك الغرف (الصلاحية دي متاحة لهم بالفعل).
   async function clearClaim(shiftKey) {
+    if (isShiftOver(today, shiftKey)) { showToast("معاد الشيفت ده خلص - مينفعش يتلغي اختياره ولا تتمسح يوميته"); return; }
     // نمسح ورقة اليومية الأول: لو فشل المسح مانلغيش الاختيار (كان هيسيب ورقة
     // يتيمة والرسالة تقول إنها اتمسحت).
     const existing = await getShiftRecord(today, shiftKey);
@@ -79,12 +80,14 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
       {!readOnly && claims && (
         <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
           <SectionHead icon={CalendarClock} tone="amber" title="شيفتات النهارده" hint="مين اختار أنهي شيفت النهارده" />
-          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8, lineHeight: 1.7 }}>لو حد اختار شيفت غلط بالغلط، تقدر تلغي اختياره من هنا عشان يقدر يختار تاني (تصحيح إداري بس). تنبيه: ده بيمسح ورقة اليومية بتاعة الشيفت ده كاملة، أما أي حجوزات أو تغييرات غرف حصلت في نفس الوقت فمش بتُمسح أو تترجع تلقائيًا - لازم تراجعيها وتصلّحيها يدويًا لو فيها خطأ.</div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8, lineHeight: 1.7 }}>لو حد اختار شيفت غلط بالغلط، تقدر تلغي اختياره من هنا عشان يقدر يختار تاني (تصحيح إداري بس) - طول ما معاد الشيفت لسه ماخلصش. تنبيه: ده بيمسح ورقة اليومية بتاعة الشيفت ده كاملة، أما أي حجوزات أو تغييرات غرف حصلت في نفس الوقت فمش بتُمسح أو تترجع تلقائيًا - لازم تراجعيها وتصلّحيها يدويًا لو فيها خطأ.</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {SHIFTS.map((s) => (
               <div key={s.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, borderBottom: "1px solid var(--hair)", padding: "6px 0" }}>
                 <span>{s.label}: {claims[s.key] ? claims[s.key].name : <span style={{ color: "var(--muted)" }}>لسه محدش اختاره</span>}</span>
-                {claims[s.key] && <TwoStepButton label="إلغاء الاختيار" confirmLabel="مسح ورقة اليومية وإلغاء الاختيار؟" icon={<AlertTriangle size={12} />} onConfirm={() => clearClaim(s.key)} />}
+                {claims[s.key] && (isShiftOver(today, s.key)
+                  ? <span data-testid={"claim-over-" + s.key} style={{ fontSize: 12.5, color: "var(--muted)" }}>معاده خلص - مينفعش يتلغي</span>
+                  : <TwoStepButton label="إلغاء الاختيار" confirmLabel="مسح ورقة اليومية وإلغاء الاختيار؟" icon={<AlertTriangle size={12} />} onConfirm={() => clearClaim(s.key)} />)}
               </div>
             ))}
           </div>

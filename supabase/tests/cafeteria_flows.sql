@@ -15,7 +15,7 @@ select t.pass('H1 تحصيل كافيتيريا النزيل', t.maint('H1', 'am
 select t.eq('H1 رجع true', t.f('H1', 'settled'), 'true');
 select t.pass('H1 إلغاء الحجز من مدير الحجوزات', t.upd('res1', 'H1', 'status = ''ملغي'''));
 select t.eq('H1 الملغي مش متحصّل', t.f('H1', 'settled'), 'false');
-select t.eq('H1 طلب رد للمدفوع', t.f('H1', 'refund_pending'), 'true');
+select t.eq('H1 مفيش طلب رد (الفلوس فضلت في الفندق)', t.f('H1', 'refund_pending'), 'false');
 -- حجز أونلاين: الفندق بيحصّل الخدمات بس
 select t.pass('H2 حجز', t.ins('st1', 'H2', 602, 40, 41, 100, 100));
 select t.pass('H2 تعليمه أونلاين من مدير الحجوزات', t.upd('res1', 'H2', 'payment_details = ''{"senderName":"","senderNumber":"","ref":"B","onlinePaid":true}''::jsonb'));

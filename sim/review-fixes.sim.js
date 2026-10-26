@@ -49,21 +49,16 @@ describe.skipIf(!enabled)("إصلاحات المراجعة الكاملة", () =
     expect(await db.q("select 1 from bookings where id = $1", [id])).toHaveLength(1);
   });
 
-  it("رد فلوس بوسيلة مش من القايمة مرفوض ومفيش حاجة بتتغيّر (الأرصدة الحقيقية مش بتتساب)", async () => {
+  it("رد الفلوس اتلغى (v39): الدالة مقفولة على الكل والمدفوع على الحجز الملغي بيفضل زي ما هو", async () => {
     const id = await booking("", 605);
     await db.q("update bookings set status = 'ملغي' where id = $1", [id]);
-    await db.q("update bookings set refund_pending = true where id = $1", [id]);
-    await db.q("insert into shift_claims(date, shift_key, username, name) values ($1,'evening','st1','st1') on conflict do nothing", [today]);
-    await db.q("insert into shift_records(date, shift_key, staff_name, staff_username, rows) values ($1,'evening','st1','st1',$2::jsonb)", [today, JSON.stringify([{ ...emptyRow(605), bookingId: id, collectionAmt: 200, collectionMethod: "كاش", collectionCurrency: "EGP", collectionDesc: "x" }])]);
-    const bad = await db.tx("res1", (c) => c.query("select decide_booking_refund($1, 'refund', null, 'xyz') r", [id]));
-    expect(bad.ok).toBe(false);
-    expect(String(bad.err?.message)).toMatch(/وسيلة الدفع/);
-    expect((await db.q("select refund_pending, amount_paid::float p from bookings where id = $1", [id]))[0]).toEqual({ refund_pending: true, p: 200 });
-    const ok = await db.tx("res1", (c) => c.query("select decide_booking_refund($1, 'refund', null, 'كاش') r", [id]));
-    expect(ok.ok).toBe(true);
-    const [rec] = await db.q("select rows from shift_records where shift_key='evening'");
-    expect(rec.rows.filter((r) => r.bookingId === id).reduce((a, r) => a + Number(r.collectionAmt), 0)).toBe(0);
-    await db.q("delete from shift_records"); await db.q("delete from shift_claims");
+    expect((await db.q("select refund_pending from bookings where id = $1", [id]))[0].refund_pending).toBe(false);
+    for (const u of ["res1", "gm1", "st1"]) {
+      const bad = await db.tx(u, (c) => c.query("select decide_booking_refund($1, 'refund', null, 'كاش') r", [id]));
+      expect(bad.ok).toBe(false);
+      expect(String(bad.err?.message)).toMatch(/permission denied/);
+    }
+    expect((await db.q("select amount_paid::float p from bookings where id = $1", [id]))[0].p).toBe(200);
   });
 
   it("حفظ الرسوم الإضافية من بطاقة الغرفة (extras من غير cafeteriaPaid) ما بيمسحش اللي اتحصّل من كافيتيريا النزيل", async () => {

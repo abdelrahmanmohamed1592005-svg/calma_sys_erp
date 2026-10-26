@@ -28,14 +28,16 @@ let s = await st.rpc("record_staff_cafeteria", { p_name: "Sara", p_username: nul
 ok(!s.error && s.data.paid === false, "staff cafeteria later", s);
 s = await st.rpc("settle_staff_cafeteria", { p_name: "Sara", p_username: null, p_currency: "EGP", p_amount: 15, p_method: "فودافون كاش", p_details: { senderName: "Sara", senderNumber: "01012345678" } });
 ok(!s.error && s.data.left === 25, "settle partial", s);
-// مدير الحجوزات: الغاء + رد
+// دفع بعملة تانية (جنيه على حجز بالدولار) + نقل النزيل + إلغاء من غير رد فلوس
+let fx = await st.rpc("record_booking_payment_fx", { p_booking: id, p_amount: 2500, p_currency: "EGP", p_rate: 50, p_method: "كاش", p_details: {}, p_expected: null, p_note: "تحصيل" });
+ok(!fx.error && Number(fx.data.covered) === 50, "fx payment via real PostgREST (2500 EGP @50 = 50 USD)", fx);
+let mv = await res.rpc("move_booking_room", { p_booking: id, p_room: 602, p_expected: null });
+ok(!mv.error && mv.data.to === 602, "move guest via real PostgREST", mv);
 let c = await res.from("bookings").update({ status: "ملغي" }).eq("id", id).select().single();
-ok(!c.error && c.data.refund_pending === true, "cancel opens refund request", c.error);
-let d = await res.rpc("decide_booking_refund", { p_booking: id, p_decision: "refund", p_expected: null, p_method: "فيزا" });
-ok(!d.error && d.data.amount === 50, "refund via real PostgREST", d);
-// صلاحيات: الموظف مايقدرش يرد، anon مايقدرش ينادي الدوال
-let bad = await st.rpc("decide_booking_refund", { p_booking: id, p_decision: "refund", p_expected: null, p_method: "كاش" });
-ok(bad.error, "staff cannot decide refund", bad);
+ok(!c.error && c.data.refund_pending === false && Number(c.data.amount_paid) === 100, "cancel keeps the money (no refund request)", c.error || c.data);
+// صلاحيات: رد الفلوس مقفول على الكل، anon مايقدرش ينادي الدوال
+let bad = await res.rpc("decide_booking_refund", { p_booking: id, p_decision: "refund", p_expected: null, p_method: "كاش" });
+ok(bad.error, "refund rpc is closed", bad);
 const anon = createClient("http://localhost:3001", "anon", { realtime: { transport: NoWS }, auth: { persistSession: false } });
 const an = await fetch("http://localhost:3001/rest/v1/rpc/record_booking_payment", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ p_booking: id, p_amount: 1, p_method: "كاش" }) });
 ok(an.status === 401 || an.status === 403 || an.status === 404, "anon cannot call payment rpc (status " + an.status + ")", await an.text());

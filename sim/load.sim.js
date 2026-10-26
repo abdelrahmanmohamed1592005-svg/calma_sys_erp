@@ -62,15 +62,12 @@ describe.skipIf(!enabled)("حمل وتحمّل", () => {
       console.log(`إضافة حجز على 20k: متوسط ${(times.reduce((a, b) => a + b, 0) / times.length).toFixed(1)}ms، p95 ${pct(times, 0.95).toFixed(0)}ms`);
       expect(pct(times, 0.95)).toBeLessThan(400);
 
-      // رد فلوس على حجز مدفوع وسط ٣٢٨٥ يومية (بيحسب رصيد الوسائل من اليومية)
-      await db.q("insert into shift_records(date, shift_key, staff_name, staff_username, rows) values ($1, 'morning', 'st1', 'st1', $2::jsonb)", [today, JSON.stringify([{ room: 601, expenseDesc: "", expenseAmt: "", expenseCategory: "أخرى", expenseCurrency: "EGP", collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP", paymentDetails: { senderName: "", senderNumber: "", ref: "" }, notes: "" }])]);
-      const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, amount_paid, currency) values (601, 'Refund Me', $1, $2::date + 1, 100, 100, 100, 'USD') returning id", [today, today]);
-      await db.q("update shift_records set rows = jsonb_set(rows, '{0}', rows->0 || jsonb_build_object('bookingId', $1::text, 'collectionAmt', 100, 'collectionMethod', 'فيزا', 'collectionCurrency', 'USD')) where date = $2 and shift_key = 'morning'", [id, today]);
-      expect((await db.tx("res1", (c) => c.query("update bookings set status = 'ملغي' where id = $1", [id]))).ok).toBe(true);
-      const refund = await timed(() => db.tx("res1", (c) => c.query("select decide_booking_refund($1, 'refund', null, 'فيزا') r", [id])));
-      console.log(`رد فلوس وسط 3285 يومية: ${refund.ms.toFixed(0)}ms`);
-      expect(refund.r.ok, refund.r.err?.message).toBe(true);
-      expect(refund.ms).toBeLessThan(1500);
+      // نقل نزيل وسط ٢٠ ألف حجز (بيدوّر على تعارض في الغرفة الجديدة)
+      const [{ id }] = await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency) values (601, 'Move Me', $1::date + 4000, $1::date + 4002, 100, 200, 'USD') returning id", [today]);
+      const mv = await timed(() => db.tx("res1", (c) => c.query("select move_booking_room($1, 602) r", [id])));
+      console.log(`نقل نزيل وسط 20k حجز: ${mv.ms.toFixed(0)}ms`);
+      expect(mv.r.ok, mv.r.err?.message).toBe(true);
+      expect(mv.ms).toBeLessThan(1500);
     } finally { await db.close(); }
   });
 

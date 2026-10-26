@@ -186,79 +186,32 @@ select t.reject('A12 مدفوع سالب مرفوض (قيد قاعدة البي�
 select t.reject('A12 والموظف مايكتبش المدفوع مباشرة أصلًا', t.upd('st1', 'A8', 'amount_paid = 5'), 'مش بتعديل مباشر');
 
 -- ======================================================================
--- B) الإلغاء وطلب رد الفلوس وقراره
+-- B) الإلغاء: مفيش رد فلوس (من قسم ٣٩) - الفلوس المتحصّلة بتفضل في الفندق
 -- ======================================================================
 select t.pass('B1 حجز مدفوع ومتحصّل بالكامل', t.ins('st1', 'B1', 604, 0, 3, 100, 300, 300, true));
 update shift_records set booking_collections = jsonb_build_array(jsonb_build_object('id', 'seed', 'bookingId', (select id from t.ids where name = 'B1')))
   where date = hotel_today() and shift_key = 'morning';
 select t.pass('B2 حجز غير مدفوع', t.ins('st1', 'B2', 605, 0, 2, 100, 200));
 select t.pass('B2 مدير الحجوزات يلغي الحجز غير المدفوع', t.upd('res1', 'B2', 'status = ''ملغي'''));
-select t.eq('B2 مفيش طلب رد (مفيش فلوس)', t.f('B2', 'refund_pending'), 'false');
+select t.eq('B2 مفيش طلب رد', t.f('B2', 'refund_pending'), 'false');
 select t.pass('B3 مدير الحجوزات يلغي الحجز المدفوع', t.upd('res1', 'B1', 'status = ''ملغي'''));
-select t.eq('B3 طلب رد الفلوس اتفتح تلقائيًا', t.f('B1', 'refund_pending'), 'true');
-select t.eq('B3 مفيش قرار لسه', t.f('B1', 'refund_decision'), null);
-select t.reject('B4 موظف مايسحبش المدفوع من حجز عليه طلب رد', t.upd('st1', 'B1', 'amount_paid = 0'), 'مش بتعديل مباشر');
-select t.reject('B4 مدير الحجوزات برضه مايسحبش المدفوع بره قرار الرد', t.upd('res1', 'B1', 'amount_paid = 0'), 'مش بتعديل مباشر');
-select t.pass('B5 محاولة تصفير طلب الرد مباشرة (بتتجاهل)', t.upd('res1', 'B1', 'refund_pending = false, refunded_amount = 999, refund_decision = ''refunded'', refunded_by = ''x'''));
-select t.eq('B5 طلب الرد لسه معلّق', t.f('B1', 'refund_pending'), 'true');
+select t.eq('B3 مفيش طلب رد فلوس (الفلوس فضلت في الفندق)', t.f('B1', 'refund_pending'), 'false');
+select t.eqn('B3 المدفوع لسه ٣٠٠', t.fn('B1', 'amount_paid'), 300);
+select t.reject('B4 موظف مايسحبش المدفوع من حجز ملغي', t.upd('st1', 'B1', 'amount_paid = 0'), 'مش بتعديل مباشر');
+select t.reject('B4 مدير الحجوزات برضه مايسحبش المدفوع', t.upd('res1', 'B1', 'amount_paid = 0'), 'مش بتعديل مباشر');
+select t.pass('B5 محاولة تزوير بيانات رد مباشرة (بتتجاهل)', t.upd('res1', 'B1', 'refund_pending = true, refunded_amount = 999, refund_decision = ''refunded'', refunded_by = ''x'''));
+select t.eq('B5 مفيش طلب رد', t.f('B1', 'refund_pending'), 'false');
 select t.eq('B5 المبلغ المردود ماتزورش', t.f('B1', 'refunded_amount'), null);
 select t.eq('B5 القرار ماتزورش', t.f('B1', 'refund_decision'), null);
-
-select t.reject('B6 موظف مايقررش الرد', t.decide('st1', 'B1', 'refund'), 'مدير الحجوزات');
-select t.reject('B6 المدير العام مايقررش الرد', t.decide('gm1', 'B1', 'refund'), 'مدير الحجوزات');
-select t.reject('B6 المحاسبة مايقررش الرد', t.decide('acc1', 'B1', 'refund'), 'مدير الحجوزات');
-select t.reject('B7 قرار غير معروف', t.decide('res1', 'B1', 'maybe'), 'غير معروف');
-select t.reject('B7 الحجز اتغيّر من حد تاني (expected قديم) => مرفوض', t.decide('res1', 'B1', 'refund', null, now() - interval '1 day'), 'اتغيّر');
-select t.reject('B7 وسيلة رد طويلة بشكل غير معقول', t.decide('res1', 'B1', 'refund', repeat('x', 50)), 'وسيلة الدفع');
-
--- مفيش شيفت مفتوح => الرد مرفوض (ومفيش حاجة اتغيّرت)
-select set_config('request.jwt.claim.sub', (select id::text from profiles where username = 'st1'), false);
-set role authenticated;
-update shift_records set closed = true where date = hotel_today() and shift_key = 'morning';
-reset role;
-select t.reject('B8 مفيش شيفت مفتوح => الرد مرفوض', t.decide('res1', 'B1', 'refund'), 'مفيش شيفت مفتوح');
-select t.eq('B8 المدفوع ما اتخصمش', t.f('B1', 'amount_paid'), '300');
-select t.eq('B8 الطلب لسه معلّق', t.f('B1', 'refund_pending'), 'true');
-select set_config('request.jwt.claim.sub', (select id::text from profiles where username = 'res1'), false);
-set role authenticated;
-update shift_records set closed = false where date = hotel_today() and shift_key = 'morning';
-reset role;
-
-select t.pass('B9 مدير الحجوزات يرد الفلوس', t.decide('res1', 'B1', 'refund'));
-select t.eq('B9 نتيجة القرار', current_setting('t.last_decision')::jsonb ->> 'decision', 'refunded');
-select t.eqn('B9 المبلغ المردود في النتيجة', (current_setting('t.last_decision')::jsonb ->> 'amount')::numeric, 300);
-select t.eqn('B9 المدفوع بقى صفر', t.fn('B1', 'amount_paid'), 0);
-select t.eq('B9 علامة متحصّل اتشالت', t.f('B1', 'settled'), 'false');
-select t.eq('B9 طلب الرد اتقفل', t.f('B1', 'refund_pending'), 'false');
-select t.eq('B9 القرار اتسجّل', t.f('B1', 'refund_decision'), 'refunded');
-select t.eqn('B9 المبلغ المردود اتسجّل', t.fn('B1', 'refunded_amount'), 300);
-select t.eq('B9 مين رد', t.f('B1', 'refunded_by'), 'res1');
-select t.eqn('B9 صف اليومية (غرفة 604) بقى صفر بعد خصم الرد', (select (el ->> 'collectionAmt')::numeric from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and el ->> 'room' = '604' limit 1), 0);
-select t.chk('B9 وصف الرد اتضاف لصف اليومية', (select el ->> 'collectionDesc' like '%رد فلوس%' from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and el ->> 'room' = '604' limit 1));
-select t.eqn('B9 اتسجّل الرد في booking_collections (مرتين: التحصيل الأصلي + الرد)', (select jsonb_array_length(booking_collections) from shift_records where date = hotel_today()), 2);
-select t.reject('B10 نفس الطلب مايتقرّرش مرتين', t.decide('res1', 'B1', 'refund'), 'مفيش طلب رد');
-
-select t.pass('B11 حجز مدفوع ٢٠٠ ومتحصّل', t.ins('st1', 'B11', 606, 0, 2, 100, 200, 200, true));
-select t.pass('B11 يتلغي', t.upd('res1', 'B11', 'status = ''ملغي'''));
-select t.pass('B11 مدير الحجوزات يرفض الرد (إبقاء الفلوس)', t.decide('res1', 'B11', 'keep'));
-select t.eq('B11 قرار الإبقاء', t.f('B11', 'refund_decision'), 'kept');
-select t.eqn('B11 المدفوع لسه ٢٠٠', t.fn('B11', 'amount_paid'), 200);
-select t.eq('B11 الطلب اتقفل', t.f('B11', 'refund_pending'), 'false');
-select t.eqn('B11 اليومية ما اتغيّرتش بسبب الإبقاء', (select jsonb_array_length(rows) from shift_records where date = hotel_today()), 1);
-select t.pass('B12 فلوس اتضافت على حجز ملغي', t.maint('B11', 'amount_paid = 300'));
-select t.eq('B12 بتتحوّل لطلب رد من جديد', t.f('B11', 'refund_pending'), 'true');
+select t.reject('B6 دالة رد الفلوس اتقفلت لمدير الحجوزات', t.decide('res1', 'B1', 'refund'), 'permission denied');
+select t.reject('B6 ولموظف الشيفت', t.decide('st1', 'B1', 'refund'), 'permission denied');
+select t.eqn('B6 اليومية ما اتغيّرتش', (select (el ->> 'collectionAmt')::numeric from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and el ->> 'room' = '604' limit 1), 300);
+select t.pass('B12 فلوس اتضافت على حجز ملغي', t.maint('B1', 'amount_paid = 350'));
+select t.eq('B12 برضه مفيش طلب رد', t.f('B1', 'refund_pending'), 'false');
+select t.pass('B12 رجوع للمدفوع الأصلي', t.maint('B1', 'amount_paid = 300'));
 select t.reject('B13 موظف مايرجّعش حجز ملغي', t.upd('st1', 'B2', 'status = ''مؤكد'''), 'استرجاع');
 select t.pass('B13 مدير الحجوزات يرجّع حجز ملغي', t.upd('res1', 'B2', 'status = ''مؤكد'''));
 select t.eq('B13 مفيش طلب رد بعد الاسترجاع', t.f('B2', 'refund_pending'), 'false');
-
-select t.pass('B14 حجز مدفوع بفيزا', t.ins('st1', 'B14', 607, 0, 2, 50, 100, 100, true, 'مؤكد', false, 'فيزا'));
-select t.pass('B14 يتلغي', t.upd('res1', 'B14', 'status = ''ملغي'''));
-select t.pass('B14 رد بوسيلة كاش (غير وسيلة التحصيل)', t.decide('res1', 'B14', 'refund', 'كاش'));
-select t.chk('B14 صف رد جديد بوسيلة الرد اتضاف لليومية', exists (select 1 from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and el ->> 'room' = '607' and (el ->> 'collectionAmt')::numeric = -100 and el ->> 'collectionMethod' = 'كاش' and el ->> 'collectionCurrency' = 'USD'));
-select t.pass('B15 حجز غير مدفوع كامل (مدفوع ٤٠ من ٢٠٠) يتلغي', t.ins('st1', 'B15', 608, 0, 2, 100, 200, 40, false));
-select t.pass('B15 يتلغي', t.upd('res1', 'B15', 'status = ''ملغي'''));
-select t.pass('B15 رد المدفوع بس (٤٠)', t.decide('res1', 'B15', 'refund'));
-select t.eqn('B15 المبلغ المردود ٤٠', (current_setting('t.last_decision')::jsonb ->> 'amount')::numeric, 40);
 
 -- ======================================================================
 -- C) الخروج المبكر والتسكين المكرر (بنفس التعديلات اللي الواجهة بتبعتها)
@@ -268,16 +221,12 @@ select t.pass('C1 نزيل قديم ٤ ليالي مدفوع بالكامل', t.
 select t.pass('C2 موظف يقصّر إقامة النزيل القديم (غادر مبكرًا) بنفس سعر الليلة',
   t.upd('st1', 'C1', 'checkout = hotel_today(), total_room = 200, status = ''تم تسجيل الخروج'', left_early = true, notes = ''غادر مبكرًا'''));
 select t.eqn('C2 إجمالي الغرفة اتحسب على الليالي اللي قعدها (٢)', t.fn('C1', 'total_room'), 200);
-select t.eq('C2 طلب رد للزيادة المدفوعة اتفتح', t.f('C1', 'refund_pending'), 'true');
+select t.eq('C2 مفيش طلب رد للزيادة (فضلت في الفندق)', t.f('C1', 'refund_pending'), 'false');
+select t.eqn('C2 المدفوع لسه ٤٠٠', t.fn('C1', 'amount_paid'), 400);
+select t.eq('C2 الحجز متحصّل بالكامل', t.f('C1', 'settled'), 'true');
 select t.chk('C2 تاريخ الخروج الأصلي اتحفظ للتراجع', (select pre_early_checkout = hotel_today() + 2 and pre_early_total = 400 from bookings where id = (select id from t.ids where name = 'C1')));
 select t.pass('C3 الحجز الجديد (تسكين مكرر) على نفس الغرفة بعد التقصير', t.ins('st1', 'C3', 609, 0, 2, 120, 240, 0, false, 'مؤكد', true));
 select t.eq('C3 معلّم تسكين مكرر', t.f('C3', 'duplicate_placement'), 'true');
-select t.pass('C5 مدير الحجوزات يرد الزيادة (٢٠٠)', t.decide('res1', 'C1', 'refund'));
-select t.eqn('C5 المبلغ المردود = المدفوع - الإجمالي الجديد', (current_setting('t.last_decision')::jsonb ->> 'amount')::numeric, 200);
-select t.eqn('C5 المدفوع بقى مساوي الإجمالي', t.fn('C1', 'amount_paid'), 200);
-select t.eq('C5 الحجز لسه متحصّل بالكامل (مفيش متبقي)', t.f('C1', 'settled'), 'true');
-select t.eq('C5 الطلب اتقفل', t.f('C1', 'refund_pending'), 'false');
-select t.eqn('C5 اليومية: صف غرفة 609 بالسالب -٢٠٠', (select (el ->> 'collectionAmt')::numeric from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and el ->> 'room' = '609' limit 1), -200);
 
 -- تسكين مكرر بدون تقصير القديم => قيد منع الحجز المزدوج
 select t.pass('C4 حجز قائم على غرفة 610', t.ins('st1', 'C4old', 610, 0, 2, 100, 200));
@@ -288,10 +237,8 @@ select t.pass('C6 نزيل دخل النهارده ومدفوع', t.ins('st1', '
 select t.pass('C6 يغادر في نفس اليوم (صفر ليالي، بيتحاسب ليلة واحدة)',
   t.upd('st1', 'C6', 'checkout = hotel_today(), total_room = 100, status = ''تم تسجيل الخروج'', left_early = true'));
 select t.eq('C6 خروجه = دخوله', t.f('C6', 'checkout'), t.f('C6', 'checkin'));
-select t.eq('C6 طلب رد للنص التاني (١٠٠)', t.f('C6', 'refund_pending'), 'true');
+select t.eq('C6 مفيش طلب رد', t.f('C6', 'refund_pending'), 'false');
 select t.pass('C6 حجز جديد على نفس الغرفة بدأ نفس اليوم', t.ins('st1', 'C6b', 611, 0, 1, 100, 100, 0, false, 'مؤكد', true));
-select t.pass('C6 قرار رد الزيادة', t.decide('res1', 'C6', 'refund'));
-select t.eqn('C6 المردود ١٠٠', (current_setting('t.last_decision')::jsonb ->> 'amount')::numeric, 100);
 
 -- حجز مستقبلي: الخروج المبكر ممنوع على الموظف (إلغاء مقنّع)
 select t.pass('C7 حجز مستقبلي (بعد ٣ أيام)', t.ins('st1', 'C7', 612, 3, 5, 100, 200, 0, false));
@@ -306,26 +253,23 @@ select t.pass('C8 تراجع كامل لنفس القيم الأصلية', t.upd
 select t.chk('C8 ذاكرة التقصير اتمسحت بعد التراجع', (select pre_early_checkout is null and pre_early_total is null from bookings where id = (select id from t.ids where name = 'C8')));
 select t.pass('C8b نزيل قديم مدفوع بالكامل', t.ins('st1', 'C8b', 614, -2, 2, 100, 400, 400, true));
 select t.pass('C8b تقصير', t.upd('st1', 'C8b', 'checkout = hotel_today(), total_room = 200, status = ''تم تسجيل الخروج'', left_early = true'));
-select t.eq('C8b طلب رد اتفتح بعد التقصير', t.f('C8b', 'refund_pending'), 'true');
 select t.pass('C8b تراجع', t.upd('st1', 'C8b', 'checkout = hotel_today() + 2, total_room = 400, status = ''مؤكد'', left_early = false'));
-select t.eq('C8b طلب الرد اتلغى بعد التراجع (المدفوع = الإجمالي)', t.f('C8b', 'refund_pending'), 'false');
+select t.eqn('C8b الإجمالي رجع ٤٠٠', t.fn('C8b', 'total_room'), 400);
 select t.reject('C9 تراجع بإجمالي مختلف عن الأصلي مرفوض', t.upd('st1', 'C8', 'checkout = hotel_today() + 2, total_room = 100, status = ''مؤكد'', left_early = false'), 'تعديل بيانات الحجز الأساسية');
 select t.pass('C10 نزيل جديد للتقصير بإجمالي غلط', t.ins('st1', 'C10', 615, -2, 2, 100, 400));
 select t.reject('C10 تقصير بإجمالي غلط (تخفيض مجاني) مرفوض', t.upd('st1', 'C10', 'checkout = hotel_today(), total_room = 100, left_early = true'), 'تعديل بيانات الحجز الأساسية');
 
 -- ======================================================================
--- D) تقصير/تخفيض من مدير الحجوزات وأثره على رد الفلوس
+-- D) تقصير/تخفيض من مدير الحجوزات: الزيادة المدفوعة بتفضل في الفندق
 -- ======================================================================
 select t.pass('D1 حجز ٤ ليالي مدفوع بالكامل', t.ins('st1', 'D1', 616, -1, 3, 100, 400, 400, true));
 select t.pass('D1 مدير الحجوزات يقصّر لنص المدة', t.upd('res1', 'D1', 'checkout = hotel_today() + 1, total_room = 200'));
-select t.eq('D1 طلب رد للزيادة', t.f('D1', 'refund_pending'), 'true');
-select t.pass('D1 رد الزيادة', t.decide('res1', 'D1', 'refund'));
-select t.eqn('D1 المردود ٢٠٠', (current_setting('t.last_decision')::jsonb ->> 'amount')::numeric, 200);
-select t.eqn('D1 المدفوع = الإجمالي الجديد', t.fn('D1', 'amount_paid'), t.fn('D1', 'total_room'));
+select t.eq('D1 مفيش طلب رد', t.f('D1', 'refund_pending'), 'false');
+select t.eqn('D1 المدفوع لسه ٤٠٠', t.fn('D1', 'amount_paid'), 400);
 select t.pass('D2 حجز متحصّل بالكامل', t.ins('st1', 'D2', 601, 10, 12, 100, 200, 200, true));
-select t.pass('D2 تخفيض السعر على حجز مدفوع: مسموح، والزيادة المدفوعة بتفتح طلب رد فلوس', t.upd('res1', 'D2', 'total_room = 100'));
-select t.eq('D2 طلب رد فلوس اتفتح للزيادة', t.f('D2', 'refund_pending'), 'true');
-select t.eq('D2 الحالة لسه مدفوع بالكامل (المدفوع أكبر من الإجمالي الجديد)', t.f('D2', 'settled'), 'true');
+select t.pass('D2 تخفيض السعر على حجز مدفوع: مسموح', t.upd('res1', 'D2', 'total_room = 100'));
+select t.eq('D2 مفيش طلب رد', t.f('D2', 'refund_pending'), 'false');
+select t.eq('D2 الحالة لسه مدفوع بالكامل', t.f('D2', 'settled'), 'true');
 select t.pass('D2 تغيير سعر الليلة: مسموح (مفيش قفل تاني)', t.upd('res1', 'D2', 'price_night = 10'));
 
 -- ======================================================================
@@ -348,6 +292,81 @@ select t.pass('E4 نزيل قديم للأونلاين', t.ins('st1', 'E4', 604,
 select t.pass('E4 يعلّمه أونلاين', t.upd('res1', 'E4', 'payment_details = ''{"senderName":"","senderNumber":"","ref":"","onlinePaid":true,"commissionPct":15}''::jsonb'));
 select t.pass('E4 يقصّر (غادر مبكرًا)', t.upd('st1', 'E4', 'checkout = hotel_today(), total_room = 200, status = ''تم تسجيل الخروج'', left_early = true'));
 select t.eq('E4 مفيش طلب رد (مفيش مدفوع نقدي)', t.f('E4', 'refund_pending'), 'false');
+
+-- ======================================================================
+-- G) قسم ٣٩: الدفع بعملة تانية، نقل النزيل، الأونلاين، الشيفت اللي معاده خلص
+-- ======================================================================
+create function t.fx(u text, nm text, amt numeric, cur text, rate numeric, meth text default 'كاش') returns text language plpgsql as $$
+declare v uuid; res jsonb;
+begin
+  select id into v from t.ids where name = nm;
+  perform t.as_user(u);
+  select record_booking_payment_fx(v, amt, cur, rate, meth) into res;
+  execute 'reset role';
+  perform set_config('t.last_fx', res::text, false);
+  return null;
+exception when others then
+  execute 'reset role';
+  return sqlerrm;
+end $$;
+create function t.mv(u text, nm text, room int) returns text language plpgsql as $$
+declare v uuid;
+begin
+  select id into v from t.ids where name = nm;
+  perform t.as_user(u);
+  perform move_booking_room(v, room);
+  execute 'reset role';
+  return null;
+exception when others then
+  execute 'reset role';
+  return sqlerrm;
+end $$;
+
+select t.pass('G1 حجز ٢٠٠ دولار', t.ins('st1', 'G1', 601, 60, 62, 100, 200));
+select t.reject('G1 مدير الحجوزات مايسجّلش تحصيل', t.fx('res1', 'G1', 1000, 'EGP', 50), 'موظف الشيفت');
+select t.reject('G1 نفس عملة الحجز مرفوضة', t.fx('st1', 'G1', 50, 'USD', 1), 'بنفس عملة الحجز');
+select t.reject('G1 سعر صرف صفر مرفوض', t.fx('st1', 'G1', 1000, 'EGP', 0), 'سعر الصرف');
+select t.reject('G1 أكبر من المتبقي مرفوض', t.fx('st1', 'G1', 20000, 'EGP', 50), 'أكبر من المتبقي');
+select t.pass('G2 دفع ٥٠٠٠ جنيه بسعر ٥٠ = ١٠٠ دولار', t.fx('st1', 'G1', 5000, 'EGP', 50));
+select t.eqn('G2 المغطّى ١٠٠', (current_setting('t.last_fx', true)::jsonb ->> 'covered')::numeric, 100);
+select t.eqn('G2 المدفوع على الحجز ١٠٠ دولار', t.fn('G1', 'amount_paid'), 100);
+select t.eq('G2 لسه متبقي', t.f('G1', 'settled'), 'false');
+select t.chk('G2 صف اليومية بالجنيه وفيه المقابل بالدولار', exists (select 1 from shift_records s, jsonb_array_elements(s.rows) el where s.date = hotel_today() and el ->> 'room' = '601'
+  and (el ->> 'collectionAmt')::numeric = 5000 and el ->> 'collectionCurrency' = 'EGP' and (el ->> 'fxCovered')::numeric = 100 and el ->> 'fxBookingCurrency' = 'USD'));
+select t.pass('G3 دفع الباقي ٩٠ يورو بسعر ٠٫٩', t.fx('st1', 'G1', 90, 'EUR', 0.9));
+select t.eqn('G3 المدفوع ٢٠٠', t.fn('G1', 'amount_paid'), 200);
+select t.eq('G3 متحصّل بالكامل', t.f('G1', 'settled'), 'true');
+
+select t.pass('G4 حجز تاني في غرفة 602', t.ins('st1', 'G4', 602, 60, 63, 100, 300));
+select t.pass('G4 حجز على غرفة 603 بعد يومين', t.ins('st1', 'G4x', 603, 62, 64, 100, 200));
+select t.reject('G5 نقل لغرفة مشغولة في نفس التواريخ مرفوض', t.mv('st1', 'G4', 603), 'مش فاضية');
+select t.reject('G5 نقل لنفس الغرفة مرفوض', t.mv('st1', 'G4', 602), 'أصلًا');
+select t.reject('G5 المحاسبة ماتنقلش', t.mv('acc1', 'G4', 604), 'صلاحية');
+select t.pass('G6 موظف الشيفت ينقل النزيل لغرفة 604', t.mv('st1', 'G4', 604));
+select t.eq('G6 الحجز بقى في 623', t.f('G4', 'room'), '604');
+select t.pass('G6 غرفة 602 فضيت: حجز جديد عليها نفس التواريخ', t.ins('st1', 'G6new', 602, 60, 63, 100, 300));
+select t.reject('G6 الموظف مايغيّرش الغرفة بتعديل مباشر', t.upd('st1', 'G4', 'room = 605'), 'تعديل بيانات الحجز الأساسية');
+select t.pass('G7 مدير الحجوزات ينقل', t.mv('res1', 'G4', 605));
+select t.reject('G7 حجز ملغي مايتنقلش', t.mv('res1', 'B1', 606), 'ملغي');
+
+-- الأونلاين: المدفوع أونلاين بيغطي الغرفة بس، والتمديد بعدها بيتحصّل في الفندق
+select t.pass('G8 حجز أونلاين ٢٠٠', t.ins('st1', 'G8', 606, 60, 62, 100, 200));
+select t.pass('G8 يتعلّم مدفوع أونلاين بمبلغ الغرفة', t.upd('res1', 'G8', 'payment_details = ''{"senderName":"","senderNumber":"","ref":"","onlinePaid":true,"commissionPct":15,"onlineRoomAmount":200}''::jsonb'));
+select t.eqn('G8 المطلوب في الفندق صفر', (select booking_hotel_total(b) from bookings b where id = (select id from t.ids where name = 'G8')), 0);
+select t.pass('G9 تمديد ليلة (٣٠٠)', t.upd('res1', 'G8', 'checkout = hotel_today() + 63, total_room = 300'));
+select t.eqn('G9 الليلة الزيادة مطلوبة في الفندق', (select booking_hotel_total(b) from bookings b where id = (select id from t.ids where name = 'G8')), 100);
+select t.pass('G10 حجز أونلاين قديم من غير مبلغ الغرفة', t.ins('st1', 'G10', 607, 60, 62, 100, 200));
+select t.pass('G10 يتعلّم أونلاين', t.upd('res1', 'G10', 'payment_details = ''{"senderName":"","senderNumber":"","ref":"","onlinePaid":true,"commissionPct":15}''::jsonb'));
+select t.pass('G10 تمديد', t.upd('res1', 'G10', 'checkout = hotel_today() + 63, total_room = 300'));
+select t.eq('G10 مبلغ الأونلاين اتثبّت على الإجمالي القديم', (select payment_details ->> 'onlineRoomAmount' from bookings where id = (select id from t.ids where name = 'G10')), '200');
+select t.eqn('G10 الليلة الزيادة مطلوبة في الفندق', (select booking_hotel_total(b) from bookings b where id = (select id from t.ids where name = 'G10')), 100);
+
+-- شيفت معاده خلص: مايتلغيش اختياره ولا تتمسح يوميته
+insert into shift_claims(date, shift_key, username, name) values (hotel_today() - 3, 'evening', 'st2', 'st2');
+select t.reject('G11 إلغاء اختيار شيفت معاده خلص مرفوض', t.dml('gm1', 'delete from shift_claims where date = hotel_today() - 3 and shift_key = ''evening'''), 'معاد الشيفت');
+insert into shift_claims(date, shift_key, username, name) values (hotel_today() + 3, 'evening', 'st2', 'st2');
+select t.pass('G12 إلغاء اختيار شيفت لسه جاي مسموح', t.dml('gm1', 'delete from shift_claims where date = hotel_today() + 3 and shift_key = ''evening'''));
+select t.eqn('G13 نهاية الشيفت الليلي بعد نهاية الصباحي بـ ١٦ ساعة', extract(epoch from calma_shift_end(date '2026-10-20', 'night') - calma_shift_end(date '2026-10-20', 'morning')) / 3600, 16);
 
 -- ======================================================================
 -- F) تطابق إعادة تسعير الإقامة (نفس معادلة الواجهة repricedTotalRoom)

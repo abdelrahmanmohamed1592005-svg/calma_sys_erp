@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, emptyPaymentDetails, directBookingPaymentsByMethod, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, applyCollectionToRows, refundDueAmount, rebaseShiftRecord, refundStatusOf } from "../domain/money";
+import { onlineRoomCovered, bookingHotelTotal, computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, emptyPaymentDetails, directBookingPaymentsByMethod, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, applyCollectionToRows, refundDueAmount, rebaseShiftRecord, refundStatusOf } from "../domain/money";
 
 // انستاباي والتحويل البنكي وسيلة واحدة فعليًا - اتدمجوا في خيار واحد بدل
 // خيارين مختلفين، وفضلت العملات المعتمدة خمسة بس.
@@ -431,10 +431,28 @@ describe("refundStatusOf - حالة الفلوس لحجز ملغي", () => {
     expect(r.kind).toBe("kept");
     expect(r.text).toContain("200");
   });
-  it("ملغي وفيه فلوس من غير قرار => holding", () => {
-    expect(refundStatusOf({ ...base, amountPaid: 50 }).kind).toBe("holding");
+  it("ملغي وفيه فلوس (مفيش رد فلوس خالص) => kept: الفلوس فضلت في الفندق", () => {
+    const r = refundStatusOf({ ...base, amountPaid: 50 });
+    expect(r.kind).toBe("kept");
+    expect(r.text).toContain("فضلت في الفندق");
   });
   it("حجز شغّال اترد منه جزء (تقصير) => refunded", () => {
     expect(refundStatusOf({ ...base, status: "تم تسجيل الخروج", amountPaid: 200, refundDecision: "refunded", refundedAmount: 200 }).kind).toBe("refunded");
+  });
+});
+
+describe("الحجز المدفوع أونلاين: المنصة دفعت سعر الغرفة اللي اتحجز بس", () => {
+  const ob = { totalRoom: 300, extras: { laundry: 20, cafeteria: 0, tours: 0, pickup: 0 }, earlyCheckin: { applied: true, fee: 30 }, paymentDetails: { onlinePaid: true }, amountPaid: 0 };
+  it("من غير onlineRoomAmount: الغرفة كلها مدفوعة، والرسوم والدخول المبكر في الفندق", () => {
+    expect(onlineRoomCovered(ob)).toBe(300);
+    expect(bookingHotelTotal(ob)).toBe(50);
+  });
+  it("تمديد في الفندق: الليالي الزيادة بتتحصّل في الفندق", () => {
+    const ext = { ...ob, totalRoom: 400, paymentDetails: { onlinePaid: true, onlineRoomAmount: 300 } };
+    expect(onlineRoomCovered(ext)).toBe(300);
+    expect(bookingHotelTotal(ext)).toBe(150);
+  });
+  it("حجز مش أونلاين: الفندق بيحصّل كله", () => {
+    expect(bookingHotelTotal({ ...ob, paymentDetails: { onlinePaid: false } })).toBe(350);
   });
 });

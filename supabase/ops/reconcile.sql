@@ -5,9 +5,10 @@
 -- ============================================================================
 with ledger as (        -- كل تحصيل في اليومية مربوط بحجز (غرف + كافيتيريا النزيل)
   select (x ->> 'bookingId') as booking_id,
-         coalesce(nullif(x ->> 'collectionCurrency', ''), 'EGP') as cur,
+         coalesce(nullif(x ->> 'fxBookingCurrency', ''), nullif(x ->> 'collectionCurrency', ''), 'EGP') as cur,  -- دفع بعملة تانية: بيتحسب بالمغطّى بعملة الحجز
          coalesce(x ->> 'collectionMethod', '') as method,
-         case when trim(coalesce(x ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(x ->> 'collectionAmt')::numeric else 0 end as amt
+         case when trim(coalesce(x ->> 'fxBookingCurrency', '')) <> '' then (case when trim(coalesce(x ->> 'fxCovered', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(x ->> 'fxCovered')::numeric else 0 end)
+              when trim(coalesce(x ->> 'collectionAmt', '')) ~ '^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$' then trim(x ->> 'collectionAmt')::numeric else 0 end as amt
   from shift_records s, lateral (select jsonb_array_elements(coalesce(s.rows, '[]'::jsonb)) union all select jsonb_array_elements(coalesce(s.cafeteria_rows, '[]'::jsonb))) e(x)
   where coalesce(x ->> 'bookingId', '') <> ''
 ),
