@@ -102,47 +102,47 @@ test("حجز مزدوج من جهازين: قاعدة البيانات بترف�
   expect(await env.q("select guest_name from bookings where room = 602")).toEqual([{ guest_name: "First Booker" }]);
 });
 
-test("قرار رد الفلوس من جهازين: بيتنفّذ مرة واحدة بس والفلوس مبتتخصمش مرتين", async ({ page, env }) => {
+test("نقل نزيلين لنفس الغرفة من جهازين: التاني بيترفض برسالة واضحة ومفيش حجز مزدوج", async ({ page, env }) => {
   await users(env);
-  const id = await env.seedBooking({ room: 603, guest: "Double Refund", nights: 3, price: 100, paid: 300, settled: true, status: "ملغي" });
-  await env.qRaw("update bookings set refund_pending = true where id = $1", [id]);
-  await env.seedShift("ahmed", { collections: [{ room: 603, amount: 300, bookingId: id }] });
+  await env.seedBooking({ room: 603, guest: "Mover A", nights: 2, price: 100 });
+  await env.seedBooking({ room: 604, guest: "Mover B", nights: 2, price: 100 });
   await page.goto("/");
   await login(page, "rawan");
-  await goTab(page, "الحجوزات");
   const other = await env.newSession();
   await other.goto("/");
   await login(other, "rawan");
-  await goTab(other, "الحجوزات");
-  const decide = async (p) => { const req = p.getByTestId("refund-request"); await req.getByRole("button", { name: "رد الفلوس" }).click(); };
-  await decide(page);
-  await expect(toast(page)).toContainText("تم رد");
-  await decide(other);                // الجهاز التاني لسه شايف الطلب
-  await expect(toast(other)).toContainText(/مفيش طلب رد|اتغيّر/);
-  const [b] = await env.q("select * from bookings where id = $1", [id]);
-  expect(b).toMatchObject({ amount_paid: 0, refunded_amount: 300 });
-  const [rec] = await env.q("select rows from shift_records");
-  expect(Number(rec.rows.find((r) => r.room === 603).collectionAmt)).toBe(0);      // 300 - 300 مرة واحدة (مش -300)
+  const startMove = async (p, room) => {
+    await goTab(p, "لوحة الغرف");
+    await openRoom(p, room);
+    await p.getByTestId("booking-card").getByTestId("move-open").click();
+    await p.getByTestId("move-room").selectOption("605");
+  };
+  await startMove(page, 603);
+  await startMove(other, 604);                 // الجهاز التاني لسه شايف 605 فاضية
+  await page.getByTestId("move-confirm").click();
+  await expect(toast(page)).toContainText("اتنقل Mover A");
+  await other.getByTestId("move-confirm").click();
+  await expect(toast(other)).toContainText("مش فاضية");
+  expect(await env.q("select guest_name, room from bookings order by guest_name")).toEqual([{ guest_name: "Mover A", room: 605 }, { guest_name: "Mover B", room: 604 }]);
 });
 
-test("الموظف بيكتب في اليومية ورد فلوس بينزل على نفس السجل: الاتنين بيتحفظوا (دمج)", async ({ page, env }) => {
+test("الموظف بيكتب في اليومية ودفعة بعملة تانية بتنزل على نفس السجل: الاتنين بيتحفظوا (دمج)", async ({ page, env }) => {
   await users(env);
-  const id = await env.seedBooking({ room: 604, guest: "Merge Guest", nights: 1, price: 100, paid: 100, settled: true, status: "ملغي" });
-  await env.qRaw("update bookings set refund_pending = true where id = $1", [id]);
-  await env.seedShift("ahmed", { collections: [{ room: 604, amount: 100, bookingId: id }] });
+  const id = await env.seedBooking({ room: 604, guest: "Merge Guest", nights: 1, price: 100 });
+  await env.seedShift("ahmed");
   await page.goto("/");
   await login(page, "ahmed");
   await goTab(page, "اليومية"); await showAllRooms(page);
-  await expect(page.locator("table.cx-table tbody tr", { hasText: "604" }).first()).toBeVisible();
-  // مدير الحجوزات يرد الفلوس دلوقتي (اليومية اتغيّرت من وراء الموظف)
-  const r = await env.api("rawan", "POST", "/rest/v1/rpc/decide_booking_refund", { p_booking: id, p_decision: "refund", p_expected: null, p_method: null });
+  await expect(page.locator("table.cx-table tbody tr", { hasText: "602" }).first()).toBeVisible();
+  // دفعة بالجنيه بتتسجّل دلوقتي من جهاز تاني (اليومية اتغيّرت من وراء الموظف)
+  const r = await env.api("ahmed", "POST", "/rest/v1/rpc/record_booking_payment_fx", { p_booking: id, p_amount: 5000, p_currency: "EGP", p_rate: 50, p_method: "كاش", p_details: {}, p_expected: null, p_note: "تحصيل" });
   expect(r.status).toBe(200);
-  // الموظف يكتب مصروف في نفس اللحظة
+  // الموظف يكتب تحصيل في نفس اللحظة
   const row = page.locator("table.cx-table tbody tr", { hasText: "602" }).first();
   await row.getByPlaceholder("المبلغ").nth(0).fill("25");
   await page.waitForTimeout(2200);
   const [rec] = await env.q("select * from shift_records");
-  expect(Number(rec.rows.find((x) => x.room === 602).expenseAmt)).toBe(25);                 // تعديل الموظف
-  expect(Number(rec.rows.find((x) => x.room === 604).collectionAmt)).toBe(0);               // رد الفلوس (100 - 100) ماضاعش
-  expect(rec.booking_collections).toHaveLength(2);
+  expect(Number(rec.rows.find((x) => x.room === 602).collectionAmt)).toBe(25);              // تعديل الموظف
+  expect(rec.rows.find((x) => x.bookingId === id)).toMatchObject({ collectionAmt: 5000, collectionCurrency: "EGP", fxCovered: 100 });   // الدفعة ماضاعتش
+  expect(rec.booking_collections).toHaveLength(1);
 });

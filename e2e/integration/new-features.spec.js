@@ -138,24 +138,17 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     expect(rows).toHaveLength(2);
     expect(Number(rows.find((r) => r.bookingId === nw.id).collectionAmt)).toBe(200);
     expect(Number(rows.find((r) => r.bookingId === oldId).collectionAmt)).toBe(300);
-    await logout(page);
-
-    // مدير الحجوزات يلغي الحجز القديم ويرد فلوسه: بيتخصم من صف القديم بس
+    // إلغاء الحجز القديم من مدير الحجوزات: مفيش رد - الصفين زي ما هما
     await env.q("update bookings set status = 'ملغي' where id = $1", [oldId]);
-    await login(page, "rawan");
-    await goTab(page, "الحجوزات");
-    const req = guestCard(page, "Previous Guest").getByTestId("refund-request");
-    await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await expect(toast(page)).toContainText("تم رد");
     [rec] = await env.q("select rows from shift_records");
     rows = rec.rows.filter((r) => r.room === 613);
-    expect(Number(rows.find((r) => r.bookingId === oldId).collectionAmt)).toBe(0);
+    expect(Number(rows.find((r) => r.bookingId === oldId).collectionAmt)).toBe(300);
     expect(Number(rows.find((r) => r.bookingId === nw.id).collectionAmt)).toBe(200);
   });
 });
 
-test.describe("مصاريف وإيرادات الفندق في اليومية", () => {
-  test("الموظف يضيف بنود مصاريف/إيرادات فندق: بتدخل في الخزينة والإجماليات والتقارير، وتظهر في الاستعراض", async ({ page, env }) => {
+test.describe("مصاريف الفندق في اليومية (الفندق بيصرف بس)", () => {
+  test("الموظف يضيف بنود مصاريف فندق: بتتخصم من الخزينة وبتدخل الإجماليات والتقارير، ومفيش خانات إيراد", async ({ page, env }) => {
     await users(env);
     await page.goto("/");
     await login(page, "ahmed");
@@ -163,13 +156,12 @@ test.describe("مصاريف وإيرادات الفندق في اليومية", 
     await page.getByRole("button", { name: new RegExp(SHIFT_LABEL[myShiftKey()]) }).click();
     await expect(page.getByText("شيفتك الوحيد المتاح ليك النهارده")).toBeVisible();
     const hotel = page.getByTestId("hotel-rows");
-    await expect(hotel).toContainText("مصاريف وإيرادات الفندق");
+    await expect(hotel).toContainText("مصاريف الفندق");
+    await expect(hotel.getByPlaceholder("مبلغ الإيراد")).toHaveCount(0);     // الفندق مابيستلمش - مفيش إيراد
     const row0 = page.getByTestId("hotel-row-0");
     await row0.locator("select.cx-select").nth(0).selectOption("كهرباء ومياه");
     await row0.getByPlaceholder("بيان المصروف").fill("فاتورة الكهرباء");
     await row0.getByPlaceholder("مبلغ المصروف").fill("120");
-    await row0.getByPlaceholder("بيان الإيراد").fill("إيجار القاعة");
-    await row0.getByPlaceholder("مبلغ الإيراد").fill("500");
     await page.getByTestId("hotel-row-add").click();
     const row1 = page.getByTestId("hotel-row-1");
     await row1.locator("select.cx-select").nth(0).selectOption("نظافة");
@@ -179,21 +171,21 @@ test.describe("مصاريف وإيرادات الفندق في اليومية", 
     await expect.poll(async () => { const r = (await env.q("select hotel_rows from shift_records"))[0]; const x = r?.hotel_rows?.[1]; return x ? `${x.expenseCategory}|${x.expenseCurrency}|${x.expenseAmt}` : null; }, { timeout: 8000 }).toBe("نظافة|USD|30");
     const rec = (await env.q("select * from shift_records"))[0];
     expect(rec.hotel_rows).toHaveLength(2);
-    expect(rec.hotel_rows[0]).toMatchObject({ expenseDesc: "فاتورة الكهرباء", collectionDesc: "إيجار القاعة" });
+    expect(rec.hotel_rows[0]).toMatchObject({ expenseDesc: "فاتورة الكهرباء" });
     expect(Number(rec.hotel_rows[0].expenseAmt)).toBe(120);
-    expect(Number(rec.hotel_rows[0].collectionAmt)).toBe(500);
+    expect(Number(rec.hotel_rows[0].collectionAmt) || 0).toBe(0);
     expect(rec.hotel_rows[1]).toMatchObject({ expenseCategory: "نظافة", expenseCurrency: "USD" });
-    // رصيد الخزينة: 500 - 120 = 380 جنيه، و -30 دولار
+    // رصيد الخزينة: -120 جنيه، و -30 دولار
     const egp = page.locator(`xpath=//div[./div[normalize-space(.)='جنيه (EGP)']]`).last();
-    expect(digits(await egp.innerText())).toContain("رصيدالخزينة380");
+    expect(digits(await egp.innerText())).toContain("رصيدالخزينة-120");
     // قفل الشيفت بيحفظ الإجماليات شاملة بنود الفندق
     await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
     await expect(page.getByText(/أُقفل بواسطة/)).toBeVisible();
     const closed = (await env.q("select * from shift_records"))[0];
     expect(closed.total_expenses).toEqual({ EGP: 120, USD: 30 });
-    expect(closed.total_collections).toEqual({ EGP: 500 });
+    expect(closed.total_collections.EGP || 0).toBe(0);
     expect(closed.by_category).toEqual({ "كهرباء ومياه": { EGP: 120 }, "نظافة": { USD: 30 } });
-    expect(closed.closing_cash).toEqual({ EGP: 380, USD: -30 });
+    expect(closed.closing_cash).toEqual({ EGP: -120, USD: -30 });
     await expect(page.getByTestId("hotel-row-add")).toHaveCount(0);       // اتقفل
     await logout(page);
 
@@ -201,14 +193,13 @@ test.describe("مصاريف وإيرادات الفندق في اليومية", 
     await login(page, "rawan");
     await goTab(page, "التقارير");
     const grid = digits(await page.locator(".cx-report-grid").first().innerText());
-    expect(grid).toContain("500ج");
     expect(grid).toContain("120ج");
     expect(grid).toContain("30$");
     expect(digits(await page.locator("table.cx-table tr", { hasText: "كهرباء ومياه" }).first().innerText())).toContain("120");
     await goTab(page, "اليومية");
     await page.locator('input[type="date"]').fill(shiftDay());
     await page.getByRole("button", { name: SHIFT_LABEL[myShiftKey()] }).click();
-    await expect(page.getByTestId("hotel-rows")).toContainText("فاتورة الكهرباء".length ? "مصاريف وإيرادات الفندق" : "");
+    await expect(page.getByTestId("hotel-rows")).toContainText("مصاريف الفندق");
     await expect(page.getByTestId("hotel-row-0").getByPlaceholder("بيان المصروف")).toHaveValue("فاتورة الكهرباء");
     await expect(page.getByTestId("hotel-row-0").getByPlaceholder("بيان المصروف")).toBeDisabled();
   });
@@ -277,7 +268,7 @@ test.describe("الحجز الملغي وحالة الفلوس", () => {
     const card = page.getByTestId("booking-cancelled").filter({ hasText: "Unpaid Cancelled" });
     await expect(card).toBeVisible();
     await expect(card).toContainText("حجز ملغي");
-    await expect(card.getByTestId("refund-status")).toContainText("ملغي من غير فلوس متحصّلة - مفيش رد مطلوب");
+    await expect(card.getByTestId("refund-status")).toContainText("ملغي من غير فلوس متحصّلة");
     // التصفية
     await expect(page.getByTestId("status-filter-all")).toContainText("(2)");
     await expect(page.getByTestId("status-filter-cancelled")).toContainText("(1)");
@@ -292,40 +283,28 @@ test.describe("الحجز الملغي وحالة الفلوس", () => {
     await expect(boardTile(page, 601)).not.toContainText("Unpaid Cancelled");
   });
 
-  test("حجز ملغي ومدفوع: حالة الفلوس بتتغيّر من 'طلب رد معلّق' لـ'اترد للنزيل' أو 'رُفض الرد' وبتفضل ظاهرة", async ({ page, env }) => {
+  test("حجز ملغي ومدفوع: الفلوس بتفضل في الفندق وبتظهر كده لكل الأدوار، ومفيش أي أزرار رد", async ({ page, env }) => {
     await users(env);
-    const a = await env.seedBooking({ room: 603, guest: "Will Refund", nights: 2, price: 100, paid: 200, settled: true });
-    const b = await env.seedBooking({ room: 604, guest: "Will Keep", nights: 1, price: 100, paid: 100, settled: true });
+    const a = await env.seedBooking({ room: 603, guest: "Kept Two", nights: 2, price: 100, paid: 200, settled: true });
+    const b = await env.seedBooking({ room: 604, guest: "Kept One", nights: 1, price: 100, paid: 100, settled: true });
     await env.seedShift("ahmed", { collections: [{ room: 603, amount: 200, bookingId: a }, { room: 604, amount: 100, bookingId: b }] });
     await page.goto("/");
     await login(page, "rawan");
-    await cancelViaUi(page, "Will Refund");
-    await cancelViaUi(page, "Will Keep");
-    // لسه معلّق
-    await expect(guestCard(page, "Will Refund").getByTestId("refund-request")).toContainText("طلب رد فلوس");
-    // رد
-    const r1 = guestCard(page, "Will Refund").getByTestId("refund-request");
-    await r1.getByRole("button", { name: "رد الفلوس" }).click();
-    await expect(toast(page)).toContainText("تم رد");
-    const s1 = guestCard(page, "Will Refund").getByTestId("refund-status");
-    await expect(s1).toContainText("اترد للنزيل");
-    expect(digits(await s1.innerText())).toContain("200USD");
-    await expect(s1).toContainText("rawan");
-    await expect(guestCard(page, "Will Refund")).toContainText("حجز ملغي");        // لسه ظاهر بعد الرد
-    // رفض
-    const r2 = guestCard(page, "Will Keep").getByTestId("refund-request");
-    await r2.getByRole("button", { name: /رفض الرد/ }).click();
-    await r2.getByTestId("refund-reject-confirm").click();
-    await expect(toast(page)).toContainText("تم رفض الرد");
-    const s2 = guestCard(page, "Will Keep").getByTestId("refund-status");
-    await expect(s2).toContainText("رُفض الرد");
-    expect(digits(await s2.innerText())).toContain("100USD");
-    // الموظف بيشوف نفس الحالة (للعرض)
+    await cancelViaUi(page, "Kept Two");
+    await cancelViaUi(page, "Kept One");
+    for (const [g, amt] of [["Kept Two", "200USD"], ["Kept One", "100USD"]]) {
+      const st = guestCard(page, g).getByTestId("refund-status");
+      await expect(st).toContainText("فضلت في الفندق");
+      expect(digits(await st.innerText())).toContain(amt);
+      await expect(guestCard(page, g)).toContainText("حجز ملغي");
+    }
+    await expect(page.getByRole("button", { name: /رد الفلوس|رفض الرد/ })).toHaveCount(0);
+    expect((await env.q("select count(*)::int n from bookings where refund_pending")).at(0).n).toBe(0);
     await logout(page);
     await login(page, "ahmed");
     await goTab(page, "الحجوزات");
     await page.getByTestId("status-filter-cancelled").click();
-    await expect(guestCard(page, "Will Refund").getByTestId("refund-status")).toContainText("اترد للنزيل");
-    await expect(guestCard(page, "Will Keep").getByTestId("refund-status")).toContainText("رُفض الرد");
+    await expect(guestCard(page, "Kept Two").getByTestId("refund-status")).toContainText("فضلت في الفندق");
+    await expect(guestCard(page, "Kept One").getByTestId("refund-status")).toContainText("فضلت في الفندق");
   });
 });

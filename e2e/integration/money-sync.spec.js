@@ -1,7 +1,7 @@
 // أكواد الأفراد اللي المستخدم بيكتبها، إلغاء الحجز (بدل المسح) وحالة رد الفلوس، الدخول المبكر
 // (عادي وأونلاين) والمغادرة المبكرة وطلب الرد، وإن أي تحصيل بيتسمع في الحجز واليومية والتقرير بنفس الرقم.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh, openRoom, openSec, openMore, payOnBoard } from "../ui";
+import { login, logout, goTab, field, boardTile, roomCard, toast, digits, cairoDate, refresh, openRoom, openSec, openMore, payOnBoard, addExtraOnBoard } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -124,7 +124,7 @@ test.describe("إلغاء الحجز (مش مسح)", () => {
     const card = page.getByTestId("booking-cancelled").filter({ hasText: "Unpaid One" });
     await expect(card).toBeVisible();
     await expect(card).toContainText("حجز ملغي");
-    await expect(card.getByTestId("refund-status")).toContainText("مفيش رد مطلوب");
+    await expect(card.getByTestId("refund-status")).toContainText("ملغي من غير فلوس متحصّلة");
     await expect(card.getByTestId("cancel-booking")).toHaveCount(0);       // مايتلغاش مرتين
     expect((await get(env, "Unpaid One")).status).toBe("ملغي");           // لسه موجود في القاعدة
     await page.getByTestId("status-filter-cancelled").click();
@@ -137,7 +137,7 @@ test.describe("إلغاء الحجز (مش مسح)", () => {
     await expect(page.getByText("Unpaid One").first()).toBeVisible();
   });
 
-  test("إلغاء حجز عليه فلوس: طلب رد فلوس بيتفتح وبيبان قبل القرار، وبعد الرد اليومية والحجز يتطابقوا", async ({ page, env }) => {
+  test("إلغاء حجز عليه فلوس: مفيش رد - الفلوس بتفضل في الفندق، واليومية والحجز متطابقين", async ({ page, env }) => {
     await users(env);
     const id = await env.seedBooking({ room: 603, guest: "Paid Cancel", nights: 2, price: 100, paid: 200, settled: true });
     await env.seedShift("ahmed", { collections: [{ room: 603, amount: 200, bookingId: id }] });
@@ -146,18 +146,14 @@ test.describe("إلغاء الحجز (مش مسح)", () => {
     await login(page, "rawan");
     await goTab(page, "الحجوزات");
     await guestCard(page, "Paid Cancel").getByTestId("cancel-booking").getByRole("button", { name: "إلغاء الحجز" }).click();
-    await guestCard(page, "Paid Cancel").getByRole("button", { name: "تأكيد الإلغاء؟" }).click();
+    await guestCard(page, "Paid Cancel").getByRole("button", { name: /تأكيد الإلغاء؟/ }).click();
+    await expect(toast(page)).toContainText("فضلت في الفندق");
     const card = page.getByTestId("booking-cancelled").filter({ hasText: "Paid Cancel" });
-    await expect(card.getByTestId("refund-request")).toContainText("طلب رد فلوس");
-    expect(digits(await card.getByTestId("refund-request").innerText())).toContain("200USD");
-    expect(await get(env, "Paid Cancel")).toMatchObject({ status: "ملغي", refund_pending: true, amount_paid: 200 });
-    await expectSync(env, { USD: 200 });                  // لسه ماترّدش: الفلوس لسه في اليومية
-    await card.getByRole("button", { name: "رد الفلوس" }).click();
-    await expect(toast(page)).toContainText("تم رد");
-    expect(await get(env, "Paid Cancel")).toMatchObject({ status: "ملغي", refund_pending: false, refund_decision: "refunded", amount_paid: 0 });
-    await expect(card.getByTestId("refund-status")).toContainText("اترد للنزيل");
-    expect(await ledgerByCur(env)).toEqual({});           // اتخصم من اليومية
-    expect(await paidByCur(env)).toEqual({});
+    expect(digits(await card.getByTestId("refund-status").innerText())).toContain("200USD");
+    await expect(card.getByTestId("refund-request")).toHaveCount(0);
+    await expect(card.getByRole("button", { name: /رد الفلوس/ })).toHaveCount(0);
+    expect(await get(env, "Paid Cancel")).toMatchObject({ status: "ملغي", refund_pending: false, amount_paid: 200 });
+    await expectSync(env, { USD: 200 });                  // الفلوس في اليومية زي ما هي
   });
 });
 
@@ -246,9 +242,8 @@ test.describe("الدخول المبكر", () => {
     await expectSync(env, { USD: 40 });
     await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();
     // خدمة إضافية (جولات) من بطاقة الغرفة => متبقي في الفندق والغرفة تحمر لحد ما تتحصّل
-    await roomCard(page).locator("xpath=.//label[contains(.,'جولات')]/following-sibling::input").fill("30");
-    await roomCard(page).getByRole("button", { name: /حفظ الرسوم/ }).click();
-    await expect(toast(page)).toContainText("تم حفظ الرسوم الإضافية");
+    await addExtraOnBoard(page, "جولات", 30);
+    await expect(toast(page)).toContainText("اتضاف جولات");
     await expect(page.getByText(/مشغولة - متبقي فلوس 1/)).toBeVisible();
     expect(digits(await roomCard(page).getByTestId("money-box").innerText())).toContain("30");
     await payOnBoard(page);
@@ -301,7 +296,7 @@ test.describe("المغادرة المبكرة وطلب رد الفلوس", () =
     await roomCard(page).getByRole("button", { name: "تأكيد المغادرة المبكرة؟" }).click();
   }
 
-  test("نزيل 3 ليالي مدفوع كامل قعد ليلة وخرج: بيتحاسب ليلة والباقي طلب رد لمدير الحجوزات، وبعد الرد اليومية تتطابق", async ({ page, env }) => {
+  test("نزيل 3 ليالي مدفوع كامل قعد ليلة وخرج: بيتحاسب ليلة والزيادة بتفضل في الفندق (مفيش رد)", async ({ page, env }) => {
     await users(env);
     const id = await env.seedBooking({ room: 609, guest: "Leaves Early", start: -1, nights: 3, price: 100, paid: 300, settled: true });
     await env.seedShift("ahmed", { collections: [{ room: 609, amount: 300, bookingId: id }] });
@@ -309,21 +304,16 @@ test.describe("المغادرة المبكرة وطلب رد الفلوس", () =
     await login(page, "ahmed");
     await leave(page, 609);
     await expect(toast(page)).toContainText("اتحاسب على 1 ليلة من 3");
-    await expect(toast(page)).toContainText("طلب رد فلوس");
-    expect(await get(env, "Leaves Early")).toMatchObject({ checkout: cairoDate(0), total_room: 100, left_early: true, status: "تم تسجيل الخروج", refund_pending: true, amount_paid: 300 });
+    expect(digits(await toast(page).innerText())).toContain("الـ200USDالزيادةالمدفوعةفضلتفيالفندق");
+    expect(await get(env, "Leaves Early")).toMatchObject({ checkout: cairoDate(0), total_room: 100, left_early: true, status: "تم تسجيل الخروج", refund_pending: false, amount_paid: 300 });
     await expectSync(env, { USD: 300 });
     await logout(page);
     await login(page, "rawan");
     await goTab(page, "الحجوزات");
-    const req = guestCard(page, "Leaves Early").getByTestId("refund-request");
-    expect(digits(await req.innerText())).toContain("200USD");
-    await req.getByRole("button", { name: "رد الفلوس" }).click();
-    await expect(toast(page)).toContainText("تم رد");
-    expect(await get(env, "Leaves Early")).toMatchObject({ amount_paid: 100, refund_pending: false, refund_decision: "refunded", refunded_amount: 200 });
-    await expectSync(env, { USD: 100 });
+    await expect(page.getByTestId("refund-request")).toHaveCount(0);
   });
 
-  test("نزيل دخل النهارده ومشي في نفس اليوم (ليلتين محجوزين): الحد الأدنى ليلة والباقي طلب رد", async ({ page, env }) => {
+  test("نزيل دخل النهارده ومشي في نفس اليوم (ليلتين محجوزين): الحد الأدنى ليلة والباقي بيفضل في الفندق", async ({ page, env }) => {
     await users(env);
     const id = await env.seedBooking({ room: 611, guest: "Same Day", start: 0, nights: 2, price: 100, paid: 200, settled: true });
     await env.seedShift("ahmed", { collections: [{ room: 611, amount: 200, bookingId: id }] });
@@ -331,8 +321,8 @@ test.describe("المغادرة المبكرة وطلب رد الفلوس", () =
     await login(page, "ahmed");
     await leave(page, 611);
     await expect(toast(page)).toContainText("الحد الأدنى ليلة");
-    expect(await get(env, "Same Day")).toMatchObject({ checkin: cairoDate(0), checkout: cairoDate(0), total_room: 100, left_early: true, refund_pending: true });
-    await expect(toast(page)).toContainText("طلب رد فلوس");
+    expect(await get(env, "Same Day")).toMatchObject({ checkin: cairoDate(0), checkout: cairoDate(0), total_room: 100, left_early: true, refund_pending: false, amount_paid: 200 });
+    await expect(toast(page)).toContainText("فضلت في الفندق");
   });
 
   test("مغادرة مبكرة والمدفوع مايزيدش عن الليالي اللي قعدها: مفيش رد، ولو لسه عليه فلوس بيتقال", async ({ page, env }) => {
@@ -343,7 +333,8 @@ test.describe("المغادرة المبكرة وطلب رد الفلوس", () =
     await page.goto("/");
     await login(page, "ahmed");
     await leave(page, 612);
-    await expect(toast(page)).toContainText("مفيش رد");
+    await expect(toast(page)).toContainText("اتحاسب على 1 ليلة من 3");
+    await expect(toast(page)).not.toContainText("فضلت في الفندق");
     expect(await get(env, "Exact Paid")).toMatchObject({ total_room: 100, refund_pending: false, amount_paid: 100 });
     await leave(page, 613);
     await expect(toast(page)).toContainText("لسه متبقي على النزيل");

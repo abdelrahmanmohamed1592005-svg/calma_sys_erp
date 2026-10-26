@@ -160,3 +160,12 @@ export async function waitLedgerSaved(page) {
   await page.waitForFunction(() => !window.__calmaPendingWrites && !window.__calmaBusyCount, null, { timeout: 15000 });
   await page.waitForTimeout(150);
 }
+
+/* إضافة خدمة من بطاقة الغرفة المفتوحة: السعر بيتضاف على إجمالي الخدمة (مش بيستبدله) */
+export async function addExtraOnBoard(page, label, amount) {
+  const card = page.getByTestId("booking-card");
+  await card.getByTestId("extra-add-kind").selectOption({ label });
+  await card.getByTestId("extra-add-amount").fill(String(amount));
+  await card.getByTestId("extra-add").click();
+  await waitIdle(page);
+}

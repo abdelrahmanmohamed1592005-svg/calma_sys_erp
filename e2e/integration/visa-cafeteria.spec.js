@@ -4,7 +4,7 @@
   (الحجز + صفوف اليومية + كافيتيريا الاستاف) ومن اللي بيظهر في اللوحة واليومية والتقرير.
 */
 import { test, expect } from "../fixtures";
-import { login, logout, claimShift, addBooking, goTab, boardTile, roomCard, toast, refresh, digits, cairoDate, openRoom, payOnBoard, showAllRooms, waitIdle } from "../ui";
+import { login, logout, claimShift, addBooking, goTab, boardTile, roomCard, toast, refresh, digits, cairoDate, openRoom, payOnBoard, showAllRooms, waitIdle, addExtraOnBoard } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -53,7 +53,7 @@ test.describe("الفيزا: كل دفعة بوسيلتها وتفاصيلها",
     // اليومية: صف الغرفة بالفيزا + خانة آخر 4 أرقام + كارت عهدة الفيزا بتفاصيل العملية
     await goTab(page, "اليومية");
     const trow = page.locator("table.cx-table tbody tr", { hasText: "601" }).first();
-    await expect(trow.locator("select.cx-select").nth(2)).toHaveValue("فيزا");
+    await expect(trow.locator("select.cx-select").nth(0)).toHaveValue("فيزا");
     await expect(trow.locator('input[placeholder="آخر 4 أرقام الكارت"]')).toHaveValue("4242");
     const tx = page.getByTestId("method-transactions");
     await expect(tx).toContainText("****4242");
@@ -150,9 +150,8 @@ test.describe("الحالة تلقائية (مفيش علامة متحصّل و�
     await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();
     // رسوم إضافية بعد الدفع الكامل: بتتحرك الحالة لوحدها لمتبقي من غير أي قفل
     await page.evaluate(() => document.querySelectorAll('[data-testid="booking-card"] details').forEach((d) => { d.open = true; }));
-    await page.locator("xpath=//label[contains(.,'جولات')]/following-sibling::input").fill("40");
-    await page.getByRole("button", { name: /حفظ الرسوم/ }).click();
-    await expect(toast(page)).toContainText("تم حفظ الرسوم");
+    await addExtraOnBoard(page, "جولات", 40);
+    await expect(toast(page)).toContainText("اتضاف جولات");
     await expect(state()).toContainText("دفع جزئي");
     await expect(page.getByText(/مشغولة - متبقي فلوس 1/)).toBeVisible();
     // تمديد ليلة: المتبقي بيزيد لوحده
@@ -205,9 +204,8 @@ test.describe("كافيتيريا النزلاء: بتتسجّل لوحدها ف
     await goTab(page, "لوحة الغرف"); await openRoom(page, 607);
     expect(digits(await roomCard(page).getByTestId("money-box").innerText())).toContain("150");
     await payOnBoard(page, { amount: 70, method: "فيزا", last4: "5555" });
-    await expect(toast(page)).toContainText("منها 50 كافيتيريا".replace("50", "50").replace(/50/, "50")).catch(async () => {
-      expect(digits(await toast(page).innerText())).toContain("منها50كافيتيريا");
-    });
+    await expect(toast(page)).toContainText("كافيتيريا");
+    expect(digits(await toast(page).innerText())).toMatch(/منها50(USD)?كافيتيريا/);
     const b = await booking(env, "Cafe Guest");
     expect(Number(b.amount_paid)).toBe(70);
     expect(b.extras).toMatchObject({ cafeteria: 50, cafeteriaPaid: 50 });

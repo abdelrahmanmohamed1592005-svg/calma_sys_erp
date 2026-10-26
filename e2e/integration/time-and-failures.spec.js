@@ -23,9 +23,9 @@ test.describe("الأوفر تايم", () => {
     await page.goto("/");
     await login(page, "ahmed");
     await goTab(page, "اليومية"); await showAllRooms(page);
-    await page.locator("table.cx-table tbody tr", { hasText: "602" }).first().getByPlaceholder("المبلغ").nth(0).fill("15");
+    await page.locator("table.cx-table tbody tr", { hasText: "602" }).first().getByPlaceholder("المبلغ").fill("15");
     await waitLedgerSaved(page);
-    expect(Number((await rec(env, "ahmed")).rows.find((r) => r.room === 602).expenseAmt)).toBe(15);
+    expect(Number((await rec(env, "ahmed")).rows.find((r) => r.room === 602).collectionAmt)).toBe(15);
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 601);
     await payOnBoard(page);
@@ -40,7 +40,7 @@ test.describe("الأوفر تايم", () => {
     const r = await rec(env, "ahmed");
     expect(r.closed).toBe(true);
     expect(r.closed_by).toContain("إقفال تلقائي - انتهى هامش الأوفر تايم");
-    expect(r.closing_cash).toMatchObject({ EGP: -15, USD: 100 });
+    expect(r.closing_cash).toMatchObject({ EGP: 15, USD: 100 });
     await expect(page.locator("table.cx-table tbody tr").first().locator("input").first()).toBeDisabled();
     // مفيش حجز جديد ولا تحصيل بعد انتهاء الشيفت
     await goTab(page, "الحجوزات");

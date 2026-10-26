@@ -3,7 +3,7 @@
   على غرف قليلة عشان التعارضات تحصل فعلاً. بعد كل عملية بنتأكد من قواعد لازم تفضل صحيحة
   مهما كان الترتيب:
    1) صافي التحصيل في اليومية (بالدولار) = مجموع المدفوع على كل الحجوزات
-   2) حالة "متحصّل" معناها المدفوع غطّى الإجمالي، وطلب الرد معناه فيه فلوس زيادة فعلاً
+   2) حالة "متحصّل" معناها المدفوع غطّى الإجمالي، ومفيش طلبات رد فلوس خالص (v39)
    3) مفيش حجزين نشطين متداخلين على نفس الغرفة
    4) مفيش مدفوع سالب
   وفي الآخر التقرير ولوحة الغرف بيطابقوا القاعدة.
@@ -15,20 +15,25 @@ const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math
 const ROOMS = [601, 602, 603, 604];
 const grand = (b) => Number(b.total_room) + Object.values(b.extras || {}).reduce((s, v) => s + (Number(v) || 0), 0) + (b.early_checkin?.applied ? Number(b.early_checkin.fee) || 0 : 0);
 const isOnline = (b) => !!b.payment_details?.onlinePaid;
-// اللي الفندق نفسه بيحصّله (الأونلاين: من غير سعر الغرفة اللي اتدفع للمنصة)
-const hotelTotal = (b) => (isOnline(b) ? grand(b) - Number(b.total_room) : grand(b));
+// اللي الفندق نفسه بيحصّله (الأونلاين: من غير سعر الغرفة اللي اتدفع للمنصة - وقت الحجز؛ التمديد بعده بيتحصّل في الفندق)
+const onlineCover = (b) => Math.min(Number(b.total_room), b.payment_details?.onlineRoomAmount != null ? Number(b.payment_details.onlineRoomAmount) : Number(b.total_room));
+const hotelTotal = (b) => (isOnline(b) ? grand(b) - onlineCover(b) : grand(b));
 const nightsBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
 
 async function snapshot(env) {
   const bookings = await env.q("select * from bookings order by created_at");
   const recs = await env.q("select rows, cafeteria_rows from shift_records");
-  const sumUsd = (list) => list.reduce((a, x) => a + (x.collectionCurrency === "USD" ? Number(x.collectionAmt) || 0 : 0), 0);
+  // دفعة بعملة تانية: بتتحسب على الحجز بالمقابل بعملته (fxCovered)، واليومية/الخزينة بالعملة الفعلية
+  const sumUsd = (list) => list.reduce((a, x) => a + (x.fxBookingCurrency === "USD" ? Number(x.fxCovered) || 0 : x.collectionCurrency === "USD" ? Number(x.collectionAmt) || 0 : 0), 0);
   const ledger = recs.reduce((s, r) => s + sumUsd(r.rows) + sumUsd(r.cafeteria_rows || []), 0);
+  const cash = (list, cur) => list.reduce((a, x) => a + (x.collectionCurrency === cur ? Number(x.collectionAmt) || 0 : 0), 0);
+  const usdCash = recs.reduce((s, r) => s + cash(r.rows, "USD") + cash(r.cafeteria_rows || [], "USD"), 0);
+  const egpCash = recs.reduce((s, r) => s + cash(r.rows, "EGP") + cash(r.cafeteria_rows || [], "EGP"), 0);
   // كافيتيريا الاستاف (بالجنيه): اللي اتسدّد فعلاً لازم يساوي اللي دخل اليومية (صفوف الكافيتيريا kind=staff)
   const staffRows = await env.q("select amount, paid_amount from staff_cafeteria");
   const staffPaid = staffRows.reduce((a, x) => a + Number(x.paid_amount), 0);
   const staffLedger = recs.reduce((s, r) => s + (r.cafeteria_rows || []).filter((x) => x.kind === "staff" && x.collectionCurrency === "EGP").reduce((a, x) => a + Number(x.collectionAmt || 0), 0), 0);
-  return { bookings, ledger, staffRows, staffPaid, staffLedger };
+  return { bookings, ledger, staffRows, staffPaid, staffLedger, usdCash, egpCash };
 }
 async function checkInvariants(env, label) {
   const { bookings, ledger, staffRows, staffPaid, staffLedger } = await snapshot(env);
@@ -39,10 +44,7 @@ async function checkInvariants(env, label) {
   for (const b of bookings) {
     expect(Number(b.amount_paid), `${label}: مدفوع غير سالب (${b.guest_name})`).toBeGreaterThanOrEqual(0);
     if (b.settled && !isOnline(b)) expect(Number(b.amount_paid), `${label}: متحصّل لازم يكون مغطّى (${b.guest_name})`).toBeGreaterThanOrEqual(grand(b) - 0.005);
-    if (b.refund_pending) {
-      const due = b.status === "ملغي" ? Number(b.amount_paid) : Number(b.amount_paid) - grand(b);
-      expect(due, `${label}: طلب رد لازم يبقى فيه فلوس (${b.guest_name})`).toBeGreaterThan(0);
-    }
+    expect(b.refund_pending, `${label}: مفيش طلبات رد فلوس (${b.guest_name})`).toBe(false);
   }
   const active = bookings.filter((b) => b.status !== "ملغي" && b.checkout > b.checkin);
   for (const r of ROOMS) {
@@ -93,6 +95,11 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         await expect(roomCard(staff)).toContainText(b.guest_name);
         // دفعة كاملة (المبلغ فاضي = كل المتبقي) بوسيلة عشوائية - فيزا بآخر 4 أرقام، تحويل باسم ورقم
         const method = pick(["كاش", "فيزا", "فودافون كاش", "تحويل بنكي / انستاباي"]);
+        if (rnd() < 0.35) {                                   // بالجنيه بسعر صرف (المبلغ فاضي = كل المتبقي × السعر)
+          log.push("  (EGP @50)");
+          await staff.getByTestId("pay-panel").getByTestId("pay-currency").selectOption("EGP");
+          await staff.getByTestId("pay-panel").getByTestId("pay-rate").fill("50");
+        }
         await payOnBoard(staff, { method, last4: method === "فيزا" ? "4242" : undefined, senderName: method === "فودافون كاش" || method.startsWith("تحويل") ? "Sender" : undefined, phone: method === "فودافون كاش" || method.startsWith("تحويل") ? "01012345678" : undefined });
         await expect(toast(staff)).toContainText("الحجز مدفوع بالكامل");
       },
@@ -181,18 +188,22 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         await c0.getByRole("button", { name: "تأكيد الإلغاء؟" }).click();
         await expect(toast(res)).toContainText("تم إلغاء الحجز");
       },
-      async decide() {
+      async move() {
         const { bookings } = await snapshot(env);
-        const c = bookings.filter((b) => b.refund_pending);
+        const c = bookings.filter((b) => b.status !== "ملغي" && b.status !== "تم تسجيل الخروج" && b.checkin <= today && today < b.checkout);
         if (!c.length) return false;
         const b = pick(c);
-        const refund = rnd() < 0.6;
-        log.push(`${refund ? "refund" : "keep"} ${b.guest_name}`);
-        await goTab(res, "الحجوزات");
-        const req = res.locator(".cx-card", { hasText: b.guest_name }).last().getByTestId("refund-request");
-        await req.getByRole("button", { name: refund ? "رد الفلوس" : /رفض الرد/ }).click();
-        if (!refund) await req.getByTestId("refund-reject-confirm").click();
-        await expect(toast(res)).toContainText(refund ? "تم رد" : "تم رفض الرد");
+        const free = ROOMS.filter((r) => r !== b.room && !overlaps(bookings, r, b.checkin, b.checkout, b.id));
+        if (!free.length) return false;
+        const to = pick(free);
+        log.push(`move ${b.guest_name} ${b.room}->${to}`);
+        await goTab(res, "لوحة الغرف"); await openRoom(res, b.room);
+        await expect(roomCard(res)).toContainText(b.guest_name);
+        await roomCard(res).getByTestId("move-open").click();
+        await res.getByTestId("move-room").selectOption(String(to));
+        await res.getByTestId("move-confirm").click();
+        await waitIdle(res);
+        await expect(toast(res)).toContainText("اتنقل");
       },
       async shorten() {
         const { bookings } = await snapshot(env);
@@ -211,7 +222,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
 
     // البداية: كام حجز عشان العمليات تلاقي حاجة تشتغل عليها
     for (let i = 0; i < 3; i++) { await ops.add(); await sync(); await checkInvariants(env, `بداية ${i}`); }
-    const weights = [["add", 3], ["collect", 3], ["extend", 2], ["cancel", 1], ["decide", 3], ["shorten", 2], ["earlyCheckin", 2], ["earlyLeave", 2], ["addOnline", 1], ["staffAdd", 2], ["staffSettle", 2]];
+    const weights = [["add", 3], ["collect", 3], ["extend", 2], ["cancel", 1], ["move", 2], ["shorten", 2], ["earlyCheckin", 2], ["earlyLeave", 2], ["addOnline", 1], ["staffAdd", 2], ["staffSettle", 2]];
     const bag = weights.flatMap(([k, w]) => Array(w).fill(k));
     for (let step = 0; step < 20; step++) {
       const op = pick(bag);
@@ -222,14 +233,14 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
     }
 
     // ---- النهاية: التقرير ولوحة الغرف بيطابقوا قاعدة البيانات ----
-    const { bookings, ledger, staffLedger } = await snapshot(env);
+    const { bookings, usdCash, egpCash } = await snapshot(env);
     await goTab(res, "التقارير");
     const card = res.locator(".cx-report-grid .cx-card", { hasText: "إجمالي التحصيل" }).first();
     const shown = digits(await card.innerText()).replace("إجماليالتحصيل", "");
     // التقرير بيجمع كل العملات: الجنيه (سداد الاستاف) الأول ثم الدولار (الحجوزات)
     const parts = [];
-    if (staffLedger !== 0) parts.push(`${staffLedger}ج`);
-    if (ledger !== 0) parts.push(`${ledger}$`);
+    if (Math.round(egpCash * 100) !== 0) parts.push(`${Math.round(egpCash * 100) / 100}ج`);
+    if (Math.round(usdCash * 100) !== 0) parts.push(`${Math.round(usdCash * 100) / 100}$`);
     expect(shown, `التقرير (${log.join(" | ")})`).toBe(parts.length ? parts.join("+") : "0");
     await goTab(res, "لوحة الغرف");
     const live = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout);

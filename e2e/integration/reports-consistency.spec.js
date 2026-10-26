@@ -49,9 +49,8 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
   await env.seedBooking({ anchor: "shift", room: 611, guest: "Cash Direct", start: 0, nights: 1, price: 100, total: 100, paid: 100, settled: true, method: "كاش", currency: "USD" });
   await env.seedBooking({ anchor: "shift", room: 609, guest: "Owes Money", start: -1, nights: 3, price: 100, total: 300 + 100, paid: 100, currency: "USD" });
   await env.seedBooking({ anchor: "shift", room: 613, guest: "Cancelled Kept", start: 0, nights: 1, price: 80, total: 80, paid: 80, method: "فيزا", currency: "EUR", status: "ملغي" });
-  await env.qRaw("update bookings set refund_decision = 'kept' where guest_name = 'Cancelled Kept'");
-  await env.seedBooking({ anchor: "shift", room: 610, guest: "Pending Refund", start: 0, nights: 1, price: 60, total: 60, paid: 60, currency: "USD", status: "ملغي" });
-  await env.qRaw("update bookings set refund_pending = true where guest_name = 'Pending Refund'");
+  // ملغي ومدفوع كاش (الكاش بيتعدّ من اليومية بس - مش تحصيل مباشر زيادة)
+  await env.seedBooking({ anchor: "shift", room: 610, guest: "Cancelled Cash", start: 0, nights: 1, price: 60, total: 60, paid: 60, currency: "USD", status: "ملغي" });
 
   // ---- الأرقام المتوقعة (مستقلة) ----
   const ledgerCollections = {};      // من اليوميات فقط
@@ -110,10 +109,8 @@ test("تقرير اليوم والفترة: كل رقم مطابق للحساب�
   expect(outstanding).toContain("مبالغمتبقيةعلىنزلاء(2)");
   expect(outstanding).toContain("300USD");
   expect(outstanding).toContain("50USD");
-  // رد معلّق
-  const pend = digits(await page.locator(".cx-card", { hasText: "طلبات رد فلوس منتظرة" }).last().innerText());
-  expect(pend).toContain("(1)");
-  expect(pend).toContain("60USD");
+  // مفيش رد فلوس في النظام
+  await expect(page.getByText(/طلبات رد فلوس/)).toHaveCount(0);
   // متابعة الشيفتات
   await expect(page.getByText(/مشكلة في الدرج/)).toBeVisible();
 

@@ -22,19 +22,19 @@ test("إقفال الشيفت مرفوض لو فيه تحصيل فيزا من غ
   await page.goto("/"); await login(page, "ahmed"); await claimShift(page); await showAllRooms(page);
   // صف يدوي: فيزا 100 دولار من غير تفاصيل
   const r = lrow(page, 602);
-  await r.locator("select.cx-select").nth(2).selectOption("فيزا");
-  await r.getByPlaceholder("المبلغ").nth(1).fill("100");
-  await r.locator("select.cx-select").nth(3).selectOption("USD");
+  await r.locator("select.cx-select").nth(0).selectOption("فيزا");
+  await r.getByPlaceholder("المبلغ").fill("100");
+  await r.locator("select.cx-select").nth(1).selectOption("USD");
   await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
   await expect(toast(page)).toContainText("مينفعش تقفل الشيفت");
   await expect(toast(page)).toContainText("آخر 4 أرقام");
   await expect.poll(async () => (await shift(env)).closed, { timeout: 5000 }).toBe(false);
   // تحويل من غير رقم برضه مرفوض
-  await r.locator("select.cx-select").nth(2).selectOption("فودافون كاش");
+  await r.locator("select.cx-select").nth(0).selectOption("فودافون كاش");
   await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
   await expect(toast(page)).toContainText("رقم التليفون");
   // نرجع فيزا ونكتب آخر 4 أرقام: الإقفال بيعدّي
-  await r.locator("select.cx-select").nth(2).selectOption("فيزا");
+  await r.locator("select.cx-select").nth(0).selectOption("فيزا");
   await r.locator('input[placeholder="آخر 4 أرقام الكارت"]').fill("6789");
   await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
   await expect(page.getByText(/أُقفل بواسطة/)).toBeVisible();
@@ -83,7 +83,7 @@ test("حجز أونلاين: خدمات اتحصّلت بالفيزا بتروح
   expect(nonZero(rec.rows)).toEqual([expect.objectContaining({ collectionAmt: 20, collectionMethod: "كاش" })]);
 });
 
-test("إلغاء حجز مدفوع بالفيزا: طلب رد، ومدير الحجوزات يرد بالفيزا فيتخصم من صف الفيزا وبيرجّع الصفر (من غير ما يلمس الكاش)", async ({ page, env }) => {
+test("إلغاء حجز مدفوع بالفيزا: مفيش رد - الفلوس بتفضل في صف الفيزا بنفس الكارت، والحجز الملغي مش متحصّل", async ({ page, env }) => {
   await users(env);
   await env.seedShift("ahmed");
   await env.seedBooking({ room: 605, guest: "Cancel Visa", nights: 1, price: 100 });
@@ -97,21 +97,16 @@ test("إلغاء حجز مدفوع بالفيزا: طلب رد، ومدير ال
   await res.getByTestId("status-filter-all").click();
   const card = res.locator(".cx-card", { hasText: "Cancel Visa" }).last();
   await card.getByRole("button", { name: "إلغاء الحجز" }).click();
-  await card.getByRole("button", { name: "تأكيد الإلغاء؟" }).click();
-  await expect(toast(res)).toContainText("تم إلغاء الحجز");
-  const req = res.locator(".cx-card", { hasText: "Cancel Visa" }).last().getByTestId("refund-request");
-  await req.locator("select").selectOption("فيزا");
-  await req.getByRole("button", { name: "رد الفلوس" }).click();
-  await expect(toast(res)).toContainText("تم رد");
+  await card.getByRole("button", { name: /تأكيد الإلغاء؟/ }).click();
+  await expect(toast(res)).toContainText("فضلت في الفندق");
   const b = await booking(env, "Cancel Visa");
-  expect(Number(b.amount_paid)).toBe(0);
-  expect(b.refund_decision).toBe("refunded");
+  expect(Number(b.amount_paid)).toBe(100);
+  expect(b.refund_pending).toBe(false);
   expect(b.settled).toBe(false);                      // ملغي = مش متحصّل
-  const rec = await shift(env);
-  const rows = rec.rows.filter((r) => r.room === 605);
-  expect(rows.filter((r) => r.collectionMethod === "كاش" && Number(r.collectionAmt) !== 0)).toHaveLength(0);
-  expect(rows.reduce((s, r) => s + Number(r.collectionAmt || 0), 0)).toBe(0);
-  expect(rows.find((r) => r.collectionMethod === "فيزا").paymentDetails.senderNumber).toBe("5050");   // نفس الصف/نفس الكارت
+  const rows = (await shift(env)).rows.filter((r) => r.room === 605 && Number(r.collectionAmt) !== 0);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ collectionMethod: "فيزا", collectionAmt: 100 });
+  expect(rows[0].paymentDetails.senderNumber).toBe("5050");
 });
 
 test("مديونية استاف من يوم قبل: الموظف النهارده يسدّد، بيتسجّل في يوميته، والمديونية بتتقفل", async ({ page, env }) => {
@@ -184,66 +179,23 @@ test("كل الأدوار بتشوف حالة الدفع (مدفوع بالكا�
   }
 });
 
-/* رد الفلوس بيتقسّم على وسائل الدفع الأصلية (فيزا 100 بكارت + كاش 50) */
-async function paidVisaAndCash(page, env, guest, room) {
+/* حجز مدفوع فيزا 100 + كاش 50 واتلغى: الوسيلتين بيفضلوا زي ما هما في اليومية (مفيش رد فلوس) */
+test("حجز دافع فيزا 100 + كاش 50 واتلغى: الصفين بيفضلوا في اليومية والمدفوع 150 على الحجز الملغي", async ({ page, env }) => {
+  await users(env);
   await env.seedShift("ahmed");
-  await env.seedBooking({ room, guest, nights: 1, price: 150 });
+  await env.seedBooking({ room: 607, guest: "Split Kept", nights: 1, price: 150 });
   await page.goto("/"); await login(page, "ahmed");
-  await goTab(page, "لوحة الغرف"); await openRoom(page, room);
+  await goTab(page, "لوحة الغرف"); await openRoom(page, 607);
   await payOnBoard(page, { amount: 100, method: "فيزا", last4: "1111" });
-  await expect.poll(async () => Number((await booking(env, guest)).amount_paid), { timeout: 8000 }).toBe(100);
+  await expect.poll(async () => Number((await booking(env, "Split Kept")).amount_paid), { timeout: 8000 }).toBe(100);
   await payOnBoard(page, { amount: 50, method: "كاش" });
-  await expect.poll(async () => Number((await booking(env, guest)).amount_paid), { timeout: 8000 }).toBe(150);
-}
-async function cancelAndRefund(env, guest, method) {
-  const res = await env.newSession();
-  await res.goto("/"); await login(res, "rawan");
-  await goTab(res, "الحجوزات");
-  await res.getByTestId("status-filter-all").click();
-  const card = res.locator(".cx-card", { hasText: guest }).last();
-  await card.getByRole("button", { name: "إلغاء الحجز" }).click();
-  await card.getByRole("button", { name: "تأكيد الإلغاء؟" }).click();
-  await expect(toast(res)).toContainText("تم إلغاء الحجز");
-  const req = res.locator(".cx-card", { hasText: guest }).last().getByTestId("refund-request");
-  await req.locator("select").selectOption(method);
-  await req.getByRole("button", { name: "رد الفلوس" }).click();
-  await expect(toast(res)).toContainText("تم رد");
-}
-const net = (rows, m, num) => rows.filter((r) => r.collectionMethod === m && (num === undefined || r.paymentDetails?.senderNumber === num)).reduce((s, r) => s + Number(r.collectionAmt || 0), 0);
-
-test("رد فلوس حجز دافع فيزا 100 + كاش 50 بالفيزا: الفيزا بترجع 100 على نفس الكارت والكاش 50 (مفيش وسيلة بتنزل سالب)", async ({ page, env }) => {
-  await users(env);
-  await paidVisaAndCash(page, env, "Split Refund", 607);
-  await cancelAndRefund(env, "Split Refund", "فيزا");
+  await expect.poll(async () => Number((await booking(env, "Split Kept")).amount_paid), { timeout: 8000 }).toBe(150);
+  await env.q("update bookings set status = 'ملغي' where guest_name = 'Split Kept'");
   const rows = (await shift(env)).rows.filter((r) => r.room === 607);
-  expect(net(rows, "فيزا", "1111")).toBe(0);
-  expect(net(rows, "كاش")).toBe(0);
-  expect(rows.reduce((s, r) => s + Number(r.collectionAmt || 0), 0)).toBe(0);
-  expect(rows.every((r) => Number(r.collectionAmt) === 0 || Number(r.collectionAmt) > 0)).toBe(true);
-  const b = await booking(env, "Split Refund");
-  expect(Number(b.amount_paid)).toBe(0);
-  expect(Number(b.refunded_amount)).toBe(150);
-});
-
-test("نفس الحالة بالكاش: الكاش 50 الأول ثم الفيزا 100 (ومفيش رصيد سالب في أي وسيلة)", async ({ page, env }) => {
-  await users(env);
-  await paidVisaAndCash(page, env, "Split Refund Cash", 608);
-  await cancelAndRefund(env, "Split Refund Cash", "كاش");
-  const rows = (await shift(env)).rows.filter((r) => r.room === 608);
-  expect(net(rows, "كاش")).toBe(0);
-  expect(net(rows, "فيزا", "1111")).toBe(0);
-});
-
-test("رد بوسيلة ماتدفعش بيها (دفع كاش والرد بتحويل): قرار المدير بيمشي والرد كله على التحويل", async ({ page, env }) => {
-  await users(env);
-  await env.seedShift("ahmed");
-  await env.seedBooking({ room: 609, guest: "Cash Then Transfer", nights: 1, price: 100 });
-  await page.goto("/"); await login(page, "ahmed");
-  await goTab(page, "لوحة الغرف"); await openRoom(page, 609);
-  await payOnBoard(page, { method: "كاش" });
-  await expect.poll(async () => Number((await booking(env, "Cash Then Transfer")).amount_paid), { timeout: 8000 }).toBe(100);
-  await cancelAndRefund(env, "Cash Then Transfer", "تحويل بنكي / انستاباي");
-  const rows = (await shift(env)).rows.filter((r) => r.room === 609);
-  expect(net(rows, "كاش")).toBe(100);
-  expect(net(rows, "تحويل بنكي / انستاباي")).toBe(-100);
+  const net = (m) => rows.filter((r) => r.collectionMethod === m).reduce((s, r) => s + Number(r.collectionAmt || 0), 0);
+  expect(net("فيزا")).toBe(100);
+  expect(net("كاش")).toBe(50);
+  const b = await booking(env, "Split Kept");
+  expect(b).toMatchObject({ refund_pending: false });
+  expect(Number(b.amount_paid)).toBe(150);
 });

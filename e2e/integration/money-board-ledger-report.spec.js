@@ -45,8 +45,8 @@ test("تحصيل كامل من لوحة الغرف: الحجز + اليومية 
   // اليومية: صف الغرفة 601 فيه 200 فيزا دولار
   await goTab(page, "اليومية");
   const ledgerRow = page.locator("table.cx-table tbody tr", { hasText: "601" }).first();
-  await expect(ledgerRow.locator('input[type="number"]').nth(1)).toHaveValue("200");
-  await expect(ledgerRow.locator("select.cx-select").nth(2)).toHaveValue("فيزا");
+  await expect(ledgerRow.locator('input[type="number"]').nth(0)).toHaveValue("200");
+  await expect(ledgerRow.locator("select.cx-select").nth(0)).toHaveValue("فيزا");
 
   // مدير الحجوزات يشوف التقرير: إجمالي التحصيل 200 دولار وفيزا 200 دولار
   await logout(page);

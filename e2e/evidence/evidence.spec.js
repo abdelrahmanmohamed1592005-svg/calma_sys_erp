@@ -97,7 +97,7 @@ test("EV3 ضغط مزدوج: دفعة واحدة بس", async ({ page, env }) =>
   await page.goto("/"); await login(page, "ahmed");
   await goTab(page, "لوحة الغرف"); await openRoom(page, 601);
   const btn = page.getByTestId("pay-panel").getByTestId("pay-record");
-  await btn.dblclick(); await btn.click({ force: true }).catch(() => {});
+  await btn.dblclick(); await btn.click({ force: true, timeout: 1500 }).catch(() => {});
   await waitIdle(page); await page.waitForTimeout(500);
   await r.step("بعد 3 ضغطات", { db: "select amount_paid from bookings" });
   expect((await env.q("select amount_paid from bookings where id=$1", [id]))[0].amount_paid).toBe(100);
@@ -150,11 +150,11 @@ test("EV5 تعافي من فشل: السيرفر 500 ثم إعادة المحا�
   r.save();
 });
 
-test("EV6 إلغاء مدفوع ← طلب رد ← قرار الريسيبشن: الحجز واليومية والتقرير بنفس الرقم", async ({ page, env }) => {
+test("EV6 إلغاء مدفوع: مفيش رد فلوس - الحجز واليومية والتقرير بيفضلوا بنفس الرقم، ودالة الرد مقفولة", async ({ page, env }) => {
   await base(env);
-  const id = await env.seedBooking({ room: 601, guest: "Refund Guest", nights: 2, price: 100 });
+  const id = await env.seedBooking({ room: 601, guest: "Kept Guest", nights: 2, price: 100 });
   await env.seedShift("ahmed");
-  const r = recorder(page, env, "EV6-refund");
+  const r = recorder(page, env, "EV6-cancel-kept");
   // الموظف يحصّل 200 (100 كاش + 100 فيزا) ثم الحجز يتلغي
   await page.goto("/"); await login(page, "ahmed");
   await goTab(page, "لوحة الغرف"); await openRoom(page, 601);
@@ -164,27 +164,20 @@ test("EV6 إلغاء مدفوع ← طلب رد ← قرار الريسيبشن:
   r.api.push({ method: "PATCH", path: "bookings (cancel by reservations)", request: { status: "ملغي" }, status: cr.status, response: redact(cr.body) });
   const cancelled = await env.q("select status, refund_pending, amount_paid from bookings where id=$1", [id]);
   r.api.push({ method: "NOTE", path: "state after cancel (DB trigger)", request: null, status: 0, response: cancelled });
-  expect(cancelled[0].refund_pending).toBe(true);
+  expect(cancelled[0]).toEqual({ status: "ملغي", refund_pending: false, amount_paid: 200 });
   await page.evaluate(() => localStorage.clear()); await page.goto("/"); await login(page, "rawan");
   await goTab(page, "الحجوزات"); await page.getByTestId("status-filter-all").click();
-  const req = page.locator(".cx-card", { hasText: "Refund Guest" }).last().getByTestId("refund-request");
-  await expect(req.getByTestId("refund-paid-breakdown")).toContainText("فيزا");
-  await r.step("طلب الرد قبل القرار");
-  await req.getByTestId("refund-approve").click();
-  await waitIdle(page); await page.waitForTimeout(500);
-  await r.step("بعد الموافقة", { db: "select amount_paid, refund_pending, status from bookings" });
-  const rpc = r.api.filter((a) => a.path === "rpc/decide_booking_refund");
-  expect(rpc).toHaveLength(1); expect(rpc[0].status).toBe(200);
-  const [b] = await env.q("select amount_paid, refund_pending from bookings where id=$1", [id]);
-  expect(b).toEqual({ amount_paid: 0, refund_pending: false });
+  const card = page.locator(".cx-card", { hasText: "Kept Guest" }).last();
+  await expect(card.getByTestId("refund-status")).toContainText("فضلت في الفندق");
+  await expect(card.getByTestId("refund-request")).toHaveCount(0);
+  await r.step("الحجز الملغي - الفلوس فضلت في الفندق");
   const [rec] = await env.q("select rows from shift_records");
   const net = {}; for (const x of rec.rows.filter((x) => x.bookingId === id)) net[x.collectionMethod] = (net[x.collectionMethod] || 0) + Number(x.collectionAmt || 0);
-  expect(Object.values(net).reduce((a, v) => a + v, 0)).toBe(0);
-  expect(Object.values(net).every((v) => v >= 0)).toBe(true);        // مفيش وسيلة نزلت سالب
-  // قرار ثاني على نفس الطلب (تكرار) لازم يتقفل
+  expect(net).toEqual({ "كاش": 100, "فيزا": 100 });
+  // دالة رد الفلوس القديمة مقفولة على الكل
   const again = await env.api("rawan", "POST", "/rest/v1/rpc/decide_booking_refund", { p_booking: id, p_decision: "refund", p_expected: null, p_method: "كاش" });
-  r.api.push({ method: "POST", path: "rpc/decide_booking_refund (duplicate)", request: { p_decision: "refund" }, status: again.status, response: again.body });
+  r.api.push({ method: "POST", path: "rpc/decide_booking_refund (closed)", request: { p_decision: "refund" }, status: again.status, response: again.body });
   expect(again.status).toBeGreaterThanOrEqual(400);
-  expect((await env.q("select amount_paid from bookings where id=$1", [id]))[0].amount_paid).toBe(0);
+  expect((await env.q("select amount_paid from bookings where id=$1", [id]))[0].amount_paid).toBe(200);
   r.save({ netByMethod: net });
 });

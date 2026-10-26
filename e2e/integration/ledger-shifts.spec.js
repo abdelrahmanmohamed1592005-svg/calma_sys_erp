@@ -14,7 +14,6 @@ const ORDER = ["morning", "evening", "night"];
 const prevOf = (day, key) => { const i = ORDER.indexOf(key); if (i > 0) return { day, key: ORDER[i - 1] }; const d = new Date(day + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - 1); return { day: d.toISOString().slice(0, 10), key: "night" }; };
 const roomRow = (page, num) => page.locator("table.cx-table tbody tr", { hasText: String(num) }).first();
 // مبيعات/مصاريف الكافيتيريا المباشرة بقت في قسم الكافيتيريا (مش صف في جدول الغرف)
-const cafeRow = (page) => page.getByTestId("cafeteria-direct");
 const ledger = async (env) => (await env.q("select * from shift_records where staff_username = 'ahmed'"))[0];
 const waitSaved = async (page) => { await page.waitForFunction(() => !window.__calmaPendingWrites && !window.__calmaBusyCount, null, { timeout: 15000 }); await page.waitForTimeout(150); };   // استنى الكتابة المعلّقة تتبعت (مش وقت ثابت)
 // بلوك العملة/الوسيلة في ملخص اليومية (أعمق div فيه العنوان بالظبط)
@@ -79,25 +78,27 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     await login(page, "ahmed");
     await claimShift(page); await showAllRooms(page);
 
-    // مصروف 50 جنيه (نظافة) + تحصيل كاش 300 دولار على غرفة 601 + تحصيل كافيتيريا 20 جنيه
+    // تحصيل كاش 300 دولار على غرفة 601 (الغرف مابتصرفش - مفيش خانة مصروف) + مصروف فندق 50 جنيه (نظافة)
     const r601 = roomRow(page, 601);
-    await r601.locator("select.cx-select").nth(0).selectOption("نظافة");
-    await r601.getByPlaceholder("البيان", { exact: true }).fill("مناديل");
-    await r601.getByPlaceholder("المبلغ").nth(0).fill("50");
+    await expect(r601.getByPlaceholder("البيان", { exact: true })).toHaveCount(0);
+    await expect(r601.getByPlaceholder("المبلغ")).toHaveCount(1);
     await r601.getByPlaceholder("بيان التحصيل").fill("حجز مباشر");
-    await r601.getByPlaceholder("المبلغ").nth(1).fill("300");
-    await r601.locator("select.cx-select").nth(3).selectOption("USD");
-    const cafe = cafeRow(page);
-    await cafe.getByPlaceholder("المبلغ").nth(1).fill("20");
-    await page.getByRole("spinbutton").filter({ hasNot: page.locator("x") }).first();   // (لا شيء - بس بنتأكد إن الصفحة لسه شغالة)
+    await r601.getByPlaceholder("المبلغ").fill("300");
+    await r601.locator("select.cx-select").nth(1).selectOption("USD");
+    const h0 = page.getByTestId("hotel-row-0");
+    await h0.locator("select.cx-select").nth(0).selectOption("نظافة");
+    await h0.getByPlaceholder("بيان المصروف").fill("مناديل");
+    await h0.getByPlaceholder("مبلغ المصروف").fill("50");
+    await expect(page.getByTestId("cafeteria-direct")).toHaveCount(0);       // خانة الكافيتيريا المباشرة اتشالت
     await waitSaved(page);
 
     let rec = await ledger(env);
     const row = rec.rows.find((r) => r.room === 601);
-    expect(row).toMatchObject({ expenseCategory: "نظافة", expenseDesc: "مناديل", collectionDesc: "حجز مباشر", collectionCurrency: "USD", collectionMethod: "كاش" });
-    expect(Number(row.expenseAmt)).toBe(50);
+    expect(row).toMatchObject({ collectionDesc: "حجز مباشر", collectionCurrency: "USD", collectionMethod: "كاش" });
+    expect(Number(row.expenseAmt) || 0).toBe(0);
     expect(Number(row.collectionAmt)).toBe(300);
-    expect(Number(rec.cafeteria.collectionAmt)).toBe(20);
+    expect(rec.hotel_rows[0]).toMatchObject({ expenseCategory: "نظافة", expenseDesc: "مناديل" });
+    expect(Number(rec.hotel_rows[0].expenseAmt)).toBe(50);
 
     // العهدة: 1000 جنيه
     const egpCard = block(page, "جنيه (EGP)");
@@ -106,8 +107,8 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     rec = await ledger(env);
     expect(rec.handover.EGP).toBe(1000);
 
-    // الأرصدة المعروضة: EGP = 1000 + 20 - 50 = 970 ، USD = 300
-    expect(digits(await egpCard.innerText())).toMatch(/رصيدالخزينة970/);
+    // الأرصدة المعروضة: EGP = 1000 - 50 = 950 ، USD = 300
+    expect(digits(await egpCard.innerText())).toMatch(/رصيدالخزينة950/);
     const usdCard = block(page, "دولار (USD)");
     expect(digits(await usdCard.innerText())).toMatch(/رصيدالخزينة300/);
 
@@ -122,10 +123,10 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     await expect(page.getByText(/أُقفل بواسطة/)).toBeVisible();
     rec = await ledger(env);
     expect(rec).toMatchObject({ closed: true, closed_by: "أحمد" });
-    expect(rec.closing_cash).toEqual({ EGP: 970, USD: 300 });
+    expect(rec.closing_cash).toEqual({ EGP: 950, USD: 300 });
     expect(rec.total_expenses).toEqual({ EGP: 50 });
-    expect(rec.total_collections).toEqual({ EGP: 20, USD: 300 });
-    expect(rec.cash_collections).toEqual({ EGP: 20, USD: 300 });
+    expect(rec.total_collections).toEqual({ USD: 300 });
+    expect(rec.cash_collections).toEqual({ USD: 300 });
     expect(rec.by_category).toEqual({ "نظافة": { EGP: 50 } });
     await expect(roomRow(page, 601).locator("input").first()).toBeDisabled();
     await expect(page.getByRole("button", { name: /إقفال الشيفت/ })).toHaveCount(0);
@@ -135,7 +136,7 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     await refresh(page);
     await expect(page.locator(".cx-kpi", { hasText: "تحصيل اليوم" })).not.toContainText("…");   // استنى تحميل المؤشرات
     const kpi = digits(await page.locator(".cx-kpi", { hasText: "تحصيل اليوم" }).innerText());
-    expect(kpi).toMatch(/300USD\+20EGP|20EGP\+300USD/);
+    expect(kpi).toContain("300USD");
     expect(digits(await page.locator(".cx-kpi", { hasText: "شيفتات تحتاج متابعة" }).innerText())).toContain("1");
     expect(digits(await page.locator(".cx-kpi", { hasText: "مصاريف اليوم" }).innerText())).toContain("50EGP");
     await logout(page);
@@ -145,7 +146,6 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     await goTab(page, "التقارير");
     const grid = digits(await page.locator(".cx-report-grid").first().innerText());
     expect(grid).toContain("300$");
-    expect(grid).toContain("20ج");
     expect(grid).toContain("50ج");
     await expect(page.getByText(/العد ناقص 10 جنيه/)).toBeVisible();
     expect(digits(await page.locator("table.cx-table tr", { hasText: "نظافة" }).first().innerText())).toContain("50");
@@ -161,12 +161,13 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     // الموظف يكمّل تاني بعد إعادة الفتح، وبيقفل من جديد بالأرقام الجديدة
     await login(page, "ahmed");
     await goTab(page, "اليومية"); await showAllRooms(page);
-    await roomRow(page, 602).getByPlaceholder("المبلغ").nth(0).fill("10");
+    await page.getByTestId("hotel-row-add").click();
+    await page.getByTestId("hotel-row-1").getByPlaceholder("مبلغ المصروف").fill("10");
     await waitSaved(page);
     await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
     await expect(page.getByText(/أُقفل بواسطة/)).toBeVisible();
     rec = await ledger(env);
-    expect(rec.closing_cash).toEqual({ EGP: 960, USD: 300 });
+    expect(rec.closing_cash).toEqual({ EGP: 940, USD: 300 });
     expect(rec.total_expenses).toEqual({ EGP: 60 });
   });
 
@@ -178,8 +179,8 @@ test.describe("تعبئة اليومية وأرصدتها وقفلها", () => {
     await page.getByRole("button", { name: /متابعة عهدة/ }).click();            // فيزا / EGP (الافتراضي)
     await block(page, "فيزا (EGP)").locator('input[type="number"]').first().fill("500");
     const r603 = roomRow(page, 603);
-    await r603.locator("select.cx-select").nth(2).selectOption("فيزا");
-    await r603.getByPlaceholder("المبلغ").nth(1).fill("120");
+    await r603.locator("select.cx-select").nth(0).selectOption("فيزا");
+    await r603.getByPlaceholder("المبلغ").fill("120");
     await waitSaved(page);
     const rec = await ledger(env);
     expect(rec.method_handover).toEqual({ "فيزا": { EGP: 500 } });

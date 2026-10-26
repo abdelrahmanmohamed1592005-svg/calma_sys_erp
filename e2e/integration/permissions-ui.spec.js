@@ -1,7 +1,7 @@
 // الصلاحيات من الواجهة لكل دور، فوق قاعدة بيانات حقيقية (RLS + triggers):
 // اللي الشاشة بتعرضه واللي بتسمح بيه، واللي قاعدة البيانات نفسها بتفرضه.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, field, tab, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, openRoom, openMore } from "../ui";
+import { login, logout, goTab, field, tab, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, shiftDay, myShiftKey, openRoom, openMore, addExtraOnBoard } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -126,10 +126,9 @@ test.describe("مدير الحجوزات", () => {
     await openRoom(page, 601);
     await expect(roomCard(page)).toContainText("Res Edit");
     await expect(page.getByTestId("pay-record")).toHaveCount(0);   // التحصيل مش شغله
-    await expect(field(page, "غسيل")).toHaveCount(0);
-    await field(page, "جولات").fill("25");
-    await page.getByRole("button", { name: /حفظ الرسوم/ }).click();
-    await expect(toast(page)).toContainText("تم حفظ الرسوم الإضافية");
+    await expect(roomCard(page).getByTestId("extra-add-kind").locator("option", { hasText: "غسيل" })).toHaveCount(0);
+    await addExtraOnBoard(page, "جولات", 25);
+    await expect(toast(page)).toContainText("اتضاف جولات 25");
     let [b] = await env.q("select * from bookings where id = $1", [id]);
     expect(b.extras).toMatchObject({ tours: 25, laundry: 0 });
 
@@ -174,7 +173,7 @@ test.describe("مدير الحجوزات", () => {
     // التوست بتاع الأول ممكن يكون لسه ظاهر وقت الإلغاء التاني: نستنى القاعدة
     await expect.poll(async () => (await env.q("select count(*)::int n from bookings where status = 'ملغي'"))[0].n, { timeout: 8000 }).toBe(2);
     expect(await env.q("select guest_name, status, refund_pending from bookings where guest_name in ('Cancel Me','Keep Me') order by guest_name")).toEqual([
-      { guest_name: "Cancel Me", status: "ملغي", refund_pending: false }, { guest_name: "Keep Me", status: "ملغي", refund_pending: true }]);
+      { guest_name: "Cancel Me", status: "ملغي", refund_pending: false }, { guest_name: "Keep Me", status: "ملغي", refund_pending: false }]);   // مفيش رد: الفلوس فضلت في الفندق
   });
 });
 
@@ -192,7 +191,7 @@ test.describe("المحاسبة والمدير العام (عرض فقط)", () =
       await openRoom(page, 601);
       await expect(roomCard(page)).toContainText("View Only");
       await expect(page.getByText("عرض فقط لدورك الحالي")).toBeVisible();
-      for (const name of [/تسجيل تحصيل/, /تمديد الحجز/, /تعديل تفاصيل الحجز/, /حفظ الرسوم/]) await expect(page.getByRole("button", { name })).toHaveCount(0);
+      for (const name of [/تسجيل تحصيل/, /تمديد الحجز/, /تعديل تفاصيل الحجز/, /إضافة الخدمة/, /حفظ التصحيح/]) await expect(page.getByRole("button", { name })).toHaveCount(0);
 
       await goTab(page, "الحجوزات");
       await expect(page.getByText("View Only").first()).toBeVisible();

@@ -249,7 +249,7 @@ test.describe("هجمات مباشرة على الـ API (من غير الواج
     }
   });
 
-  test("مدير الحجوزات: ممنوع يلمس التحصيل أو يرد فلوس بره قرار الرد أو يمسح سجل", async ({ env }) => {
+  test("مدير الحجوزات: ممنوع يلمس التحصيل أو يرد فلوس أو يمسح سجل", async ({ env }) => {
     await users(env);
     const id = await env.seedBooking({ room: 601, guest: "Target", nights: 2, price: 100, paid: 100 });
     const A = (m, p, b) => env.api("rawan", m, p, b);
@@ -261,6 +261,7 @@ test.describe("هجمات مباشرة على الـ API (من غير الواج
     expect(denied(await A("DELETE", `/rest/v1/bookings?id=eq.${id}`))).toBe(true);        // عليه فلوس
     expect(denied(await A("DELETE", `/rest/v1/activity_log`))).toBe(true);
     expect(denied(await A("PATCH", `/rest/v1/shift_records`, { closed: true }))).toBe(true);
+    expect(denied(await A("POST", "/rest/v1/rpc/decide_booking_refund", { p_booking: id, p_decision: "refund" }))).toBe(true);   // رد الفلوس اتقفل (v39)
     const ok = await A("PATCH", `/rest/v1/bookings?id=eq.${id}`, { notes: "ملاحظة" });
     expect(ok.status).toBe(200);
   });
