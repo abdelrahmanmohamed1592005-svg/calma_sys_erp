@@ -13,6 +13,8 @@ import { defineConfig } from "@playwright/test";
 */
 export default defineConfig({
   testDir: "e2e",
+  // اختبارات رد الفلوس القديمة (اتشال من النظام في v39): لو الملف القديم فضل في الريبو بعد الرفع، مايتشغّلش
+  testIgnore: ["**/refund-reception.spec.js"],
   globalSetup: "./e2e/globalSetup.js",
   timeout: 30_000,
   expect: { timeout: 7_000 },
