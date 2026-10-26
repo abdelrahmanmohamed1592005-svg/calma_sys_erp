@@ -118,6 +118,7 @@ Supabase Dashboard ← **Table Editor** ← اختار جدول (`bookings`, `sh
      --dbname="postgresql://postgres.NEW-REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres" \
      backup.dump
    ```
+   - لو ظهر خطأ واحد بس `unrecognized configuration parameter "transaction_timeout"` وبعده `errors ignored on restore: 1`، ده مش مشكلة: معناه إن `pg_restore` اللي على جهازك نسخته أحدث من قاعدة البيانات. ده إعداد للجلسة بس، والبيانات كلها اترجعت. أي خطأ تاني لازم يتراجع.
    - لو ظهرت أخطاء عن جداول `auth.*` (بسبب اختلاف نسخ Supabase)، استرجع `public` بس، واعمل حسابات الدخول من جديد من شاشة "إدارة المستخدمين" بنفس أسماء المستخدمين (حسابات `profiles` مرتبطة بـ `auth.users`، فلو `auth` ماتسترجعش لازم تتعمل من الأول بنفس الـ username).
 5. انشر الـ Edge Functions على المشروع الجديد (`supabase link` ثم `supabase functions deploy create-user` و`reset-password`).
 6. غيّر `VITE_SUPABASE_URL` و`VITE_SUPABASE_ANON_KEY` في إعدادات Vercel لقيم المشروع الجديد، وأعد النشر.
