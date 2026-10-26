@@ -7,7 +7,8 @@ on:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    # مثبّتة على 24.04: ubuntu-latest بقت 26.04 و Playwright 1.56 مابيدعمهاش (وبيجي عليها pg_dump أحدث من سيرفر Postgres 16)
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -51,10 +52,16 @@ jobs:
         run: node scripts/dr-drill.mjs
       - name: Dependency audit (production dependencies, high+)
         run: npm audit --omit=dev --audit-level=high
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-      - name: Browser + real-database integration tests
-        run: npx playwright test --workers=2
+      # اختبارات المتصفح بتشتغل جوه الـ image الرسمية بتاعة Playwright (نفس نسخة الحزمة 1.56.1، والمتصفح والمكتبات جاهزين فيها)،
+      # عشان لو GitHub غيّر نظام الـ runner تاني (زي ما حصل مع ubuntu-latest = 26.04) الاختبارات ماتقعش بسبب "OS not supported".
+      # --network host: الـ container بيوصل لخدمة Postgres على localhost:5432 زي باقي الخطوات.
+      - name: Browser + real-database integration tests (inside the official Playwright image)
+        run: |
+          docker run --rm --network host --ipc host \
+            -v "$PWD":/work -w /work \
+            -e CI=true -e E2E_PG_ADMIN_URL -e DATABASE_URL -e PGPASSWORD \
+            mcr.microsoft.com/playwright:v1.56.1-noble \
+            npx playwright test --workers=2
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
