@@ -78,10 +78,21 @@ try {
   sqlfile(DST, "supabase/tests/stub_supabase.sql"); sqlfile(DST, "supabase/schema.sql");     // الخطوة ٢ في docs/BACKUP.md
   await (async () => { const c = new pg.Client({ connectionString: url(DST) }); await c.connect(); await c.query("truncate table public.rooms cascade"); await c.end(); })();   // خطوة ٤ في docs/BACKUP.md
   t = t0();
-  let restoreWarn = "";
+  let restoreWarn = "", restoreIgnored = "";
   try { execFileSync("pg_restore", ["--data-only", "--disable-triggers", "--no-owner", "-d", url(DST), dump], { stdio: ["ignore", "pipe", "pipe"] }); }
-  catch (e) { restoreWarn = String(e.stderr || e.message).split("\n").slice(0, 6).join(" | "); }
-  out.steps.restore = { seconds: sec(t), warnings: restoreWarn || null };
+  catch (e) {
+    // pg_dump/pg_restore أحدث من السيرفر (مثلاً عميل 17 وسيرفر 16) بيكتب في أول الملف "SET transaction_timeout = 0"
+    // واللي السيرفر الأقدم مايعرفهوش. ده إعداد للجلسة بس ومالوش علاقة بالبيانات - بنسجّله ومانعتبرهوش فشل.
+    // أي خطأ تاني (أو عدد أخطاء أكبر من الحالة دي) بيفضل فشل.
+    const lines = String(e.stderr || e.message).split("\n").map((l) => l.trim()).filter(Boolean);
+    const isBenign = (l) => /unrecognized configuration parameter "transaction_timeout"/.test(l) || /^Command was: SET transaction_timeout = 0;?$/.test(l);
+    const benignErrors = lines.filter((l) => /unrecognized configuration parameter "transaction_timeout"/.test(l)).length;
+    const ignoredCount = Number((lines.find((l) => /errors ignored on restore: \d+/.test(l)) || "").match(/(\d+)\s*$/)?.[1] || 0);
+    const other = lines.filter((l) => !isBenign(l) && !/errors ignored on restore: \d+/.test(l));
+    if (other.length === 0 && benignErrors > 0 && ignoredCount === benignErrors) restoreIgnored = lines.join(" | ");
+    else restoreWarn = lines.slice(0, 6).join(" | ");
+  }
+  out.steps.restore = { seconds: sec(t), warnings: restoreWarn || null, ...(restoreIgnored ? { ignoredClientServerVersionNotice: restoreIgnored } : {}) };
 
   const dst = new pg.Pool({ connectionString: url(DST), max: 4, options: "-c timezone=UTC" }); dst.on("error", () => {});
   const fpDst = await fingerprint(dst);
