@@ -9,7 +9,7 @@
   وفي الآخر التقرير ولوحة الغرف بيطابقوا القاعدة.
 */
 import { test, expect } from "../fixtures";
-import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom, payOnBoard, waitIdle } from "../ui";
+import { login, goTab, field, boardTile, roomCard, toast, refresh, digits, cairoDate, addBooking, openRoom, payOnBoard, waitIdle, addExtraOnBoard } from "../ui";
 
 const mulberry32 = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const ROOMS = [601, 602, 603, 604];
@@ -18,6 +18,11 @@ const isOnline = (b) => !!b.payment_details?.onlinePaid;
 // اللي الفندق نفسه بيحصّله (الأونلاين: من غير سعر الغرفة اللي اتدفع للمنصة - وقت الحجز؛ التمديد بعده بيتحصّل في الفندق)
 const onlineCover = (b) => Math.min(Number(b.total_room), b.payment_details?.onlineRoomAmount != null ? Number(b.payment_details.onlineRoomAmount) : Number(b.total_room));
 const hotelTotal = (b) => (isOnline(b) ? grand(b) - onlineCover(b) : grand(b));
+// خدمات بالجنيه على حجز بالدولار (كل عملة لوحدها من غير تحويل)
+const otherTotal = (b) => ["laundry", "cafeteria", "tours", "pickup"].reduce((a, k) => a + (Number(b.other_charges?.EGP?.[k]) || 0), 0);
+const otherPaid = (b) => Number(b.other_paid?.EGP) || 0;
+const otherDue = (b) => Math.max(0, otherTotal(b) - otherPaid(b));
+const hasDue = (b) => hotelTotal(b) > Number(b.amount_paid) + 0.005 || otherDue(b) > 0.005;
 const nightsBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
 
 async function snapshot(env) {
@@ -33,17 +38,22 @@ async function snapshot(env) {
   const staffRows = await env.q("select amount, paid_amount from staff_cafeteria");
   const staffPaid = staffRows.reduce((a, x) => a + Number(x.paid_amount), 0);
   const staffLedger = recs.reduce((s, r) => s + (r.cafeteria_rows || []).filter((x) => x.kind === "staff" && x.collectionCurrency === "EGP").reduce((a, x) => a + Number(x.collectionAmt || 0), 0), 0);
-  return { bookings, ledger, staffRows, staffPaid, staffLedger, usdCash, egpCash };
+  // تحصيل خدمات الجنيه على الحجوزات (مش كافيتيريا الاستاف) = مجموع other_paid بالجنيه
+  const egpBookings = recs.reduce((s, r) => s + [...r.rows, ...(r.cafeteria_rows || [])].filter((x) => x.bookingId && x.collectionCurrency === "EGP").reduce((a, x) => a + Number(x.collectionAmt || 0), 0), 0);
+  return { bookings, ledger, staffRows, staffPaid, staffLedger, usdCash, egpCash, egpBookings };
 }
 async function checkInvariants(env, label) {
-  const { bookings, ledger, staffRows, staffPaid, staffLedger } = await snapshot(env);
+  const { bookings, ledger, staffRows, staffPaid, staffLedger, egpBookings } = await snapshot(env);
   const paidSum = bookings.reduce((s, b) => s + Number(b.amount_paid), 0);
   expect(ledger, `${label}: صافي اليومية = مجموع المدفوع`).toBeCloseTo(paidSum, 2);
+  expect(egpBookings, `${label}: تحصيل الجنيه في اليومية = المدفوع بالجنيه على الحجوزات`).toBeCloseTo(bookings.reduce((s, b) => s + otherPaid(b), 0), 2);
   expect(staffLedger, `${label}: سداد الاستاف في اليومية = المدفوع على استهلاكهم`).toBeCloseTo(staffPaid, 2);
   for (const e of staffRows) expect(Number(e.paid_amount), `${label}: مدفوع الاستاف مايزيدش عن المبلغ`).toBeLessThanOrEqual(Number(e.amount) + 0.005);
   for (const b of bookings) {
     expect(Number(b.amount_paid), `${label}: مدفوع غير سالب (${b.guest_name})`).toBeGreaterThanOrEqual(0);
     if (b.settled && !isOnline(b)) expect(Number(b.amount_paid), `${label}: متحصّل لازم يكون مغطّى (${b.guest_name})`).toBeGreaterThanOrEqual(grand(b) - 0.005);
+    if (b.settled) expect(otherDue(b), `${label}: متحصّل لازم خدمات الجنيه تكون مغطّية (${b.guest_name})`).toBeLessThan(0.005);
+    expect(otherPaid(b), `${label}: مدفوع الجنيه مايزيدش عن خدماته (${b.guest_name})`).toBeLessThanOrEqual(otherTotal(b) + 0.005);
     expect(b.refund_pending, `${label}: مفيش طلبات رد فلوس (${b.guest_name})`).toBe(false);
   }
   const active = bookings.filter((b) => b.status !== "ملغي" && b.checkout > b.checkin);
@@ -87,7 +97,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
       },
       async collect() {
         const { bookings } = await snapshot(env);
-        const c = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout && hotelTotal(b) > Number(b.amount_paid) + 0.005);
+        const c = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout && hasDue(b));
         if (!c.length) return false;
         const b = pick(c);
         log.push(`collect ${b.guest_name}`);
@@ -95,28 +105,25 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         await expect(roomCard(staff)).toContainText(b.guest_name);
         // دفعة كاملة (المبلغ فاضي = كل المتبقي) بوسيلة عشوائية - فيزا بآخر 4 أرقام، تحويل باسم ورقم
         const method = pick(["كاش", "فيزا", "فودافون كاش", "تحويل بنكي / انستاباي"]);
-        if (rnd() < 0.35) {                                   // بالجنيه بسعر صرف (المبلغ فاضي = كل المتبقي × السعر)
-          log.push("  (EGP @50)");
-          await staff.getByTestId("pay-panel").getByTestId("pay-currency").selectOption("EGP");
-          await staff.getByTestId("pay-panel").getByTestId("pay-rate").fill("50");
-        }
+        // لو عليه دولار وجنيه: بنختار عملة (المبلغ فاضي = كل المتبقي بالعملة دي)
+        const usdDue = hotelTotal(b) > Number(b.amount_paid) + 0.005;
+        const useEgp = otherDue(b) > 0.005 && (!usdDue || rnd() < 0.5);
+        if (usdDue && otherDue(b) > 0.005) { log.push(useEgp ? "  (EGP)" : "  (USD)"); await staff.getByTestId("pay-panel").getByTestId("pay-currency").selectOption(useEgp ? "EGP" : "USD"); }
         await payOnBoard(staff, { method, last4: method === "فيزا" ? "4242" : undefined, senderName: method === "فودافون كاش" || method.startsWith("تحويل") ? "Sender" : undefined, phone: method === "فودافون كاش" || method.startsWith("تحويل") ? "01012345678" : undefined });
-        await expect(toast(staff)).toContainText("الحجز مدفوع بالكامل");
+        await expect(toast(staff)).toContainText("تم تسجيل");
       },
-      async earlyCheckin() {
+      async egpService() {
         const { bookings } = await snapshot(env);
-        const c = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout && !b.early_checkin?.applied);
+        const c = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout);
         if (!c.length) return false;
         const b = pick(c);
-        const fee = pick([20, 40]), now = rnd() < 0.6;
-        log.push(`early ${b.guest_name} ${fee} ${now ? "collect" : "later"}`);
+        const svc = pick(["غسيل", "كافيتيريا", "بيك أب"]), amt = pick([50, 120, 200]);
+        log.push(`egpService ${b.guest_name} ${svc} ${amt}`);
         await goTab(staff, "لوحة الغرف"); await openRoom(staff, b.room);
         await expect(roomCard(staff)).toContainText(b.guest_name);
-        await staff.getByTestId("early-fee").fill(String(fee));
-        if (!now) await staff.getByTestId("early-collect").uncheck();
-        else await staff.getByTestId("early-method").selectOption("كاش");
-        await staff.getByTestId("early-apply").click();
-        await expect(toast(staff)).toContainText("تم تسجيل الدخول المبكر");
+        await roomCard(staff).getByTestId("extra-add-currency").selectOption("EGP");
+        await addExtraOnBoard(staff, svc, amt);
+        await expect(toast(staff)).toContainText(`${amt} EGP`);
       },
       async earlyLeave() {
         const { bookings } = await snapshot(env);
@@ -177,13 +184,15 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
       },
       async cancel() {
         const { bookings } = await snapshot(env);
-        const c = bookings.filter((b) => b.status !== "ملغي");
+        // حجز خلص (تم تسجيل الخروج) مالوش زرار إلغاء
+        const c = bookings.filter((b) => b.status !== "ملغي" && b.status !== "تم تسجيل الخروج");
         if (!c.length) return false;
         const b = pick(c);
         log.push(`cancel ${b.guest_name} paid ${b.amount_paid}`);
         await goTab(res, "الحجوزات");
         await res.getByTestId("status-filter-all").click();
-        const c0 = res.locator(".cx-card", { hasText: b.guest_name }).last();
+        // الاسم بالظبط (G1 مش G10)
+        const c0 = res.locator(".cx-card").filter({ has: res.getByText(b.guest_name, { exact: true }) }).last();
         await c0.getByRole("button", { name: "إلغاء الحجز" }).click();
         await c0.getByRole("button", { name: "تأكيد الإلغاء؟" }).click();
         await expect(toast(res)).toContainText("تم إلغاء الحجز");
@@ -213,7 +222,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
         const newCo = cairoDate(nightsBetween(today, b.checkin) + pick(Array.from({ length: nightsBetween(b.checkin, b.checkout) - 1 }, (_, i) => i + 1)));
         log.push(`shorten ${b.guest_name} -> ${newCo}`);
         await goTab(res, "الحجوزات");
-        await res.locator(".cx-card", { hasText: b.guest_name }).last().locator("button").first().click();
+        await res.locator(".cx-card").filter({ has: res.getByText(b.guest_name, { exact: true }) }).last().locator("button").first().click();
         await field(res, "تاريخ الخروج").fill(newCo);
         await res.getByRole("button", { name: /حفظ الحجز/ }).click();
         await expect(res.locator(".cx-card[data-calma-editing]")).toHaveCount(0);
@@ -222,7 +231,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
 
     // البداية: كام حجز عشان العمليات تلاقي حاجة تشتغل عليها
     for (let i = 0; i < 3; i++) { await ops.add(); await sync(); await checkInvariants(env, `بداية ${i}`); }
-    const weights = [["add", 3], ["collect", 3], ["extend", 2], ["cancel", 1], ["move", 2], ["shorten", 2], ["earlyCheckin", 2], ["earlyLeave", 2], ["addOnline", 1], ["staffAdd", 2], ["staffSettle", 2]];
+    const weights = [["add", 3], ["collect", 3], ["extend", 2], ["cancel", 1], ["move", 2], ["shorten", 2], ["egpService", 2], ["earlyLeave", 2], ["addOnline", 1], ["staffAdd", 2], ["staffSettle", 2]];
     const bag = weights.flatMap(([k, w]) => Array(w).fill(k));
     for (let step = 0; step < 20; step++) {
       const op = pick(bag);
@@ -245,7 +254,7 @@ for (const seed of [11, 2024, 77, 5, 313, 9001]) {
     await goTab(res, "لوحة الغرف");
     const live = bookings.filter((b) => b.status !== "ملغي" && b.checkin <= today && today < b.checkout);
     const rooms = new Set(live.map((b) => b.room));
-    const unpaid = [...rooms].filter((r) => { const b = live.find((x) => x.room === r); return !(Number(b.amount_paid) >= hotelTotal(b) - 0.005); }).length;
+    const unpaid = [...rooms].filter((r) => { const b = live.find((x) => x.room === r); return hasDue(b); }).length;
     await expect(res.getByText(new RegExp(`مشغولة - متبقي فلوس ${unpaid}\\b`))).toBeVisible();
     await expect(res.getByText(new RegExp(`مشغولة - متحصّلة ${rooms.size - unpaid}\\b`))).toBeVisible();
     // غرف نزيلها غادر مبكرًا النهارده (متحسبة من الحجز نفسه) ومفيش عليها نزيل ساكن دلوقتي

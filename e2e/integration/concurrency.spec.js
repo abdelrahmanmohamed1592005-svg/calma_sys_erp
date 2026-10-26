@@ -129,13 +129,14 @@ test("نقل نزيلين لنفس الغرفة من جهازين: التاني 
 test("الموظف بيكتب في اليومية ودفعة بعملة تانية بتنزل على نفس السجل: الاتنين بيتحفظوا (دمج)", async ({ page, env }) => {
   await users(env);
   const id = await env.seedBooking({ room: 604, guest: "Merge Guest", nights: 1, price: 100 });
+  await env.q(`update bookings set other_charges = '{"EGP":{"laundry":5000,"cafeteria":0,"tours":0,"pickup":0}}'::jsonb where id = $1`, [id]);
   await env.seedShift("ahmed");
   await page.goto("/");
   await login(page, "ahmed");
   await goTab(page, "اليومية"); await showAllRooms(page);
   await expect(page.locator("table.cx-table tbody tr", { hasText: "602" }).first()).toBeVisible();
   // دفعة بالجنيه بتتسجّل دلوقتي من جهاز تاني (اليومية اتغيّرت من وراء الموظف)
-  const r = await env.api("ahmed", "POST", "/rest/v1/rpc/record_booking_payment_fx", { p_booking: id, p_amount: 5000, p_currency: "EGP", p_rate: 50, p_method: "كاش", p_details: {}, p_expected: null, p_note: "تحصيل" });
+  const r = await env.api("ahmed", "POST", "/rest/v1/rpc/record_booking_payment_other", { p_booking: id, p_amount: 5000, p_currency: "EGP", p_method: "كاش", p_details: {}, p_expected: null, p_note: "تحصيل" });
   expect(r.status).toBe(200);
   // الموظف يكتب تحصيل في نفس اللحظة
   const row = page.locator("table.cx-table tbody tr", { hasText: "602" }).first();
@@ -143,6 +144,6 @@ test("الموظف بيكتب في اليومية ودفعة بعملة تاني
   await page.waitForTimeout(2200);
   const [rec] = await env.q("select * from shift_records");
   expect(Number(rec.rows.find((x) => x.room === 602).collectionAmt)).toBe(25);              // تعديل الموظف
-  expect(rec.rows.find((x) => x.bookingId === id)).toMatchObject({ collectionAmt: 5000, collectionCurrency: "EGP", fxCovered: 100 });   // الدفعة ماضاعتش
+  expect(rec.rows.find((x) => x.bookingId === id)).toMatchObject({ collectionAmt: 5000, collectionCurrency: "EGP" });   // الدفعة ماضاعتش
   expect(rec.booking_collections).toHaveLength(1);
 });
