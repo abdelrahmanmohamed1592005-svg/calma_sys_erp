@@ -204,3 +204,99 @@ select t.eqn('M11 M1 دولار: غرفة (من غير ٢٠ جنيه غسيل) +
 select t.eqn('M11 M3 دولار: الغرفة+الكافيتيريا = المدفوع', t.room_sum('M3', 604) + t.room_sum('M3', 603) + t.cafe_sum('M3', 'USD'), t.fn('M3', 'amount_paid'));
 select t.eqn('M11 M3 جنيه: الكافيتيريا = other_paid', t.cafe_sum('M3', 'EGP'), (select (other_paid ->> 'EGP')::numeric from bookings where id = (select id from t.ids where name = 'M3')));
 select t.reject('M12 المدير العام مايغيّرش الغرفة بتعديل مباشر كمان', t.upd('gm1', 'M6', 'room = 614'), '');
+
+-- ---------- R: النقل بيحجز الغرفة الجديدة من يوم النقل بس (غرفة نزيل خرج النهارده/قبل كده متاحة)
+create function t.free_rooms(lo int, hi int) returns int[] language sql as $$
+  select coalesce(array_agg(r.number order by r.number), '{}') from rooms r
+  where not exists (select 1 from bookings b where b.room = r.number and b.status <> 'ملغي' and b.occ_range && daterange(hotel_today() + lo, hotel_today() + hi, '[)'))
+$$;
+create function t.cur(u text, nm text, cur text) returns text language plpgsql as $$
+declare v uuid; res jsonb;
+begin
+  select id into v from t.ids where name = nm;
+  perform t.as_user(u);
+  select change_booking_currency(v, cur) into res;
+  execute 'reset role';
+  perform set_config('t.last_cur', res::text, false);
+  return null;
+exception when others then
+  execute 'reset role';
+  return sqlerrm;
+end $$;
+-- الغرف كلها (١٦) مشغولة بحجوزات الاختبارات اللي فاتت: نلغي القديمة (من الصيانة) عشان نفضّي الأسبوعين اللي حوالين النهارده
+select t.pass('R0 تفضية الفترة', t.maint_sql($q$update bookings set status = 'ملغي' where occ_range && daterange(hotel_today() - 8, hotel_today() + 32, '[)')$q$));
+select t.chk('R0 فيه ٧ غرف فاضية على الأقل للتجربة', cardinality(t.free_rooms(-8, 8)) >= 7, t.free_rooms(-8, 8)::text);
+-- غرف التجربة: A (النزيل المنقول) + Y (خرج النهارده) + Z (خرج من أيام) + V (نزيل ساكن دلوقتي) + U (حجز بيبدأ بعد يومين) + T (حجز بيبدأ يوم ما النزيل يخرج)
+create table t.frooms (i serial primary key, number int);
+insert into t.frooms(number) select unnest(t.free_rooms(-8, 8));
+create table t.crooms (i serial primary key, number int);
+insert into t.crooms(number) select unnest(t.free_rooms(20, 30));
+create function t.fr(i int) returns int language sql as $$ select number from t.frooms where t.frooms.i = $1 $$;
+create function t.cr(i int) returns int language sql as $$ select number from t.crooms where t.crooms.i = $1 $$;
+grant select on t.frooms, t.crooms to public;
+select t.pass('R1 النزيل المنقول: دخل من ٣ أيام ويخرج بعد ٣', t.ins('st1', 'RA', t.fr(1), -3, 3, 100, 600));
+select t.pass('R1 غرفة Y: نزيل خرج النهارده', t.ins('st1', 'RY', t.fr(2), -5, 0, 100, 500));
+select t.pass('R1 غرفة Z: نزيل خرج من أيام', t.ins('st1', 'RZ', t.fr(3), -6, -3, 100, 300));
+select t.pass('R1 غرفة V: نزيل ساكن دلوقتي', t.ins('st1', 'RV', t.fr(4), -1, 2, 100, 300));
+select t.pass('R1 غرفة U: حجز بيبدأ بعد يومين', t.ins('st1', 'RU', t.fr(5), 2, 4, 100, 200));
+select t.pass('R1 غرفة T: حجز بيبدأ يوم خروج النزيل المنقول', t.ins('st1', 'RT', t.fr(6), 3, 5, 100, 200));
+select t.reject('R2 نقل لغرفة فيها نزيل ساكن دلوقتي مرفوض', t.mv('st1', 'RA', t.fr(4)), 'مش فاضية');
+select t.reject('R2 نقل لغرفة فيها حجز بيبدأ خلال إقامته (بعد يومين) مرفوض', t.mv('st1', 'RA', t.fr(5)), 'مش فاضية');
+select t.pass('R3 نقل لغرفة نزيلها خرج النهارده (دي كانت بتتخبى)', t.mv('st1', 'RA', t.fr(2)));
+select t.eq('R3 الغرفة الجديدة', t.f('RA', 'room'), t.fr(2)::text);
+select t.eq('R3 room_from = النهارده', t.f('RA', 'room_from'), (select hotel_today()::text));
+select t.eq('R3 تاريخ الدخول الأصلي ما اتغيّرش (الإقامة والسعر زي ما هم)', t.f('RA', 'checkin'), (select (hotel_today() - 3)::text));
+select t.eqn('R3 إجمالي الغرفة ما اتغيّرش', t.fn('RA', 'total_room'), 600);
+select t.pass('R4 نقل تاني لغرفة نزيلها خرج من أيام', t.mv('st1', 'RA', t.fr(3)));
+select t.pass('R4 نقل لغرفة فيها حجز بيبدأ يوم الخروج (تلاصق)', t.mv('res1', 'RA', t.fr(6)));
+select t.pass('R5 الموظف يحاول يلغي room_from بتعديل مباشر (بيتتجاهل)', t.upd('st1', 'RA', 'room_from = null'));
+select t.eq('R5 room_from لسه النهارده', t.f('RA', 'room_from'), (select hotel_today()::text));
+select t.pass('R5 مدير الحجوزات: تعديل مباشر بيحاول يلغي room_from (بيتتجاهل)', t.upd('res1', 'RA', 'room_from = null'));
+select t.eq('R5 room_from لسه النهارده برضه', t.f('RA', 'room_from'), (select hotel_today()::text));
+select t.pass('R6 حجز بيبدأ النهارده بيتنقل لغرفة نزيلها خرج النهارده', t.ins('st1', 'RB', t.fr(7), 0, 2, 100, 200));
+select t.pass('R6 النقل', t.mv('st1', 'RB', t.fr(2)));
+select t.chk('R6 room_from فاضي (مفيش ليالي فاتت)', (select room_from is null from bookings where id = (select id from t.ids where name = 'RB')));
+select t.pass('R7 حجز مستقبلي بيتنقل لغرفة فيها نزيل قديم', t.ins('st1', 'RC', t.fr(7), 5, 7, 100, 200));
+select t.pass('R7 النقل لغرفة Y (RA سابها)', t.mv('st1', 'RC', t.fr(2)));
+select t.pass('R8 حجز جديد في الغرفة القديمة بتاعت RA في فترة إقامته: مسموح (فاضية)', t.ins('st1', 'RN', t.fr(1), 0, 2, 100, 200));
+select t.reject('R9 حجز مزدوج في الغرفة اللي RA فيها دلوقتي (من النهارده) مرفوض', t.ins('st1', 'RM', t.fr(6), 1, 2, 100, 100), 'bookings_no_overlap');
+select t.pass('R10 خروج مبكر لـ RA (checkout = room_from) بيشتغل من غير أخطاء range', t.upd('st1', 'RA', 'checkout = hotel_today(), total_room = 300, status = ''تم تسجيل الخروج'', left_early = true'));
+
+-- ---------- CC: تعديل عملة الحجز
+select t.pass('CC1 حجز دولار', t.ins('st1', 'CC1', t.cr(1), 20, 22, 100, 200));
+select t.pass('CC1 كافيتيريا ٢٠', t.upd('st1', 'CC1', 'extras = ''{"laundry":0,"cafeteria":20,"tours":0,"pickup":0}''::jsonb'));
+select t.pass('CC1 تحصيل ٧٠ (٢٠ كافيتيريا + ٥٠ غرفة)', t.pay('st1', 'CC1', 70));
+select t.snapshot('cc1', 'CC1');
+select t.pass('CC1 الموظف يغيّر العملة لجنيه', t.cur('st1', 'CC1', 'EGP'));
+select t.eq('CC1 العملة اتغيّرت', t.f('CC1', 'currency'), 'EGP');
+select t.eqn('CC1 المدفوع نفسه', t.fn('CC1', 'amount_paid'), 70);
+select t.eqn('CC1 إجمالي الغرفة نفسه', t.fn('CC1', 'total_room'), 200);
+select t.eq('CC1 الخدمات نفسها', t.f('CC1', 'extras'), (t.snapof('cc1')::jsonb ->> 'extras'));
+select t.eqn('CC1 صفوف اليومية: مفيش أي صف دولار للحجز ده', (select count(*) from shift_records s, jsonb_array_elements(s.rows || s.cafeteria_rows) el where el ->> 'bookingId' = (select id::text from t.ids where name = 'CC1') and el ->> 'collectionCurrency' = 'USD'), 0);
+select t.eqn('CC1 صف الغرفة بالجنيه ٥٠', t.cafe_sum('CC1', 'EGP') + t.room_sum('CC1', (t.f('CC1', 'room'))::int), 70);
+select t.chk('CC1 وصف الصف اتحدّث بالعملة الجديدة', not exists (select 1 from shift_records s, jsonb_array_elements(s.rows || s.cafeteria_rows) el where el ->> 'bookingId' = (select id::text from t.ids where name = 'CC1') and el ->> 'collectionDesc' like '%USD)%'));
+select t.pass('CC1 تحصيل باقي ١٥٠ بعد التعديل (بالعملة الجديدة)', t.pay('st1', 'CC1', 150));
+select t.eq('CC1 مدفوع بالكامل', t.f('CC1', 'settled'), 'true');
+select t.pass('CC1 رجوع للدولار تاني', t.cur('res1', 'CC1', 'USD'));
+select t.eq('CC1 رجعت دولار', t.f('CC1', 'currency'), 'USD');
+select t.eq('CC1 لسه مدفوع بالكامل', t.f('CC1', 'settled'), 'true');
+select t.reject('CC2 نفس العملة', t.cur('st1', 'CC1', 'USD'), 'أصلًا');
+select t.reject('CC2 عملة غلط', t.cur('st1', 'CC1', 'XXX'), 'عملة صالحة');
+select t.reject('CC2 المحاسبة مرفوضة', t.cur('acc1', 'CC1', 'EGP'), 'صلاحية');
+select t.reject('CC2 المدير العام مرفوض', t.cur('gm1', 'CC1', 'EGP'), 'صلاحية');
+select t.reject('CC2 التعديل المباشر لعملة حجز مدفوع لسه ممنوع', t.upd('res1', 'CC1', 'currency = ''EGP'''), 'بتتغيّر من زرار');
+select t.pass('CC3 حجز دولار وعليه خدمة بالجنيه', t.ins('st1', 'CC3', t.cr(2), 20, 22, 100, 200));
+select t.pass('CC3 غسيل ٣٠ جنيه', t.upd('st1', 'CC3', 'other_charges = ''{"EGP":{"laundry":30,"cafeteria":0,"tours":0,"pickup":0}}''::jsonb'));
+select t.reject('CC3 تغيير العملة لجنيه مرفوض لو فيه خدمات جنيه منفصلة', t.cur('st1', 'CC3', 'EGP'), 'خدمات أو مدفوع منفصل');
+select t.pass('CC3 لعملة تانية فاضية (يورو) مسموح', t.cur('st1', 'CC3', 'EUR'));
+select t.eq('CC3 الخدمات بالجنيه فضلت', t.f('CC3', 'other_charges') ::jsonb #>> '{EGP,laundry}', '30');
+select t.pass('CC4 حجز ملغي', t.ins('res1', 'CC4', t.cr(3), 20, 22, 100, 200, 0, false, 'ملغي'));
+select t.reject('CC4 حجز ملغي مايتعدّلش', t.cur('res1', 'CC4', 'EGP'), 'ملغي');
+select t.pass('CC5 مدير الحجوزات يغيّر عملة حجز من غير تحصيل', t.ins('st1', 'CC5', t.cr(4), 20, 22, 100, 200));
+select t.pass('CC5 تغيير', t.cur('res1', 'CC5', 'SAR'));
+-- تحصيل في شيفت اتقفل: ممنوع (آخر حاجة في الملف عشان بنقفل الشيفتات)
+select t.pass('CC6 حجز وتحصيل', t.ins('st1', 'CC6', t.cr(5), 20, 22, 100, 200));
+select t.pass('CC6 تحصيل ٥٠', t.pay('st1', 'CC6', 50));
+select t.pass('CC6 قفل الشيفتات', t.maint_sql($q$update shift_records set closed = true where closed = false$q$));
+select t.reject('CC6 تغيير العملة مرفوض لو التحصيل في شيفت مقفول', t.cur('res1', 'CC6', 'EGP'), 'شيفت اتقفل');
+select t.eq('CC6 العملة لسه دولار', t.f('CC6', 'currency'), 'USD');

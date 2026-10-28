@@ -32,6 +32,10 @@ export const recordBookingPaymentOther = ({ bookingId, amount, currency, method,
 export const moveBookingRoom = ({ bookingId, room, expectedUpdatedAt }) =>
   rpc("move_booking_room", { p_booking: bookingId, p_room: Number(room), p_expected: expectedUpdatedAt || null });
 
+/* تعديل عملة الحجز (الأرقام زي ما هي) - بتتغيّر في الحجز وفي صفوف اليومية المفتوحة بتاعته مع بعض */
+export const changeBookingCurrency = ({ bookingId, currency, expectedUpdatedAt }) =>
+  rpc("change_booking_currency", { p_booking: bookingId, p_currency: currency, p_expected: expectedUpdatedAt || null });
+
 export const recordStaffCafeteria = ({ name, username, description, amount, currency, method, details }) =>
   rpc("record_staff_cafeteria", { p_name: name, p_username: username || null, p_desc: description || "", p_amount: amount, p_currency: currency, p_method: method || null, p_details: details || null });
 
