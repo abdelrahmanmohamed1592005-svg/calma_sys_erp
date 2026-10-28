@@ -2812,7 +2812,7 @@ create or replace function move_booking_room(p_booking uuid, p_room int, p_expec
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare b bookings%rowtype; clash bookings%rowtype; old_room int;
 begin
-  if not (is_staff() or is_gm_or_reservations()) then raise exception 'نقل النزيل من صلاحية موظف الشيفت أو مدير الحجوزات'; end if;
+  if not (is_staff() or is_reservations_manager()) then raise exception 'نقل النزيل من صلاحية موظف الشيفت أو مدير الحجوزات'; end if;     -- المدير العام مابينقلش
   if is_staff() then perform calma_my_open_shift(); end if;          -- الموظف لازم شيفته مفتوح
   select * into b from bookings where id = p_booking for update;
   if not found then raise exception 'الحجز مش موجود'; end if;

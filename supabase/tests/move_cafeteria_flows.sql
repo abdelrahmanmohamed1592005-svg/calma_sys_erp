@@ -140,8 +140,9 @@ select t.pass('M6 حجز عادي للتوقيت', t.ins('st1', 'M6', 616, 200, 
 select t.reject('M6 توقيت قديم مرفوض', t.mvx('st1', 'M6', 601, now() - interval '1 day'), 'اتغيّر');
 select t.eq('M6 لسه في 616', t.f('M6', 'room'), '616');
 select t.pass('M6 التوقيت الصح ينجح', t.mvx('st1', 'M6', 612, (select updated_at from bookings where id = (select id from t.ids where name = 'M6'))));
-select t.reject('M6 gm مفيش مشكلة بس نفس الغرفة', t.mv('gm1', 'M6', 612), 'أصلًا');
-select t.pass('M6 المدير العام ينقل', t.mv('gm1', 'M6', 613));
+select t.reject('M6 المدير العام ممنوع ينقل (حتى لغرفة فاضية)', t.mv('gm1', 'M6', 613), 'صلاحية');
+select t.eq('M6 الغرفة ما اتغيرتش بعد محاولة المدير العام', t.f('M6', 'room'), '612');
+select t.pass('M6 مدير الحجوزات ينقل', t.mv('res1', 'M6', 613));
 select t.reject('M6 المحاسبة مرفوضة', t.mv('acc1', 'M6', 614), 'صلاحية');
 select t.reject('M6 حجز غير موجود', t.try('st1', $q$select move_booking_room(gen_random_uuid(), 601)$q$), 'مش موجود');
 select t.pass('M6 تجهيز: قفل شيفتات st2', t.maint_sql($q$update shift_records set closed = true where staff_username = 'st2' and closed = false$q$));
@@ -190,7 +191,7 @@ select t.snapshot('m10', 'M10');
 select t.pass('M10 نقل ١', t.mv('st1', 'M10', 614));
 select t.pass('M10 نقل ٢', t.mv('st1', 'M10', 615));
 select t.pass('M10 نقل ٣', t.mv('res1', 'M10', 616));
-select t.pass('M10 نقل ٤ رجوع', t.mv('gm1', 'M10', 613));
+select t.pass('M10 نقل ٤ رجوع', t.mv('res1', 'M10', 613));
 select t.eq('M10 بعد ٤ نقلات كل حاجة زي ما هي', t.snap('M10'), t.snapof('m10'));
 select t.eqn('M10 تاريخ النقلات: حجز تاني يقدر ياخد 614 و615 و616', (select count(*) from bookings where room in (614, 615, 616) and guest_name = 'M10'), 0);
 select t.pass('M10 ٣ حجوزات جديدة ياخدوا الغرف اللي فضيت', t.ins('st1', 'M10n1', 614, 240, 243, 100, 300));
@@ -202,3 +203,4 @@ select t.reject('M10 مفيش غرفة فاضية يتنقل ليها', t.mv('st
 select t.eqn('M11 M1 دولار: غرفة (من غير ٢٠ جنيه غسيل) + كافيتيريا = المدفوع', (t.room_sum('M1', 601) - 20) + t.cafe_sum('M1', 'USD'), t.fn('M1', 'amount_paid'));
 select t.eqn('M11 M3 دولار: الغرفة+الكافيتيريا = المدفوع', t.room_sum('M3', 604) + t.room_sum('M3', 603) + t.cafe_sum('M3', 'USD'), t.fn('M3', 'amount_paid'));
 select t.eqn('M11 M3 جنيه: الكافيتيريا = other_paid', t.cafe_sum('M3', 'EGP'), (select (other_paid ->> 'EGP')::numeric from bookings where id = (select id from t.ids where name = 'M3')));
+select t.reject('M12 المدير العام مايغيّرش الغرفة بتعديل مباشر كمان', t.upd('gm1', 'M6', 'room = 614'), '');
