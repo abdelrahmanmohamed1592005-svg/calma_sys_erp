@@ -386,6 +386,7 @@ select t.eqn('G13 نهاية الشيفت الليلي بعد نهاية الص�
 \ir more_flows.sql
 \ir guests_and_rows.sql
 \ir cafeteria_flows.sql
+\ir move_cafeteria_flows.sql
 
 create table t.reprice_cases (checkin date, checkout date, new_checkout date, total numeric, price numeric, expected numeric);
 \o
