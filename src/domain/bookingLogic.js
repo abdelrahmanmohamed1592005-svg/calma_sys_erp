@@ -17,12 +17,15 @@ export function isOverrideStillActive(ov, dateStr) {
    4) حجز قادم خلال يومين => قادمة قريبًا، وغير كده => متاحة. */
 /* opts.beforeCheckout: الساعة لسه قبل 12 الضهر (معاد الخروج) - النزيل اللي خروجه النهارده لسه في الغرفة
    (غير لو غادر مبكرًا أو اتسجّل خروجه)، وبيتقدّم على نزيل داخل النهارده (دخوله 12 الضهر). */
+/* أول يوم الحجز ده بيحجز فيه غرفته الحالية: يوم نقله لها (roomFrom) أو دخوله */
+export const roomStart = (b) => (b?.roomFrom && b.roomFrom > b.checkin ? b.roomFrom : b.checkin);
+
 export function computeRoomStatus(roomNumber, bookings, overrides, dateStr, opts = {}) {
   const ov = overrides[roomNumber];
   const departing = opts.beforeCheckout
-    ? bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.status !== "تم تسجيل الخروج" && !b.leftEarly && b.checkout === dateStr && b.checkin < dateStr)
+    ? bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.status !== "تم تسجيل الخروج" && !b.leftEarly && b.checkout === dateStr && roomStart(b) < dateStr)
     : null;
-  const active = departing || bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && b.checkin <= dateStr && dateStr < b.checkout);
+  const active = departing || bookings.find((b) => b.room === roomNumber && b.status !== "ملغي" && roomStart(b) <= dateStr && dateStr < b.checkout);
   const manual = !active && ov && (ov.status === "maintenance" || ov.status === "cleaning") && isOverrideStillActive(ov, dateStr) ? ov.status : null;
   if (manual) return { key: manual, label: STATUS_LABELS[manual], source: "manual" };
   if (active) {
@@ -41,7 +44,7 @@ export function computeRoomStatus(roomNumber, bookings, overrides, dateStr, opts
 }
 
 export function roomsOverlap(bookings, room, checkin, checkout, excludeId) {
-  return bookings.some((b) => b.id !== excludeId && b.room === room && b.status !== "ملغي" && b.checkout > b.checkin && !(checkout <= b.checkin || checkin >= b.checkout));
+  return bookings.some((b) => b.id !== excludeId && b.room === room && b.status !== "ملغي" && b.checkout > roomStart(b) && !(checkout <= roomStart(b) || checkin >= b.checkout));
 }
 
 /* بترجع الحجز الفعلي المتعارض (مش بس true/false) عشان لو الموظف أكّد "تسكين
@@ -50,14 +53,14 @@ export function roomsOverlap(bookings, room, checkin, checkout, excludeId) {
    وقيد منع الحجز المزدوج في قاعدة البيانات (وهو قيد صحيح ومهم) ميرفضش
    العملية الشرعية دي. */
 export function findOverlappingBooking(bookings, room, checkin, checkout, excludeId) {
-  return bookings.find((b) => b.id !== excludeId && b.room === room && b.status !== "ملغي" && b.checkout > b.checkin && !(checkout <= b.checkin || checkin >= b.checkout)) || null;
+  return bookings.find((b) => b.id !== excludeId && b.room === room && b.status !== "ملغي" && b.checkout > roomStart(b) && !(checkout <= roomStart(b) || checkin >= b.checkout)) || null;
 }
 
 /* كل الحجوزات الفعلية المتعارضة (مش بس أول واحد) - ممكن تسكين مكرر واحد
    يتعارض مع أكتر من حجز قديم في نفس الغرفة (مثلاً حجزين متتاليين لنفس
    الغرفة والحجز الجديد بيغطي جزء من الاتنين). */
 export function findOverlappingBookings(bookings, room, checkin, checkout, excludeId) {
-  return bookings.filter((b) => b.id !== excludeId && b.room === room && b.status !== "ملغي" && b.checkout > b.checkin && !(checkout <= b.checkin || checkin >= b.checkout));
+  return bookings.filter((b) => b.id !== excludeId && b.room === room && b.status !== "ملغي" && b.checkout > roomStart(b) && !(checkout <= roomStart(b) || checkin >= b.checkout));
 }
 
 /* قرار "تسكين مكرر" بالنسبة لحجز قديم متعارض واحد (clash)، منفصل عن أي
@@ -170,7 +173,7 @@ export function findGuestCodeConflict(bookings, codes, checkin, excludeId) {
   const wanted = new Set((codes || []).map((c) => String(c || "").trim().toUpperCase()).filter(Boolean));
   if (!wanted.size) return null;
   for (const b of bookings || []) {
-    if (b.id === excludeId || monthKey(b.checkin) !== monthKey(checkin)) continue;
+    if (b.id === excludeId || b.status === "ملغي" || monthKey(b.checkin) !== monthKey(checkin)) continue;
     const hit = guestCodeEntries(b).find((g) => wanted.has(g.code.toUpperCase()));
     if (hit) return { code: hit.code, room: b.room, guestName: b.guestName };
   }
@@ -180,7 +183,7 @@ export function findGuestCodeConflict(bookings, codes, checkin, excludeId) {
 export function nextGuestNumber(bookings, checkin, excludeId) {
   let max = 0;
   for (const b of bookings || []) {
-    if (b.id === excludeId || monthKey(b.checkin) !== monthKey(checkin)) continue;
+    if (b.id === excludeId || b.status === "ملغي" || monthKey(b.checkin) !== monthKey(checkin)) continue;
     for (const g of guestCodeEntries(b)) if (/^\d+$/.test(g.code)) max = Math.max(max, Number(g.code));
   }
   return max + 1;

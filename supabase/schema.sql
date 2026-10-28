@@ -902,7 +902,7 @@ declare
   restoring boolean;
 begin
   -- نقل النزيل لغرفة تانية من دالة move_booking_room (بتغيّر الغرفة بس، وبتتأكد من الصلاحية والتعارض)
-  if coalesce(current_setting('calma.move_rpc', true), '') = '1' then return new; end if;
+  if coalesce(current_setting('calma.move_rpc', true), '') = '1' or coalesce(current_setting('calma.currency_rpc', true), '') = '1' then return new; end if;
   if is_staff() and TG_OP = 'UPDATE' then
     -- الخروج المبكر / التسكين المكرر مسموح بس لنزيل بدأ إقامته فعلاً (دخوله
     -- النهارده أو قبله) - مفيش تقصير ولا تعليم لحجز مستقبلي، وده كان هيبقى
@@ -2807,34 +2807,8 @@ $$;
 revoke all on function record_booking_payment_fx(uuid, numeric, text, numeric, text, jsonb, timestamptz, text) from public, anon;
 grant execute on function record_booking_payment_fx(uuid, numeric, text, numeric, text, jsonb, timestamptz, text) to authenticated;
 
--- (ج) نقل النزيل: موظف الشيفت (شيفته مفتوح) أو مدير الحجوزات أو المدير العام
-create or replace function move_booking_room(p_booking uuid, p_room int, p_expected timestamptz default null)
-returns jsonb language plpgsql security definer set search_path = public as $$
-declare b bookings%rowtype; clash bookings%rowtype; old_room int;
-begin
-  if not (is_staff() or is_reservations_manager()) then raise exception 'نقل النزيل من صلاحية موظف الشيفت أو مدير الحجوزات'; end if;     -- المدير العام مابينقلش
-  if is_staff() then perform calma_my_open_shift(); end if;          -- الموظف لازم شيفته مفتوح
-  select * into b from bookings where id = p_booking for update;
-  if not found then raise exception 'الحجز مش موجود'; end if;
-  if p_expected is not null and b.updated_at is distinct from p_expected then raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني'; end if;
-  if b.status = 'ملغي' then raise exception 'الحجز ملغي'; end if;
-  if b.checkout <= hotel_today() or b.status = 'تم تسجيل الخروج' then raise exception 'الحجز خلص - مفيش نقل'; end if;
-  if not exists (select 1 from rooms where number = p_room) then raise exception 'الغرفة دي مش موجودة'; end if;
-  if p_room = b.room then raise exception 'النزيل في الغرفة دي أصلًا'; end if;
-  select * into clash from bookings x where x.room = p_room and x.id <> b.id and x.status <> 'ملغي' and x.stay_range && b.stay_range
-    order by x.checkin limit 1;
-  if found then
-    raise exception 'الغرفة % مش فاضية في نفس التواريخ - فيها % (% → %)', p_room, clash.guest_name, clash.checkin, clash.checkout;
-  end if;
-  old_room := b.room;
-  perform set_config('calma.move_rpc', '1', true);
-  update bookings set room = p_room where id = p_booking;
-  perform set_config('calma.move_rpc', '', true);
-  return jsonb_build_object('from', old_room, 'to', p_room);
-end;
-$$;
-revoke all on function move_booking_room(uuid, int, timestamptz) from public, anon;
-grant execute on function move_booking_room(uuid, int, timestamptz) to authenticated;
+-- (ج) نقل النزيل: اتنقلت لقسم ٤١ (آخر الملف) عشان بتعتمد على room_from.
+
 
 -- (د) نهاية معاد الشيفت (بتوقيت القاهرة): الصباحي ٨ص-٤م، المسائي ٤م-١٢ص، الليلي ١٢ص-٨ص (بعد يوم الشيفت)
 create or replace function calma_shift_end(p_date date, p_key text) returns timestamptz language sql stable as $$
@@ -3006,7 +2980,191 @@ $$;
 revoke all on function record_booking_payment_other(uuid, numeric, text, text, jsonb, timestamptz, text) from public, anon;
 grant execute on function record_booking_payment_other(uuid, numeric, text, text, jsonb, timestamptz, text) to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 40 $$;
+
+-- --------------------------------------------------------------------------
+-- 41) أكتوبر ٢٠٢٦ - (أ) نقل النزيل بيعتبر الغرفة الجديدة محجوزة من يوم النقل بس (مش من أول الإقامة)،
+--        عشان غرفة نزيل خرج النهارده (أو قبل كده) تظهر متاحة للنقل.
+--     (ب) تعديل عملة الحجز (لو الموظف اتلغبط): بتتغيّر على الحجز وفي كل صفوف اليومية المفتوحة بتاعته مع بعض.
+--     (ج) كود الفرد بتاع حجز ملغي يرجع يتستخدم تاني لنزيل تاني (نفس الشهر).
+-- --------------------------------------------------------------------------
+alter table bookings add column if not exists room_from date;
+alter table bookings add column if not exists occ_range daterange
+  generated always as (daterange(least(coalesce(room_from, checkin), checkout), checkout, '[)')) stored;
+
+do $$
+begin
+  if exists (select 1 from pg_constraint where conname = 'bookings_no_overlap' and conrelid = 'bookings'::regclass
+             and pg_get_constraintdef(oid) not like '%occ_range%') then
+    alter table bookings drop constraint bookings_no_overlap;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'bookings_no_overlap' and conrelid = 'bookings'::regclass) then
+    alter table bookings add constraint bookings_no_overlap
+      exclude using gist (room with =, occ_range with &&)
+      where (status <> 'ملغي');
+  end if;
+exception when others then
+  raise notice 'تعذر تحديث قيد منع تعارض الحجوزات: %', sqlerrm;
+end $$;
+
+-- room_from بيتحدد من نقل النزيل بس (مش من تعديل مباشر)، وأي تغيير مباشر للغرفة بيرجّع الحجز يحجز الغرفة من أول إقامته
+create or replace function bookings_room_from_guard()
+returns trigger language plpgsql as $$
+begin
+  if TG_OP = 'INSERT' then
+    if auth.uid() is not null then new.room_from := null; end if;
+    return new;
+  end if;
+  if coalesce(current_setting('calma.move_rpc', true), '') = '1' or auth.uid() is null then return new; end if;
+  new.room_from := old.room_from;
+  if new.room is distinct from old.room or new.checkin is distinct from old.checkin then new.room_from := null; end if;
+  return new;
+end;
+$$;
+drop trigger if exists bookings_room_from_guard on bookings;
+create trigger bookings_room_from_guard before insert or update on bookings
+  for each row execute function bookings_room_from_guard();
+
+create or replace function move_booking_room(p_booking uuid, p_room int, p_expected timestamptz default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare b bookings%rowtype; clash bookings%rowtype; old_room int; today date := hotel_today(); new_from date;
+begin
+  if not (is_staff() or is_reservations_manager()) then raise exception 'نقل النزيل من صلاحية موظف الشيفت أو مدير الحجوزات'; end if;     -- المدير العام مابينقلش
+  if is_staff() then perform calma_my_open_shift(); end if;          -- الموظف لازم شيفته مفتوح
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if p_expected is not null and b.updated_at is distinct from p_expected then raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني'; end if;
+  if b.status = 'ملغي' then raise exception 'الحجز ملغي'; end if;
+  if b.checkout <= today or b.status = 'تم تسجيل الخروج' then raise exception 'الحجز خلص - مفيش نقل'; end if;
+  if not exists (select 1 from rooms where number = p_room) then raise exception 'الغرفة دي مش موجودة'; end if;
+  if p_room = b.room then raise exception 'النزيل في الغرفة دي أصلًا'; end if;
+  -- الغرفة الجديدة مطلوبة من يوم النقل (أو أول الإقامة لو لسه ماجاش) لحد الخروج
+  new_from := case when b.checkin < today then today else null end;
+  select * into clash from bookings x where x.room = p_room and x.id <> b.id and x.status <> 'ملغي'
+    and x.occ_range && daterange(coalesce(new_from, b.checkin), b.checkout, '[)')
+    order by x.checkin limit 1;
+  if found then
+    raise exception 'الغرفة % مش فاضية في نفس التواريخ - فيها % (% → %)', p_room, clash.guest_name, clash.checkin, clash.checkout;
+  end if;
+  old_room := b.room;
+  perform set_config('calma.move_rpc', '1', true);
+  update bookings set room = p_room, room_from = new_from where id = p_booking;
+  perform set_config('calma.move_rpc', '', true);
+  return jsonb_build_object('from', old_room, 'to', p_room);
+end;
+$$;
+revoke all on function move_booking_room(uuid, int, timestamptz) from public, anon;
+grant execute on function move_booking_room(uuid, int, timestamptz) to authenticated;
+
+-- (ب) تعديل عملة الحجز: نفس الأرقام بس العملة اللي اتكتبت غلط. بتتغيّر على الحجز وفي صفوف اليومية (غرفة + كافيتيريا) بتاعته.
+--     ممنوعة لو فيه تحصيل بتاعه في شيفت اتقفل (أرقام الشيفت المقفول متثبّتة) أو لو فيه خدمات/مدفوع منفصل بالعملة الجديدة.
+create or replace function change_booking_currency(p_booking uuid, p_currency text, p_expected timestamptz default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  b bookings%rowtype; cur text := upper(btrim(coalesce(p_currency, ''))); old_cur text; sr record; n int := 0;
+  new_rows jsonb; new_caf jsonb; el jsonb; i int; oc jsonb;
+  mine boolean := false;
+begin
+  if not (is_staff() or is_reservations_manager()) then raise exception 'تعديل عملة الحجز من صلاحية موظف الشيفت أو مدير الحجوزات'; end if;
+  if cur not in ('EGP', 'USD', 'EUR', 'SAR', 'GBP') then raise exception 'اختار عملة صالحة'; end if;
+  if is_staff() then perform calma_my_open_shift(); end if;
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if p_expected is not null and b.updated_at is distinct from p_expected then raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني'; end if;
+  if b.status = 'ملغي' then raise exception 'الحجز ملغي'; end if;
+  old_cur := b.currency;
+  if cur = old_cur then raise exception 'دي عملة الحجز أصلًا'; end if;
+  oc := coalesce(b.other_charges, '{}'::jsonb);
+  if coalesce(calma_other_total(oc -> cur), 0) > 0 or calma_num(oc #>> array[cur, 'cafeteriaPaid']) > 0 or calma_num(b.other_paid ->> cur) > 0 then
+    raise exception 'على الحجز خدمات أو مدفوع منفصل بعملة % - اتعامل معاهم الأول وبعدين غيّر العملة', cur;
+  end if;
+  -- أي تحصيل/رد بالعملة القديمة بتاع الحجز ده في شيفت مقفول = ممنوع (الشيفت المقفول أرقامه متثبّتة)
+  if exists (
+    select 1 from shift_records s, jsonb_array_elements(coalesce(s.rows, '[]'::jsonb) || coalesce(s.cafeteria_rows, '[]'::jsonb)) e
+    where s.closed = true and e ->> 'bookingId' = b.id::text and e ->> 'collectionCurrency' = old_cur
+  ) then
+    raise exception 'فيه تحصيل على الحجز ده في شيفت اتقفل - تعديل العملة لازم يتعمل من الحسابات أو المدير العام';
+  end if;
+  for sr in select s.date, s.shift_key, s.rows, s.cafeteria_rows from shift_records s
+    where s.closed = false and exists (
+      select 1 from jsonb_array_elements(coalesce(s.rows, '[]'::jsonb) || coalesce(s.cafeteria_rows, '[]'::jsonb)) e
+      where e ->> 'bookingId' = b.id::text and e ->> 'collectionCurrency' = old_cur)
+    for update
+  loop
+    new_rows := '[]'::jsonb; new_caf := '[]'::jsonb;
+    for i in 0 .. coalesce(jsonb_array_length(sr.rows), 0) - 1 loop
+      el := sr.rows -> i;
+      if el ->> 'bookingId' = b.id::text and el ->> 'collectionCurrency' = old_cur then
+        el := el || jsonb_build_object('collectionCurrency', cur, 'collectionDesc', replace(coalesce(el ->> 'collectionDesc', ''), ' ' || old_cur || ')', ' ' || cur || ')'));
+        n := n + 1;
+      end if;
+      new_rows := new_rows || jsonb_build_array(el);
+    end loop;
+    for i in 0 .. coalesce(jsonb_array_length(sr.cafeteria_rows), 0) - 1 loop
+      el := sr.cafeteria_rows -> i;
+      if el ->> 'bookingId' = b.id::text and el ->> 'collectionCurrency' = old_cur then
+        el := el || jsonb_build_object('collectionCurrency', cur, 'collectionDesc', replace(coalesce(el ->> 'collectionDesc', ''), ' ' || old_cur || ')', ' ' || cur || ')'));
+        n := n + 1;
+      end if;
+      new_caf := new_caf || jsonb_build_array(el);
+    end loop;
+    update shift_records set rows = new_rows, cafeteria_rows = new_caf where date = sr.date and shift_key = sr.shift_key;
+  end loop;
+  perform set_config('calma.currency_rpc', '1', true);
+  perform set_config('calma.pay_rpc', '1', true);
+  update bookings set currency = cur, other_charges = oc - cur where id = p_booking;
+  perform set_config('calma.currency_rpc', '', true);
+  perform set_config('calma.pay_rpc', '', true);
+  return jsonb_build_object('from', old_cur, 'to', cur, 'rows', n);
+end;
+$$;
+revoke all on function change_booking_currency(uuid, text, timestamptz) from public, anon;
+grant execute on function change_booking_currency(uuid, text, timestamptz) to authenticated;
+
+-- (ب) الحارس القديم لتغيير العملة: مسموح بس من دالة change_booking_currency
+create or replace function prevent_currency_change_when_paid()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.currency is distinct from old.currency and (coalesce(old.amount_paid, 0) <> 0 or coalesce(old.refunded_amount, 0) <> 0)
+     and coalesce(current_setting('calma.currency_rpc', true), '') <> '1' then
+    raise exception 'عملة حجز عليه فلوس بتتغيّر من زرار "تعديل عملة الحجز" في لوحة الغرف بس';
+  end if;
+  return new;
+end;
+$$;
+
+-- (ج) كود الفرد بتاع حجز ملغي بيرجع متاح، وإلغاء/استرجاع الحجز بيتفحص الكود من جديد
+create or replace function bookings_sync_guests()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare codes jsonb; n int; i int; c text; seen text[] := '{}'; ym_v text; clash record;
+begin
+  codes := coalesce(new.guest_codes, '[]'::jsonb);
+  n := least(greatest(coalesce(new.pax, 1), 1), jsonb_array_length(codes));
+  ym_v := to_char(new.checkin, 'YYMM');
+  delete from booking_guests where booking_id = new.id;
+  for i in 0 .. n - 1 loop
+    if jsonb_typeof(codes -> i) is distinct from 'string' then continue; end if;
+    c := btrim(codes ->> i);
+    if c = '' then continue; end if;
+    if char_length(c) > 40 then raise exception 'كود الفرد % أطول من ٤٠ حرف', i + 1; end if;
+    if upper(c) = any(seen) then raise exception 'الكود % مكرر جوه نفس الحجز', c; end if;
+    seen := seen || upper(c);
+    if new.status is distinct from 'ملغي' then
+      select g.room, b.guest_name into clash from booking_guests g join bookings b on b.id = g.booking_id
+        where g.ym = ym_v and upper(g.code) = upper(c) and g.booking_id <> new.id and b.status is distinct from 'ملغي' limit 1;
+      if found then
+        raise exception 'الكود % مستخدم الشهر ده بالفعل (غرفة % - %) - اختار كود تاني أو استنى الشهر الجاي', c, clash.room, clash.guest_name;
+      end if;
+    end if;
+    insert into booking_guests(booking_id, room, seq, code, ym) values (new.id, new.room, i + 1, c, ym_v);
+  end loop;
+  return null;
+end;
+$$;
+drop trigger if exists bookings_guests_sync on bookings;
+create trigger bookings_guests_sync after insert or update of pax, room, guest_codes, checkin, status on bookings
+  for each row execute function bookings_sync_guests();
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 41 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

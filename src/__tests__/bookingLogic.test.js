@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeRoomStatus, roomsOverlap, findOverlappingBooking, findOverlappingBookings, resolveDuplicateCheckin, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, isOverrideStillActive } from "../domain/bookingLogic";
+import { computeRoomStatus, roomsOverlap, findOverlappingBooking, findOverlappingBookings, resolveDuplicateCheckin, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, isOverrideStillActive, findGuestCodeConflict } from "../domain/bookingLogic";
 
 function makeBooking(overrides = {}) {
   return {
@@ -265,5 +265,30 @@ describe("computeRoomStatus - الحالات اليدوية والمغادرة �
   });
   it("حجز ملغي ومعلّم غادر مبكرًا مايظهرش كغادر", () => {
     expect(computeRoomStatus(601, [mk({ checkout: today, checkin: "2026-09-08", leftEarly: true, status: "ملغي" })], {}, today).key).toBe("available");
+  });
+});
+
+describe("نقل النزيل: الغرفة الجديدة محجوزة من يوم النقل (roomFrom)", () => {
+  const moved = { id: "m", room: 602, status: "مؤكد", checkin: "2026-09-01", checkout: "2026-09-10", roomFrom: "2026-09-05" };
+  it("قبل roomFrom الغرفة مش مشغولة بالنزيل المنقول، ومن roomFrom هي مشغولة", () => {
+    expect(computeRoomStatus(602, [moved], {}, "2026-09-03").key).toBe("available");
+    expect(computeRoomStatus(602, [moved], {}, "2026-09-05").key).toMatch(/occupied/);
+  });
+  it("حجز تاني قديم في نفس الغرفة قبل النقل مايتعارضش", () => {
+    expect(roomsOverlap([moved], 602, "2026-09-01", "2026-09-05")).toBe(false);
+    expect(roomsOverlap([moved], 602, "2026-09-04", "2026-09-06")).toBe(true);
+    expect(findOverlappingBooking([moved], 602, "2026-09-01", "2026-09-05")).toBeNull();
+  });
+  it("من غير roomFrom بيشتغل زي الأول", () => {
+    const plain = { ...moved, roomFrom: null };
+    expect(roomsOverlap([plain], 602, "2026-09-01", "2026-09-05")).toBe(true);
+  });
+});
+
+describe("كود الفرد: الحجز الملغي مابيحجزش الكود", () => {
+  const mk = (status) => [{ id: "a", room: 601, guestName: "A", status, checkin: "2026-09-02", checkout: "2026-09-04", pax: 1, guestCodes: ["K1"] }];
+  it("حجز شغّال بنفس الكود في نفس الشهر = تعارض، وملغي = مفيش", () => {
+    expect(findGuestCodeConflict(mk("مؤكد"), ["k1"], "2026-09-20", "x")).toMatchObject({ room: 601 });
+    expect(findGuestCodeConflict(mk("ملغي"), ["k1"], "2026-09-20", "x")).toBeNull();
   });
 });

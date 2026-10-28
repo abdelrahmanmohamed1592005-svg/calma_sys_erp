@@ -21,13 +21,17 @@ select t.eq('GU4 الكود اتغيّر', (select string_agg(code, ',' order by
 select t.pass('GU4 إلغاء الحجز', t.dml('res1', $q$update bookings set status = 'ملغي' where guest_name = 'GU1'$q$));
 select t.eqn('GU4 الأكواد بتفضل بعد الإلغاء (البحث بيطلّع الحجز الملغي كمان)', (select count(*) from booking_guests where booking_id = t.gid('GU1')), 2);
 
-select t.reject('GU5 نفس الكود في نفس الشهر لنزيل تاني مرفوض (حتى لو الأول اتلغى)', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (604, 'GU5x', hotel_today() + 100, hotel_today() + 101, 50, 50, 1, 'USD', 'مباشر', '["new-1"]'::jsonb)$q$), 'مستخدم الشهر ده');
-select t.eqn('GU5 والحجز المرفوض ما اتسجّلش', (select count(*) from bookings where guest_name = 'GU5x'), 0);
+select t.pass('GU5 كود حجز ملغي يرجع يتستخدم لنزيل تاني في نفس الشهر', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (606, 'GU5x', hotel_today() + 100, hotel_today() + 101, 50, 50, 1, 'USD', 'مباشر', '["new-1"]'::jsonb)$q$));
+select t.eqn('GU5 الحجز الجديد اتسجّل بالكود', (select count(*) from booking_guests where booking_id = t.gid('GU5x')), 1);
 select t.pass('GU5 نفس الكود في شهر مختلف مسموح (العداد بيبدأ من الأول)', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (604, 'GU5', hotel_today() + 140, hotel_today() + 141, 50, 50, 1, 'USD', 'مباشر', '["NEW-1"]'::jsonb)$q$));
-select t.eqn('GU5 البحث بالكود بيجيب الاتنين (غرفتين / شهرين)', (select count(distinct room) from booking_guests where upper(code) = 'NEW-1'), 2);
+select t.eqn('GU5 البحث بالكود بيجيب كل الحجوزات بالكود (٣ غرف)', (select count(distinct room) from booking_guests where upper(code) = 'NEW-1'), 3);
 select t.chk('GU5 الشهر متسجّل مع الكود', (select count(distinct ym) = 2 from booking_guests where upper(code) = 'NEW-1'));
 select t.pass('GU5 تعديل حجز بنفس كوده مايتعارضش مع نفسه', t.dml('st1', $q$update bookings set guest_codes = '["NEW-1"]'::jsonb where guest_name = 'GU5'$q$));
 select t.reject('GU5 نقل الحجز لنفس شهر الكود التاني بيترفض', t.dml('res1', $q$update bookings set checkin = hotel_today() + 100, checkout = hotel_today() + 101 where guest_name = 'GU5'$q$), 'مستخدم الشهر ده');
+select t.reject('GU5 كود حجز شغّال في نفس الشهر مرفوض لنزيل تالت', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (607, 'GU5y', hotel_today() + 100, hotel_today() + 101, 50, 50, 1, 'USD', 'مباشر', '["NEW-1"]'::jsonb)$q$), 'مستخدم الشهر ده');
+select t.pass('GU5 إلغاء الحجز اللي واخد الكود', t.dml('res1', $q$update bookings set status = 'ملغي' where guest_name = 'GU5x'$q$));
+select t.pass('GU5 الكود بقى متاح للنزيل التالت', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (607, 'GU5y', hotel_today() + 100, hotel_today() + 101, 50, 50, 1, 'USD', 'مباشر', '["NEW-1"]'::jsonb)$q$));
+select t.reject('GU5 استرجاع الحجز الملغي والكود اتاخد: مرفوض', t.dml('res1', $q$update bookings set status = 'مؤكد' where guest_name = 'GU5x'$q$), 'مستخدم الشهر ده');
 select t.reject('GU5 لكن مايتكررش جوه نفس الحجز (حتى باختلاف حالة الحروف)', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (605, 'GU5b', hotel_today() + 110, hotel_today() + 111, 50, 50, 2, 'USD', 'مباشر', '["X1","x1"]'::jsonb)$q$), 'مكرر جوه نفس الحجز');
 select t.eqn('GU5 والحجز المرفوض ما اتسجّلش', (select count(*) from bookings where guest_name = 'GU5b'), 0);
 select t.reject('GU5 كود أطول من ٤٠ حرف', t.dml('st1', $q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, pax, currency, source, guest_codes) values (605, 'GU5c', hotel_today() + 110, hotel_today() + 111, 50, 50, 1, 'USD', 'مباشر', to_jsonb(array[repeat('x', 41)]))$q$), 'أطول من');
