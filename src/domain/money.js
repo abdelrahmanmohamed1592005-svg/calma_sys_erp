@@ -204,6 +204,18 @@ export function cafeteriaOutstanding(booking) {
   const ex = booking?.extras || {};
   return Math.max(0, (Number(ex.cafeteria) || 0) - (Number(ex.cafeteriaPaid) || 0));
 }
+/* كافيتيريا النزيل اللي لسه ماتحصّلتش لكل عملة: [{ currency, due }] - عملة الحجز (extras) + أي عملة تانية
+   (otherCharges) عشان الخدمة بعملة غير عملة الحجز تظهر في الكافيتيريا زيها زي العادية. */
+export function cafeteriaOutstandingLines(booking) {
+  const lines = [];
+  const main = Math.round(cafeteriaOutstanding(booking) * 100) / 100;
+  if (main > 0) lines.push({ currency: booking.currency, due: main });
+  for (const [cur, c] of Object.entries(booking?.otherCharges || {})) {
+    const d = Math.round(Math.max(0, (Number(c?.cafeteria) || 0) - (Number(c?.cafeteriaPaid) || 0)) * 100) / 100;
+    if (d > 0) lines.push({ currency: cur, due: d });
+  }
+  return lines;
+}
 
 /* صفوف تحصيل (موجبة) بفيزا من غير آخر ٤ أرقام، أو بتحويل/فودافون من غير رقم - لازم
    تتكمّل قبل إقفال الشيفت عشان كل عملية تتتبّع. رد الفلوس (سالب) مستثنى. */

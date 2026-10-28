@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Plus, Check, Coffee } from "lucide-react";
 import { PaymentDetailsInline, SectionHead, RoomName } from "./shared";
-import { COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstanding, fmt } from "../domain/money";
+import { COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstandingLines, fmt } from "../domain/money";
 import { roomLabel } from "../domain/constants";
 import { staffOwed } from "../data/staffCafeteria";
 import { recordStaffCafeteria, settleStaffCafeteria } from "../data/payments";
@@ -15,7 +15,7 @@ const keyOf = (name, username) => (username || String(name || "").trim().toLower
    النزلاء اللي لسه عليهم فلوس + كافيتيريا الاستاف (مين أخد ومين دفع ومين عليه فلوس). */
 export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, locked, readOnly, profile, profiles, staffEntries, onReload, flushNow, reloadRecord, onLog, showToast }) {
   const rows = (record.cafeteriaRows || []).filter((r) => (Number(r.collectionAmt) || 0) !== 0);
-  const guestOutstanding = (bookings || []).filter((b) => b.status !== "ملغي" && cafeteriaOutstanding(b) > 0);
+  const guestOutstanding = (bookings || []).filter((b) => b.status !== "ملغي" && cafeteriaOutstandingLines(b).length > 0);
   const entries = staffEntries || [];
   const open = entries.filter((e) => staffOwed(e) > 0);
   const thisShift = entries.filter((e) => e.day === record.date && e.shiftKey === record.shiftKey);
@@ -130,7 +130,7 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       {guestOutstanding.length > 0 && (
         <div data-testid="cafeteria-guest-due" style={{ fontSize: 13, background: "var(--paper2)", borderRadius: 8, padding: 8, marginBottom: 10 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>خدمات كافيتيريا على نزلاء لسه ماتحصّلتش</div>
-          {guestOutstanding.map((b) => <div key={b.id}><RoomName rooms={rooms} number={b.room} /> · <span className="cx-iso">{b.guestName}</span>: {fmt(cafeteriaOutstanding(b))} {b.currency}</div>)}
+          {guestOutstanding.map((b) => <div key={b.id}><RoomName rooms={rooms} number={b.room} /> · <span className="cx-iso">{b.guestName}</span>: {cafeteriaOutstandingLines(b).map((l) => `${fmt(l.due)} ${l.currency}`).join(" + ")}</div>)}
         </div>
       )}
 
