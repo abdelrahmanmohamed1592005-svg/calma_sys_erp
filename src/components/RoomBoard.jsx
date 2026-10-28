@@ -422,7 +422,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
           b.extras?.tours > 0 && chip("جولات", b.extras.tours, b.currency),
           b.extras?.pickup > 0 && chip("بيك أب", b.extras.pickup, b.currency),
           b.earlyCheckin?.applied && chip("دخول مبكر", b.earlyCheckin.fee || 0, b.currency),
-          ...Object.entries(b.otherCharges || {}).flatMap(([cur, c]) => EXTRA_KINDS.filter(([k]) => Number(c?.[k]) > 0).map(([k, l]) => chip(l, Number(c[k]), cur, k === "cafeteria" ? Number(c.cafeteriaPaid) || 0 : 0))),
+          ...Object.entries(b.otherCharges || {}).flatMap(([cur, c]) => EXTRA_KINDS.filter(([k]) => Number(c?.[k]) > 0).map(([k, l]) => chip(l, Number(c[k]), cur, k === "cafeteria" ? Number(c.cafeteriaPaid) || 0 : undefined))),
         ].filter(Boolean) : [];
         const codes = b ? guestCodeEntries(b) : [];
         return (
@@ -513,7 +513,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                   {extrasList.length > 0 && (
                     <div data-testid="extras-current" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
                       <span style={{ fontSize: 12.5, color: "var(--muted)" }}>على الحجز دلوقتي:</span>
-                      {extrasList.map(([label, amt, cur, paidPart]) => <span key={label + cur} className="cx-pill" style={{ background: "var(--paper2)" }}>{label}: {fmt(amt)} {cur}{paidPart > 0 ? <span style={{ color: "var(--sage)", fontWeight: 600 }}> · اتحصّل {paidPart >= amt ? "كله" : fmt(paidPart)}</span> : null}</span>)}
+                      {extrasList.map(([label, amt, cur, paidPart]) => <span key={label + cur} className="cx-pill" style={{ background: "var(--paper2)" }}>{label}: {fmt(amt)} {cur}{paidPart != null && (paidPart >= amt ? <span style={{ color: "var(--sage)", fontWeight: 600 }}> · اتحصّل كله</span> : <>{paidPart > 0 && <span style={{ color: "var(--sage)", fontWeight: 600 }}> · اتحصّل {fmt(paidPart)}</span>}<span data-testid="extra-remaining" style={{ color: "var(--rust)", fontWeight: 600 }}> · متبقي {fmt(Math.round((amt - paidPart) * 100) / 100)} {cur}</span></>)}</span>)}
                     </div>
                   )}
                   {extrasDraft && (perms.editBookings || perms.markPaymentReceived) && !offShift && b.status !== "ملغي" && (

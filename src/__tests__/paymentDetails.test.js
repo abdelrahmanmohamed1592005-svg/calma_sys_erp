@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   normalizeLast4, normalizePhone, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, sameDetails,
-  applyCollectionToRows, applyCafeteriaCollection, splitPaymentForCafeteria, cafeteriaOutstanding, methodTransactions,
+  applyCollectionToRows, applyCafeteriaCollection, splitPaymentForCafeteria, cafeteriaOutstanding, cafeteriaOutstandingLines, methodTransactions,
   computeShiftTotals, freshShiftRecord, emptyLedgerRow,
 } from "../domain/money";
 
@@ -71,6 +71,13 @@ describe("كافيتيريا النزلاء والاستاف", () => {
     expect(splitPaymentForCafeteria(b, 30)).toEqual({ cafeteria: 30, rest: 0 });
     expect(splitPaymentForCafeteria(b, 80)).toEqual({ cafeteria: 50, rest: 30 });
     expect(splitPaymentForCafeteria({ extras: {} }, 80)).toEqual({ cafeteria: 0, rest: 80 });
+  });
+  it("كافيتيريا بعملة تانية (otherCharges) بتظهر في المتبقي زي العادية", () => {
+    const onlyOther = { currency: "USD", extras: { cafeteria: 0 }, otherCharges: { EGP: { cafeteria: 120, cafeteriaPaid: 20 } } };
+    expect(cafeteriaOutstandingLines(onlyOther)).toEqual([{ currency: "EGP", due: 100 }]);
+    const both = { currency: "EGP", extras: { cafeteria: 60 }, otherCharges: { USD: { cafeteria: 5 } } };
+    expect(cafeteriaOutstandingLines(both)).toEqual([{ currency: "EGP", due: 60 }, { currency: "USD", due: 5 }]);
+    expect(cafeteriaOutstandingLines({ currency: "EGP", extras: { cafeteria: 10, cafeteriaPaid: 10 } })).toEqual([]);
   });
   it("تحصيل كافيتيريا نزيل/استاف بيدخل إجمالي اليومية بوسيلته", () => {
     let c = applyCafeteriaCollection([], { kind: "guest", bookingId: "b1", room: 601, who: "Ali", amount: 50, currency: "EGP", method: "فيزا", details: { senderNumber: "1234" }, note: "خدمة كافيتيريا" }).rows;
