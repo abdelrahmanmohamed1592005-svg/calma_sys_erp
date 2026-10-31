@@ -1,7 +1,7 @@
 import { test, expect, say, pause, users, login, logout, goTab, toast, openRoom, payOnBoard, claimShift, shiftDay, myShiftKey, SHIFT_LABEL, boardTile } from "./helpers";
 
 const hotelSelect = (page) => page.getByLabel("الفندق", { exact: true });
-const pick = async (page, name) => { await hotelSelect(page).selectOption({ label: name }); await expect(page.locator(".cx-tile").first()).toBeVisible(); await pause(page, 900); };
+const pick = async (page, name) => { await hotelSelect(page).selectOption({ label: name }); await expect(hotelSelect(page).locator("option:checked")).toHaveText(name); await pause(page, 1100); };
 
 test("09 - الفنادق المتعددة H&S: بروفايل مستقل لكل فندق، توزيع الموظفين، تحصيل كل فندق في يوميته، وتقارير المدير العام", async ({ page, env }) => {
   await users(env);
