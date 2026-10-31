@@ -17,9 +17,9 @@ export default defineConfig({
       workbox: { cleanupOutdatedCaches: true, clientsClaim: true },
       includeAssets: ["favicon.svg"],
       manifest: {
-        name: "Calma Hotel System",
-        short_name: "Calma",
-        description: "نظام إدارة فندق Calma",
+        name: "H&S Hotels Group",
+        short_name: "H&S",
+        description: "نظام إدارة فنادق مجموعة H&S",
         theme_color: "#161D27",
         background_color: "#FBF9F4",
         display: "standalone",

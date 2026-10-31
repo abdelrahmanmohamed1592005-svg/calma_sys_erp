@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { LogOut, Key, Search, LayoutGrid, NotebookPen, CalendarCheck2, BarChart3, History, Users } from "lucide-react";
 import { Logo, initials } from "./shared";
+import { useHotel } from "../lib/hotelContext";
+import { hotelAccent, GROUP_TITLE } from "../domain/constants";
 import { arabicWeekday, arabicDateLong, todayStr } from "../domain/dates";
 import { ROLES, TAB_LABELS } from "../domain/constants";
 import { validatePasswordStrength } from "../domain/security";
@@ -20,24 +22,17 @@ export const TAB_HINTS = {
 };
 
 
-export function Header({ user, onLogout, onChangePassword, onOpenSearch, hotels = [], hotelId, onHotelChange }) {
+export function Header({ user, onLogout, onChangePassword, onOpenSearch }) {
   const date = todayStr();
   const [showPw, setShowPw] = useState(false);
   return (
     <>
       <header className="cx-header cx-no-print">
         <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
-          <Logo size={26} light />
+          <Logo size={30} light />
+          <span className="cx-divider-v" aria-hidden="true" />
           <span className="cx-date">{arabicWeekday(date)} · {arabicDateLong(date)}</span>
         </div>
-        {hotels.length > 1 && onHotelChange && (
-          <label className="cx-hotel-switch" title="اختار الفندق اللي شغال عليه">
-            <span className="cx-hotel-switch-lbl">الفندق</span>
-            <select className="cx-input cx-hotel-select" aria-label="الفندق" value={hotelId} onChange={(e) => onHotelChange(e.target.value)}>
-              {hotels.filter((h) => h.active).map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
-            </select>
-          </label>
-        )}
         {onOpenSearch && (
           <button className="cx-search-btn" onClick={onOpenSearch} aria-label="بحث سريع (Ctrl+K)" title="بحث سريع (Ctrl+K)">
             <Search size={16} aria-hidden="true" /><span className="cx-search-txt">بحث عن نزيل أو غرفة...</span><kbd>Ctrl K</kbd>
@@ -97,13 +92,38 @@ export function TabBar({ tabs, active, onChange, badges = {} }) {
 }
 
 export function PageHead({ tab, actions }) {
+  const { hotel, hotels } = useHotel();
   return (
     <div className="cx-page-head cx-no-print">
       <div>
-        <h1>{TAB_LABELS[tab]}</h1>
+        <h1>{TAB_LABELS[tab]}{hotels.length > 1 && <span className="cx-hotel-tag" style={{ "--acc": hotelAccent(hotels, hotel.id) }} data-testid="hotel-tag">{hotel.name}</span>}</h1>
         <p>{TAB_HINTS[tab]}</p>
       </div>
       {actions}
+    </div>
+  );
+}
+
+
+/* شريط الفنادق: كل فندق بروفايل مستقل - اضغط على الفندق عشان تشتغل عليه (الغرف والحجوزات واليومية والتقارير كلها بتتغيّر) */
+export function HotelBar({ hotels, hotelId, onChange, roomCounts = {} }) {
+  const list = hotels.filter((h) => h.active);
+  if (list.length < 2) return null;
+  return (
+    <div className="cx-hotelbar cx-no-print" role="tablist" aria-label={GROUP_TITLE}>
+      {list.map((h) => {
+        const acc = hotelAccent(hotels, h.id);
+        const active = h.id === hotelId;
+        return (
+          <button key={h.id} role="tab" aria-selected={active} aria-label={h.name} data-hotel-id={h.id} className={"cx-hchip" + (active ? " active" : "")} style={{ "--acc": acc }} onClick={() => onChange(h.id)}>
+            <span className="dot" aria-hidden="true">{String(h.shortName || h.name).trim().charAt(0).toUpperCase()}</span>
+            <span style={{ minWidth: 0 }}>
+              <div className="nm">{h.name}</div>
+              <div className="sub">{roomCounts[h.id] != null ? `${roomCounts[h.id]} غرفة` : "—"}</div>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

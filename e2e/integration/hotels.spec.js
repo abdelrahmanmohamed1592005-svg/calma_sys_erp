@@ -10,8 +10,10 @@ async function users(env) {
   await env.seedUser("rawan", "reservations", "روان");
   await env.seedUser("mona", "accounts", "منى");
 }
-const hotelSelect = (page) => page.getByLabel("الفندق", { exact: true });
-const switchHotel = async (page, name) => { await hotelSelect(page).selectOption({ label: name }); await expect(hotelSelect(page).locator("option:checked")).toHaveText(name); await page.waitForTimeout(500); };
+const hotelTab = (page, name) => page.getByRole("tab", { name, exact: true });
+const hotelTabs = (page) => page.getByRole("tablist").getByRole("tab");
+const activeHotelId = async (page) => page.locator('[role="tab"][aria-selected="true"]').getAttribute("data-hotel-id");
+const switchHotel = async (page, name) => { await hotelTab(page, name).click(); await expect(hotelTab(page, name)).toHaveAttribute("aria-selected", "true"); await expect(page.getByTestId("hotel-tag")).toHaveText(name); await page.waitForTimeout(500); };
 const tiles = (page) => page.locator(".cx-tile");
 
 test.describe("بروفايل مستقل لكل فندق", () => {
@@ -24,7 +26,9 @@ test.describe("بروفايل مستقل لكل فندق", () => {
     await users(env);
     await page.goto("/");
     await login(page, "boss");
-    await expect(hotelSelect(page).locator("option")).toHaveText(["فندق Calma", "Revento", "Park Plaza", "The Location"]);
+    await expect(hotelTabs(page)).toHaveCount(4);
+    await expect(hotelTabs(page)).toContainText(["فندق Calma", "Revento", "Park Plaza", "The Location"]);
+    await expect(hotelTabs(page).first()).toContainText("16 غرفة");
     await expect(tiles(page)).toHaveCount(16);
     for (const [name, n, first, last] of [["Revento", 25, 201, 225], ["Park Plaza", 33, 401, 433], ["The Location", 7, 301, 307], ["فندق Calma", 16, 601, 616]]) {
       await switchHotel(page, name);
@@ -64,7 +68,7 @@ test.describe("بروفايل مستقل لكل فندق", () => {
     await expect(tiles(page)).toHaveCount(7);
     await page.reload();
     await expect(tiles(page)).toHaveCount(7);
-    await expect(hotelSelect(page)).toHaveValue("4");
+    expect(await activeHotelId(page)).toBe("4");
   });
 
   test("مدير الحجوزات والحسابات كمان بيبدّلوا بين الفنادق", async ({ page, env }) => {
@@ -109,7 +113,7 @@ test.describe("الموظفين مشتركين: اختيار فندق + شيفت
     await page.goto("/");
     await login(page, "ahmed");
     // الموظف بيتفتحله فندقه المحجوز تلقائيًا
-    await expect(hotelSelect(page)).toHaveValue("2");
+    await expect.poll(() => activeHotelId(page)).toBe("2");
     await switchHotel(page, "فندق Calma");
     await goTab(page, "اليومية");
     await page.getByRole("button", { name: new RegExp(SHIFT_LABEL[myShiftKey()]) }).click();
@@ -125,7 +129,7 @@ test.describe("الموظفين مشتركين: اختيار فندق + شيفت
     await env.seedShift("sara", { hotel: 1, key: myShiftKey() === "morning" ? "evening" : "morning" });
     await page.goto("/");
     await login(page, "ahmed");
-    await expect(hotelSelect(page)).toHaveValue("2");
+    await expect.poll(() => activeHotelId(page)).toBe("2");
     await openRoom(page, 207);
     await payOnBoard(page, { amount: 120 });
     await expect(toast(page)).toBeVisible();

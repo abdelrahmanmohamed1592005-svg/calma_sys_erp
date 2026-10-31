@@ -620,7 +620,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
           <span>توقيع المسؤول: ______________________</span>
           <span>الختم:</span>
         </div>
-        <div className="cx-print-generated">تم إصدار هذا المستند أوتوماتيكيًا من نظام إدارة الفندق Calma</div>
+        <div className="cx-print-generated">تم إصدار هذا المستند أوتوماتيكيًا من نظام مجموعة H&S للفنادق</div>
       </div>
     </div>
   );

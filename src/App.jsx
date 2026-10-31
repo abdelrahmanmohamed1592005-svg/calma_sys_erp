@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { GlobalStyle, BackToTop, LoadingScreen, ConfigWarningBanner, SchemaOutdatedBanner } from "./components/shared";
 import { checkSchemaVersion, REQUIRED_SCHEMA_VERSION } from "./data/schemaCheck";
-import { Header, TabBar, PageHead } from "./components/Header";
+import { Header, TabBar, PageHead, HotelBar } from "./components/Header";
 import { SetupScreen, LoginScreen, LogoutReportScreen } from "./components/AuthScreens";
 import { RoomBoard } from "./components/RoomBoard";
 import { DailyLedger } from "./components/DailyLedger";
@@ -21,7 +21,7 @@ import { getHotels, DEFAULT_HOTELS, setActiveHotelId } from "./data/hotels";
 import { getMyClaims } from "./data/shifts";
 import { HotelContext } from "./lib/hotelContext";
 
-import { PERMISSIONS, ROOMS_DEFAULT } from "./domain/constants";
+import { PERMISSIONS, ROOMS_DEFAULT, hotelAccent } from "./domain/constants";
 import { todayStr, isSameDay, uid, shiftDayNow } from "./domain/dates";
 
 export default function App() {
@@ -275,6 +275,7 @@ export default function App() {
   const hotelBookings = bookings.filter((b) => (b.hotelId ?? 1) === hotel.id);
   const hotelActivity = activity.filter((a) => a.hotelId == null || a.hotelId === hotel.id);
   setActiveHotelId(hotel.id);
+  const roomCounts = rooms.reduce((m, r) => { const k = r.hotelId ?? 1; m[k] = (m[k] || 0) + 1; return m; }, {});
   const hotelCtx = { hotels, hotel, hotelId: hotel.id };
   const activeTab = perms.tabs.includes(tab) ? tab : perms.tabs[0];
 
@@ -285,12 +286,13 @@ export default function App() {
 
   return (
     <HotelContext.Provider value={hotelCtx}>
-    <div className="calma-app cx-shell" dir="rtl">
+    <div className="calma-app cx-shell" dir="rtl" style={{ "--hotel": hotelAccent(hotels, hotel.id) }}>
       <GlobalStyle />
-      <Header hotels={hotels} hotelId={hotel.id} onHotelChange={switchHotel} user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} onOpenSearch={() => setPaletteOpen(true)} />
+      <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} onOpenSearch={() => setPaletteOpen(true)} />
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={{}} />
       <main className="cx-main">
       {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
+      <HotelBar hotels={hotels} hotelId={hotel.id} onChange={switchHotel} roomCounts={roomCounts} />
       <PageHead tab={activeTab} />
       {loadingData ? <LoadingScreen /> : (
         <React.Fragment key={hotel.id}>

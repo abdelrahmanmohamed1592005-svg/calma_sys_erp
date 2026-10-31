@@ -38,7 +38,8 @@ export function GlobalStyle() {
       }
       .calma-app *{ box-sizing:border-box; }
       .calma-app button, .calma-app input, .calma-app select, .calma-app textarea{ font-family:inherit; }
-      .cx-logo{ font-family:'Fraunces',serif; font-style:italic; letter-spacing:.01em; }
+      .cx-logo{ font-family:Georgia,'Times New Roman',serif; font-weight:700; letter-spacing:.04em; }
+      html, body{ margin:0; background:#F5F3EE; }
 
       /* ---------- app shell ---------- */
       .cx-shell{ min-height:100vh; }
@@ -81,6 +82,27 @@ export function GlobalStyle() {
         .cx-page-head{ padding:16px 14px 0; }
         .cx-page-head h1{ font-size:19px; }
       }
+
+
+      /* ---------- شريط الفنادق + هوية المجموعة ---------- */
+      .cx-header{ border-bottom:3px solid var(--hotel,#B8912F); }
+      .cx-brand-wrap{ display:flex; align-items:center; gap:14px; min-width:0; }
+      .cx-brand-wrap .cx-logo{ color:#F4E6B8; }
+      .cx-divider-v{ width:1px; height:26px; background:rgba(255,255,255,.18); }
+      .cx-hotelbar{ display:flex; gap:10px; padding:14px 22px 0; overflow-x:auto; scrollbar-width:none; }
+      .cx-hotelbar::-webkit-scrollbar{ display:none; }
+      .cx-hchip{ flex:1 1 0; min-width:150px; max-width:260px; display:flex; align-items:center; gap:10px; text-align:start; padding:10px 14px; border-radius:14px; background:var(--surface); border:1px solid var(--hair); cursor:pointer; box-shadow:var(--sh); transition:transform .12s, box-shadow .15s, border-color .15s, background .15s; color:var(--text); font-family:inherit; }
+      .cx-hchip:hover{ transform:translateY(-1px); box-shadow:var(--sh-l); }
+      .cx-hchip .dot{ width:36px; height:36px; border-radius:11px; display:grid; place-items:center; color:#fff; font-weight:700; font-size:14px; background:var(--acc); flex:none; }
+      .cx-hchip .nm{ font-size:14.5px; font-weight:700; color:var(--ink); line-height:1.2; }
+      .cx-hchip .sub{ font-size:12px; color:var(--muted); margin-top:2px; }
+      .cx-hchip.active{ background:linear-gradient(135deg,#132A3D,#1D3A52); border-color:var(--acc); box-shadow:0 0 0 2px var(--acc), 0 10px 22px -12px rgba(19,42,61,.7); }
+      .cx-hchip.active .nm{ color:#fff; } .cx-hchip.active .sub{ color:rgba(239,233,218,.75); }
+      .cx-hotel-tag{ display:inline-flex; align-items:center; gap:6px; margin-inline-start:10px; padding:2px 11px; border-radius:999px; background:var(--acc); color:#fff; font-size:13px; font-weight:700; vertical-align:middle; }
+      .cx-page-head h1{ display:flex; align-items:center; flex-wrap:wrap; }
+      @media screen and (max-width:1023.98px){ .cx-hotelbar{ padding:10px 12px 0; } .cx-hchip{ min-width:128px; padding:8px 10px; } .cx-hchip .dot{ width:30px; height:30px; font-size:12.5px; } .cx-divider-v, .cx-brand-sub{ display:none; } }
+      .cx-auth-brand .cx-auth-hotels{ display:flex; gap:8px; flex-wrap:wrap; margin-top:18px; }
+      .cx-auth-brand .cx-auth-hotels span{ padding:5px 12px; border-radius:999px; border:1px solid rgba(214,178,94,.45); color:#E8D49A; font-size:13px; background:rgba(214,178,94,.08); }
 
       /* ---------- icon chips & motion ---------- */
       .cx-ico{ width:40px; height:40px; border-radius:12px; display:inline-grid; place-items:center; flex:none; }
@@ -150,7 +172,7 @@ export function GlobalStyle() {
       .cx-board{ display:grid; grid-template-columns:1fr; gap:16px; align-items:start; }
       @media screen and (min-width:1024px){ .cx-board.has-panel{ grid-template-columns:minmax(0,1fr) minmax(380px,460px); } }
       @media screen and (min-width:1400px){ .cx-board.has-panel{ grid-template-columns:minmax(0,1fr) minmax(440px,540px); } }
-      .cx-tiles{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
+      .cx-tiles{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); grid-auto-rows:minmax(122px,auto); gap:12px; }
       .cx-tile{ border:1px solid var(--hair); border-radius:14px; background:#fff; padding:12px 12px 11px; cursor:pointer; transition:transform .12s, box-shadow .15s, border-color .15s; box-shadow:var(--sh); position:relative; overflow:hidden; min-height:96px; display:flex; flex-direction:column; gap:2px; }
       .cx-tile::before{ content:""; position:absolute; inset-inline:0; top:0; height:4px; background:var(--st,#999); }
       .cx-tile:hover{ transform:translateY(-2px); box-shadow:var(--sh-l); }
@@ -434,9 +456,16 @@ export function SchemaOutdatedBanner({ version, required, isAdmin }) {
 
 export function Logo({ size = 34, light = false }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="19" fill="none" stroke="#B8912F" strokeWidth="1.4" /><text x="20" y="27" textAnchor="middle" fontFamily="Fraunces, serif" fontStyle="italic" fontSize="20" fill={light ? "#D9B65C" : "#1F4B4A"}>C</text></svg>
-      <span className="cx-logo" style={{ fontSize: size * 0.62 }}>Calma</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }} data-testid="brand-logo">
+      <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
+        <defs><linearGradient id={"hsg" + (light ? "l" : "d")} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#D9B65C" /><stop offset="1" stopColor="#8F6C1C" /></linearGradient></defs>
+        <rect x="1.5" y="1.5" width="45" height="45" rx="13" fill={light ? "rgba(255,255,255,.07)" : "#132A3D"} stroke={"url(#hsg" + (light ? "l" : "d") + ")"} strokeWidth="2" />
+        <text x="24" y="35" textAnchor="middle" fontFamily="Georgia, 'Times New Roman', serif" fontStyle="italic" fontWeight="700" fontSize="31" fill="#E8C86E">&amp;</text>
+      </svg>
+      <span style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+        <span className="cx-logo" style={{ fontSize: size * 0.62 }}>H&amp;S</span>
+        <span style={{ fontSize: Math.max(10, size * 0.3), letterSpacing: ".18em", opacity: .7, marginTop: 2 }}>HOTELS GROUP</span>
+      </span>
     </div>
   );
 }

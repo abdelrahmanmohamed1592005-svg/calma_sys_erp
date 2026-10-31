@@ -497,13 +497,13 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
           {copyText && <textarea className="cx-textarea" readOnly value={copyText} rows={8} style={{ marginTop: 10 }} onFocus={(e) => e.target.select()} />}
 
           {/* تذييل الطباعة: خانة توقيع/ختم المسؤول، وسطر صغير بيوضح إن
-              التقرير متولد أوتوماتيك من نظام Calma - شكل ورقة رسمية. */}
+              التقرير متولد أوتوماتيك من نظام مجموعة H&S - شكل ورقة رسمية. */}
           <div className="cx-print-only cx-print-footer">
             <div className="cx-print-sign">
               <span>توقيع المسؤول: ______________________</span>
               <span>الختم:</span>
             </div>
-            <div className="cx-print-generated">تم إصدار هذا التقرير أوتوماتيكيًا من نظام إدارة الفندق Calma</div>
+            <div className="cx-print-generated">تم إصدار هذا التقرير أوتوماتيكيًا من نظام مجموعة H&S للفنادق</div>
           </div>
         </>
       )}
