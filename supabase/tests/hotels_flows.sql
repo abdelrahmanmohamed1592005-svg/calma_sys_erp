@@ -61,3 +61,36 @@ select t.reject('H14 hs1 مايعدّلش حجز Revento', t.upd('hs1', 'H13d', 
 -- نقل النزيل: مدير الحجوزات بس
 select t.reject('H15 موظف شيفته مفتوح ما بيقدرش ينقل نزيل', t.try('hs2', format($q$select move_booking_room(%L, 217)$q$, (select id from t.ids where name = 'H13d'))), 'مدير الحجوزات');
 select t.pass('H15 مدير الحجوزات ينقل جوه نفس الفندق', t.try('res1', format($q$select move_booking_room(%L, 217)$q$, (select id from t.ids where name = 'H13d'))));
+
+-- أكواد الحجز لكل فندق: بادئة الفندق + رقم متسلسل لكل فندق لوحده
+select t.eq('H16 كود حجز Calma بيبدأ بـ B', (select left(code, 1) from bookings where guest_name = 'H13c'), 'B');
+select t.eq('H16 كود حجز Revento بيبدأ بـ R', (select left(code, 1) from bookings where guest_name = 'H13d'), 'R');
+select t.eq('H16 كود حجز Park Plaza بيبدأ بـ P', (select left(code, 1) from bookings where guest_name = 'H13f'), 'P');
+select t.eq('H16 كود حجز The Location بيبدأ بـ L', (select left(code, 1) from bookings where guest_name = 'H2c'), 'L');
+select t.chk('H16 مفيش كودين متكررين في كل الحجوزات', (select count(*) = count(distinct code) from bookings));
+select t.chk('H16 العداد منفصل لكل فندق (كل فندق ليه أرقامه)', (select count(distinct hotel_id) from booking_code_counters) >= 4);
+
+-- إدارة الفنادق والغرف (المدير العام بس) + حماية
+select t.reject('H17 مدير الحجوزات مايضيفش فندق', t.try('res1', $q$select create_hotel('Hotel X', 'X', 'X')$q$), 'المدير العام');
+select t.reject('H17 موظف مايضيفش غرفة', t.try('hs1', $q$select add_hotel_room(2, 250, '250')$q$), 'المدير العام');
+select t.pass('H17 المدير العام يضيف فندق', t.try('gm1', $q$select create_hotel('Sea View', 'Sea', 'S')$q$));
+select t.eqn('H17 الفندق الجديد رقم 5', (select max(id) from hotels), 5);
+select t.reject('H17 نفس البادئة مرفوضة', t.try('gm1', $q$select create_hotel('Other', 'O', 'S')$q$), 'بادئة');
+select t.reject('H17 نفس الاسم مرفوض', t.try('gm1', $q$select create_hotel('sea view', 'x', 'Z')$q$), 'بنفس الاسم');
+select t.pass('H17 المدير العام يضيف غرفة للفندق الجديد', t.try('gm1', $q$select add_hotel_room(5, 501, 'Suite 501')$q$));
+select t.reject('H17 رقم غرفة مكرر مرفوض (حتى في فندق تاني)', t.try('gm1', $q$select add_hotel_room(5, 205, 'x')$q$), 'مستخدم');
+select t.eqn('H17 الغرفة اتضافت على الفندق ٥', (select hotel_id from rooms where number = 501), 5);
+select t.pass('H17 المدير العام يعدّل اسم غرفة', t.try('gm1', $q$select rename_hotel_room(501, 'Suite 501 VIP')$q$));
+select t.eq('H17 الاسم اتغيّر', (select name from rooms where number = 501), 'Suite 501 VIP');
+select t.reject('H17 مدير الحجوزات مايعدّلش اسم غرفة', t.try('res1', $q$select rename_hotel_room(501, 'x')$q$), 'المدير العام');
+select t.pass('H17 حجز في الفندق الجديد بيتربط بيه وبكوده', t.ins('res1', 'H17b', 501, 700, 701, 100, 100));
+select t.eq('H17 كود الفندق الجديد بيبدأ بـ S', (select left(code, 1) from bookings where guest_name = 'H17b'), 'S');
+
+-- تحديد فنادق الموظف (allowed_hotels): الاختيار خارج المسموح مرفوض من القاعدة
+update profiles set allowed_hotels = array[3] where username = 'st2';
+select t.reject('H18 st2 مسموحله Park Plaza بس: يختار شيفت Calma مرفوض', t.try('st2', format($q$insert into shift_claims(hotel_id, date, shift_key, username, name) values (1, %L, 'night', 'st2', 'st2')$q$, hotel_today() + 1)));
+select t.pass('H18 st2 يختار شيفت في Park Plaza (المسموح)', t.try('st2', format($q$insert into shift_claims(hotel_id, date, shift_key, username, name) values (3, %L, 'night', 'st2', 'st2')$q$, hotel_today() + 1)));
+select t.try('gm1', $q$update profiles set allowed_hotels = array[99] where username = 'st1'$q$);
+select t.chk('H18 فندق مش موجود مرفوض في القايمة', (select allowed_hotels is null from profiles where username = 'st1'));
+select t.try('st2', $q$update profiles set allowed_hotels = null where username = 'st2'$q$);
+select t.chk('H18 الموظف مايفكّش قيد نفسه', (select allowed_hotels = array[3] from profiles where username = 'st2'));

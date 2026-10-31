@@ -80,6 +80,7 @@ describe.skipIf(!enabled)("إصلاحات المراجعة الكاملة", () =
   });
 
   it("قفل الكتابة المباشرة: مفيش دور بيغيّر amount_paid ولا ديون الكافيتيريا بتحديث/إضافة مباشرة، والدوال الذرية شغّالة، والصيانة (من غير مستخدم) مسموحة", async () => {
+    await db.q("insert into shift_claims(date, shift_key, username, name) values ($1::date - 1,'night','st2','st2') on conflict do nothing", [today]);   // st2 عنده شيفت في فندق ١ (قيد: الموظف بيعدّل حجز في فندق شيفته بس)
     await db.q("insert into shift_claims(date, shift_key, username, name) values ($1,'morning','st1','st1') on conflict do nothing", [today]);
     await db.q("insert into shift_records(date, shift_key, staff_name, staff_username, rows) values ($1,'morning','st1','st1','[]'::jsonb) on conflict do nothing", [today]);
     const id = (await db.q("insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency) values (607,'Lock',$1,$2,100,200,'EGP') returning id", [today, addDays(today, 2)]))[0].id;

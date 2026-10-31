@@ -6,10 +6,12 @@ import { shiftDayNow, isShiftOver } from "../domain/dates";
 import { getClaimsForDate, clearClaimRow, deleteShiftRecord, getShiftRecord } from "../data/shifts";
 import { adminCreateUser, setProfileActive, adminResetPassword } from "../lib/auth";
 import { useHotel } from "../lib/hotelContext";
+import { HotelsAdmin } from "./HotelsAdmin";
+import { setProfileHotels } from "../data/hotels";
 import { validatePasswordStrength, validateUsername, sanitizeText } from "../domain/security";
 
-export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog, showToast, dataVersion }) {
-  const { hotel } = useHotel();
+export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog, showToast, dataVersion, allRooms = [], onHotelsChanged }) {
+  const { hotel, hotels } = useHotel();
   const [form, setForm] = useState(null);
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPw, setResetPw] = useState("");
@@ -66,6 +68,15 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
     if (res.error) { showToast(res.error); return; }
     onRefresh(); onLog(`${u.active ? "تعطيل" : "تفعيل"} حساب ${u.username}`); showToast("تم التحديث");
   }
+  async function toggleUserHotel(u, hid) {
+    const activeIds = hotels.filter((h) => h.active).map((h) => h.id);
+    const cur = u.allowed_hotels && u.allowed_hotels.length ? u.allowed_hotels.filter((x) => activeIds.includes(x)) : activeIds;
+    const next = cur.includes(hid) ? cur.filter((x) => x !== hid) : [...cur, hid];
+    if (!next.length) { showToast("لازم الموظف يكون مسموحله بفندق واحد على الأقل"); return; }
+    const res = await setProfileHotels(u.id, next.length === activeIds.length ? null : next);
+    if (res.error) { showToast(res.error); return; }
+    onRefresh(); onLog(`تحديد فنادق الموظف ${u.username}: ${next.length === activeIds.length ? "كل الفنادق" : hotels.filter((h) => next.includes(h.id)).map((h) => h.name).join("، ")}`); showToast("تم تحديث فنادق الموظف");
+  }
   async function submitReset() { return guarded(submitResetInner); }
   async function submitResetInner() {
     const check = validatePasswordStrength(resetPw);
@@ -78,6 +89,8 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
   return (
     <div className="cx-page">
       <div className="cx-card" style={{ padding: "12px 14px", marginBottom: 14, fontSize: 13.5, color: "var(--muted)", display: "flex", gap: 8, background: "var(--info-bg)", borderColor: "#D3E0EB" }}><Info size={16} style={{ flexShrink: 0, marginTop: 2, color: "var(--slate)" }} />الحساب الوحيد اللي يقدر يضيف موظفين جدد أو يعطّل حساب هو المدير العام. مفيش تسجيل حساب مفتوح لأي حد. {readOnly && "إنت بتشوف القائمة دي للعلم بس، مفيش تعديل من هنا."}</div>
+
+      {!readOnly && <HotelsAdmin hotels={hotels} rooms={allRooms} onChanged={() => onHotelsChanged && onHotelsChanged()} onLog={onLog} showToast={showToast} />}
 
       {!readOnly && claims && (
         <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
@@ -114,6 +127,15 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
         {users.map((u) => (
           <div key={u.username} className="cx-card" style={{ padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, opacity: u.active ? 1 : 0.6 }}>
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-avatar" aria-hidden="true" style={{ width: 40, height: 40, background: u.active ? undefined : "#CFC8B8" }}>{initials(u.name)}</span><div><div style={{ fontWeight: 700, fontSize: 15 }}>{u.name} {u.username === currentUsername && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>(أنت)</span>}</div><div style={{ fontSize: 13, color: "var(--muted)" }}><span dir="ltr">@{u.username}</span> · <span className={"cx-role r-" + u.role}>{ROLES.find((r) => r.key === u.role)?.label}</span> {!u.active && <span className="cx-role off">· معطّل</span>}</div></div></div>
+            {!readOnly && u.role === "staff" && hotels.filter((h) => h.active).length > 1 && (
+              <div data-testid={"user-hotels-" + u.username} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexBasis: "100%", paddingTop: 8, borderTop: "1px dashed var(--hair)", fontSize: 13 }}>
+                <span style={{ color: "var(--muted)" }}>الفنادق المسموحة:</span>
+                {hotels.filter((h) => h.active).map((h) => {
+                  const allowed = !u.allowed_hotels || u.allowed_hotels.includes(h.id);
+                  return (<label key={h.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer" }}><input type="checkbox" checked={allowed} disabled={busy} aria-label={`${u.username} - ${h.name}`} onChange={() => guarded(() => toggleUserHotel(u, h.id))} />{h.name}</label>);
+                })}
+              </div>
+            )}
             {!readOnly && (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {resetTarget === u.username ? (

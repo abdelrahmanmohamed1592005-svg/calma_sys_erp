@@ -270,13 +270,16 @@ export default function App() {
 
   const perms = PERMISSIONS[currentProfile.role];
   // الفندق المختار لو مش موجود في القايمة (اتشال/قديم) نرجع لأول فندق
-  const hotel = hotels.find((h) => h.id === hotelId) || hotels[0];
+  // الموظف المقيّد بفنادق معيّنة بيشوف فنادقه بس (لحد ما قايمة الفنادق تتحمّل بنفضل على الكل عشان الشاشة ماتقعش)
+  const allowedList = (currentProfile.role === "staff" && currentProfile.allowed_hotels?.length) ? hotels.filter((h) => currentProfile.allowed_hotels.includes(h.id)) : [];
+  const visibleHotels = allowedList.length ? allowedList : hotels;
+  const hotel = visibleHotels.find((h) => h.id === hotelId && h.active !== false) || visibleHotels.find((h) => h.active !== false) || visibleHotels[0];
   const hotelRooms = rooms.filter((r) => (r.hotelId ?? 1) === hotel.id);
   const hotelBookings = bookings.filter((b) => (b.hotelId ?? 1) === hotel.id);
   const hotelActivity = activity.filter((a) => a.hotelId == null || a.hotelId === hotel.id);
   setActiveHotelId(hotel.id);
   const roomCounts = rooms.reduce((m, r) => { const k = r.hotelId ?? 1; m[k] = (m[k] || 0) + 1; return m; }, {});
-  const hotelCtx = { hotels, hotel, hotelId: hotel.id };
+  const hotelCtx = { hotels: visibleHotels, hotel, hotelId: hotel.id };
   const activeTab = perms.tabs.includes(tab) ? tab : perms.tabs[0];
 
   if (logoutGate) {
@@ -286,13 +289,13 @@ export default function App() {
 
   return (
     <HotelContext.Provider value={hotelCtx}>
-    <div className="calma-app cx-shell" dir="rtl" style={{ "--hotel": hotelAccent(hotels, hotel.id) }}>
+    <div className="calma-app cx-shell" dir="rtl" style={{ "--hotel": hotelAccent(visibleHotels, hotel.id) }}>
       <GlobalStyle />
       <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} onOpenSearch={() => setPaletteOpen(true)} />
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={{}} />
       <main className="cx-main">
       {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
-      <HotelBar hotels={hotels} hotelId={hotel.id} onChange={switchHotel} roomCounts={roomCounts} />
+      <HotelBar hotels={visibleHotels} hotelId={hotel.id} onChange={switchHotel} roomCounts={roomCounts} />
       <PageHead tab={activeTab} />
       {loadingData ? <LoadingScreen /> : (
         <React.Fragment key={hotel.id}>
@@ -301,14 +304,14 @@ export default function App() {
           {activeTab === "bookings" && <BookingsPanel jumpQuery={jump?.query != null ? jump : null} onJumpDone={() => setJump(null)} rooms={hotelRooms} bookings={hotelBookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={hotelRooms} bookings={hotelBookings} allRooms={rooms} allBookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
           {activeTab === "activity" && <ActivityPanel activity={hotelActivity} />}
-          {activeTab === "users" && <UsersPanel users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "users" && <UsersPanel allRooms={rooms} onHotelsChanged={() => setDataVersion((v) => v + 1)} users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
         </React.Fragment>
       )}
       </main>
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} tabs={perms.tabs} rooms={hotelRooms} bookings={hotelBookings} overrides={overrides}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} tabs={perms.tabs} rooms={rooms} bookings={bookings} overrides={overrides} hotels={visibleHotels} hotelId={hotel.id}
         onGoTab={(t) => setTab(t)}
-        onOpenRoom={(r) => { setTab(perms.tabs.includes("board") ? "board" : perms.tabs[0]); setJump({ room: r, nonce: Date.now() }); }}
-        onFindBooking={(name) => { if (perms.tabs.includes("bookings")) { setTab("bookings"); setJump({ query: name, nonce: Date.now() }); } }} />
+        onOpenRoom={(r, h) => { if (h) switchHotel(h); setTab(perms.tabs.includes("board") ? "board" : perms.tabs[0]); setJump({ room: r, nonce: Date.now() }); }}
+        onFindBooking={(name, h) => { if (perms.tabs.includes("bookings")) { if (h) switchHotel(h); setTab("bookings"); setJump({ query: name, nonce: Date.now() }); } }} />
       <BackToTop />
       {toast && <div className="cx-toast" role="status">{toast}</div>}
       {!supabaseConfigured && <ConfigWarningBanner />}

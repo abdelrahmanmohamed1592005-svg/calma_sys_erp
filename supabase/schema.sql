@@ -251,6 +251,15 @@ grant select on hotels to authenticated;
 grant update (name, short_name, active) on hotels to authenticated;
 grant all on hotels to service_role;
 
+alter table hotels add column if not exists code_prefix text not null default 'B';
+update hotels set code_prefix = case id when 2 then 'R' when 3 then 'P' when 4 then 'L' else code_prefix end where code_prefix = 'B' and id in (2, 3, 4);
+-- الفنادق اللي الموظف مسموحله يشتغل فيها (null = كلها): المدير العام بيحدّدها من شاشة الفنادق
+alter table profiles add column if not exists allowed_hotels integer[];
+create or replace function can_work_in_hotel(h integer)
+returns boolean language sql security definer stable set search_path = public as $$
+  select coalesce((select allowed_hotels is null or h = any(allowed_hotels) from profiles where id = auth.uid()), false);
+$$;
+grant execute on function can_work_in_hotel(integer) to authenticated;
 alter table rooms add column if not exists hotel_id integer not null default 1 references hotels(id);
 alter table bookings add column if not exists hotel_id integer not null default 1 references hotels(id);
 alter table shift_records add column if not exists hotel_id integer not null default 1 references hotels(id);
@@ -305,7 +314,8 @@ begin
 end;
 $$;
 drop trigger if exists bookings_set_hotel_trg on bookings;
-create trigger bookings_set_hotel_trg before insert or update on bookings
+drop trigger if exists bookings_0_set_hotel_trg on bookings;
+create trigger bookings_0_set_hotel_trg before insert or update on bookings
   for each row execute function bookings_set_hotel();
 
 -- --------------------------------------------------------------------------
@@ -1644,7 +1654,7 @@ $$;
 --     الشيفتات اللي بيبدأ ٨ص) - مش أي تاريخ بعيد يحجز شيفتات مقدّمًا.
 drop policy if exists "claims insert" on shift_claims;
 create policy "claims insert" on shift_claims for insert
-  with check (is_staff() and date between hotel_today() - 1 and hotel_today() + 1);
+  with check (is_staff() and date between hotel_today() - 1 and hotel_today() + 1 and can_work_in_hotel(hotel_id));
 
 -- إنشاء يومية شيفت: لنفس الموظف اللي حاجز الشيفت ده فعلاً وبتاريخ قريب.
 drop policy if exists "shifts insert" on shift_records;
@@ -3256,7 +3266,122 @@ drop trigger if exists bookings_guests_sync on bookings;
 create trigger bookings_guests_sync after insert or update of pax, room, guest_codes, checkin, status on bookings
   for each row execute function bookings_sync_guests();
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 42 $$;
+
+-- --------------------------------------------------------------------------
+-- 43) إدارة الفنادق (المدير العام) + أكواد حجز لكل فندق + صلاحية الموظف على فنادق معيّنة
+--     - كود الحجز: بادئة الفندق + سنة/شهر + رقم متسلسل لكل فندق (Calma = B زي ما كان، Revento = R، Park Plaza = P، The Location = L).
+--     - المدير العام بيضيف فندق جديد وغرف جديدة ويعدّل الأسماء من الواجهة (دوال محمية، مفيش مسح).
+--     - allowed_hotels على الموظف: لو متحدد، مايقدرش يختار شيفت إلا في الفنادق دي (القاعدة بتفرض ده).
+-- --------------------------------------------------------------------------
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_name = 'booking_code_counters' and column_name = 'hotel_id') then
+    alter table booking_code_counters add column hotel_id integer not null default 1;
+    alter table booking_code_counters drop constraint if exists booking_code_counters_pkey;
+    alter table booking_code_counters add primary key (ym, hotel_id);
+  end if;
+end $$;
+
+create or replace function next_booking_code_h(p_day date, p_hotel integer)
+returns text language plpgsql security definer set search_path = public as $$
+declare ym_v text := to_char(coalesce(p_day, hotel_today()), 'YYMM'); k int; pre text;
+begin
+  select coalesce(nullif(btrim(code_prefix), ''), 'B') into pre from hotels where id = p_hotel;
+  insert into booking_code_counters(ym, hotel_id, n) values (ym_v, coalesce(p_hotel, 1), 1)
+    on conflict (ym, hotel_id) do update set n = booking_code_counters.n + 1
+    returning n into k;
+  return coalesce(pre, 'B') || ym_v || '-' || (case when k < 10000 then lpad(k::text, 4, '0') else k::text end);    -- الرقم الأطول من ٤ خانات بيتكتب كامل (من غير قصّ)
+end;
+$$;
+revoke all on function next_booking_code_h(date, integer) from public, anon, authenticated;
+-- النسخة القديمة (من غير فندق) بقت بتحسب على الفندق ١
+create or replace function next_booking_code(p_day date default null)
+returns text language sql security definer set search_path = public as $$ select next_booking_code_h(p_day, 1) $$;
+revoke all on function next_booking_code(date) from public, anon, authenticated;
+
+create or replace function bookings_auto_code()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare h integer;
+begin
+  select hotel_id into h from rooms where number = new.room;
+  h := coalesce(h, 1);
+  if TG_OP = 'INSERT' then
+    new.code := next_booking_code_h(null, h);
+  elsif coalesce(old.code, '') <> '' then
+    new.code := old.code;                       -- مابيتغيّرش
+  elsif coalesce(new.code, '') = '' then
+    new.code := next_booking_code_h(null, h);
+  end if;
+  return new;
+end;
+$$;
+revoke all on function bookings_auto_code() from public, anon, authenticated;
+
+-- إدارة الفنادق والغرف: المدير العام بس، من خلال دوال (مفيش مسح لفندق أو غرفة عشان مايبوّظش حجوزات ويوميات)
+create or replace function create_hotel(p_name text, p_short text default null, p_prefix text default null)
+returns integer language plpgsql security definer set search_path = public as $$
+declare nid integer; nm text := btrim(coalesce(p_name, '')); pre text := upper(btrim(coalesce(p_prefix, '')));
+begin
+  if not is_gm() then raise exception 'إضافة فندق من صلاحية المدير العام بس'; end if;
+  if char_length(nm) < 2 or char_length(nm) > 60 then raise exception 'اكتب اسم الفندق (٢ لـ ٦٠ حرف)'; end if;
+  if exists (select 1 from hotels where lower(name) = lower(nm)) then raise exception 'فيه فندق بنفس الاسم'; end if;
+  if pre = '' then pre := upper(left(regexp_replace(nm, '[^A-Za-z]', '', 'g'), 1)); end if;
+  if pre = '' or pre !~ '^[A-Z]{1,2}$' then raise exception 'بادئة كود الحجز: حرف أو حرفين إنجليزي'; end if;
+  if exists (select 1 from hotels where code_prefix = pre) then raise exception 'بادئة الكود دي مستخدمة في فندق تاني - اختار حرف تاني'; end if;
+  select coalesce(max(id), 0) + 1 into nid from hotels;
+  insert into hotels(id, name, short_name, sort_order, code_prefix) values (nid, nm, nullif(btrim(coalesce(p_short, '')), ''), nid, pre);
+  return nid;
+end;
+$$;
+revoke all on function create_hotel(text, text, text) from public, anon;
+grant execute on function create_hotel(text, text, text) to authenticated;
+
+create or replace function add_hotel_room(p_hotel integer, p_number integer, p_name text default null)
+returns integer language plpgsql security definer set search_path = public as $$
+begin
+  if not is_gm() then raise exception 'إضافة غرفة من صلاحية المدير العام بس'; end if;
+  if not exists (select 1 from hotels where id = p_hotel) then raise exception 'الفندق مش موجود'; end if;
+  if p_number is null or p_number < 1 or p_number > 99999 then raise exception 'رقم الغرفة لازم يكون رقم صحيح'; end if;
+  if exists (select 1 from rooms where number = p_number) then raise exception 'رقم الغرفة ده مستخدم بالفعل (أرقام الغرف فريدة على مستوى الجروب)'; end if;
+  insert into rooms(number, name, hotel_id) values (p_number, left(coalesce(nullif(btrim(coalesce(p_name, '')), ''), p_number::text), 80), p_hotel);
+  return p_number;
+end;
+$$;
+revoke all on function add_hotel_room(integer, integer, text) from public, anon;
+grant execute on function add_hotel_room(integer, integer, text) to authenticated;
+
+create or replace function rename_hotel_room(p_number integer, p_name text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_gm() then raise exception 'تعديل اسم الغرفة من صلاحية المدير العام بس'; end if;
+  if btrim(coalesce(p_name, '')) = '' then raise exception 'اكتب اسم الغرفة'; end if;
+  update rooms set name = left(btrim(p_name), 80) where number = p_number;
+  if not found then raise exception 'الغرفة مش موجودة'; end if;
+end;
+$$;
+revoke all on function rename_hotel_room(integer, text) from public, anon;
+grant execute on function rename_hotel_room(integer, text) to authenticated;
+
+-- المدير العام يعدّل بادئة الكود كمان (الأكواد القديمة مابتتغيّرش)
+grant update (name, short_name, active, code_prefix) on hotels to authenticated;
+
+-- تحديد فنادق الموظف: المدير العام بس (سياسة تعديل profiles أصلاً للمدير العام بس)
+create or replace function validate_allowed_hotels()
+returns trigger language plpgsql as $$
+begin
+  if new.allowed_hotels is not null then
+    if cardinality(new.allowed_hotels) = 0 then new.allowed_hotels := null; end if;
+    if exists (select 1 from unnest(new.allowed_hotels) h where not exists (select 1 from hotels where id = h)) then
+      raise exception 'فندق غير موجود في قايمة الفنادق المسموحة';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists profiles_validate_hotels on profiles;
+create trigger profiles_validate_hotels before insert or update on profiles
+  for each row execute function validate_allowed_hotels();
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 43 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

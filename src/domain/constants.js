@@ -8,7 +8,7 @@ export const GROUP_NAME = "H&S";
 export const GROUP_TITLE = "مجموعة H&S للفنادق";
 /* لون مميّز لكل فندق (بالترتيب) - بيظهر في شريط الفنادق وخط الهيدر عشان تعرف إنت في أنهي فندق */
 export const HOTEL_ACCENTS = ["#1F6B66", "#5B4BA6", "#B07A12", "#A63D63", "#2E6B9E", "#2F7A4F"];
-export const hotelAccent = (hotels, id) => HOTEL_ACCENTS[Math.max(0, (hotels || []).findIndex((h) => h.id === id)) % HOTEL_ACCENTS.length];
+export const hotelAccent = (_hotels, id) => HOTEL_ACCENTS[(Math.max(1, Number(id) || 1) - 1) % HOTEL_ACCENTS.length];
 
 export const SHIFTS = [
   { key: "morning", label: "الشيفت الصباحي", time: "8ص - 4م" },
