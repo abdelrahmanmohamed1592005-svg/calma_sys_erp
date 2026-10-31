@@ -1,3 +1,4 @@
+import { addExtraOnBoard } from "../e2e/ui";
 import { test, expect, say, pause, users, dbBooking, login, claimShift, goTab, field, toast, cairoDate, openRoom, openMore, roomCard, payOnBoard, waitIdle } from "./helpers";
 
 test("01 - الحجوزات: التحقق من المدخلات، أكواد الأفراد، الأونلاين، التسكين المكرر، لوحة الغرف", async ({ page, env }) => {
@@ -94,10 +95,9 @@ test("01 - الحجوزات: التحقق من المدخلات، أكواد ا�
   await openRoom(page, 601); await pause(page, 1800);
   await say(page, "بطاقة الغرفة: الإجمالي / المدفوع / المتبقي + حالة الدفع التلقائية", 2400);
   await say(page, "رسوم إضافية (جولات) تتضاف على طول، والمتبقي بيتحدّث", 1200);
-  await page.locator("xpath=//label[contains(.,'جولات')]/following-sibling::input").fill("30");
-  await page.getByRole("button", { name: /حفظ الرسوم/ }).click(); await pause(page, 2400);
-  await say(page, "دخول مبكر: رسم ٢٠ بيتحصّل كاش في نفس اللحظة ويتسجّل في اليومية", 1200);
-  await page.getByTestId("early-fee").fill("20"); await page.getByTestId("early-apply").click(); await waitIdle(page); await pause(page, 2400);
+  await addExtraOnBoard(page, "جولات", 30); await pause(page, 2400);
+  await say(page, "خدمة بيك أب ٢٠ بتتضاف على الحجز (من غير سعر صرف - كل خدمة بعملتها)", 1200);
+  await addExtraOnBoard(page, "بيك أب", 20); await pause(page, 2400);
   await say(page, "تمديد الإقامة ليلة: التاريخ والإجمالي والمتبقي بيتحدّثوا لوحدهم", 1200);
   await page.getByRole("button", { name: /تمديد الحجز/ }).click(); await pause(page, 2600);
   await say(page, "وفي الآخر: كل ده اتحسب في اليومية والتقرير (شوف الفيديوهات الجاية)", 2400);

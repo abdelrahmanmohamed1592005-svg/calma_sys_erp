@@ -158,6 +158,43 @@ test.describe("الموظفين مشتركين: اختيار فندق + شيفت
   });
 });
 
+test.describe("نقل النزيل وإضافة الحجز", () => {
+  test("موظف الشيفت مفيش عنده زرار نقل نزيل، ومدير الحجوزات عنده", async ({ page, env }) => {
+    await users(env);
+    await env.seedBooking({ room: 603, guest: "Mv Guest", start: -1, nights: 3, price: 100 });
+    await env.seedShift("ahmed", { hotel: 1 });
+    await page.goto("/");
+    await login(page, "ahmed");
+    await goTab(page, "لوحة الغرف");
+    await openRoom(page, 603);
+    await expect(roomCard(page)).toContainText("Mv Guest");
+    await expect(roomCard(page).getByTestId("move-open")).toHaveCount(0);
+    const direct = await env.api("ahmed", "POST", "/rest/v1/rpc/move_booking_room", { p_booking: (await env.q("select id from bookings where guest_name = 'Mv Guest'"))[0].id, p_room: 604 });
+    expect(direct.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(direct.body)).toContain("مدير الحجوزات");
+    const p2 = await env.newSession();
+    await p2.goto("/");
+    await login(p2, "rawan");
+    await goTab(p2, "لوحة الغرف");
+    await openRoom(p2, 603);
+    await expect(roomCard(p2).getByTestId("move-open")).toBeVisible();
+  });
+
+  test("موظف شيفته في Calma مايقدرش يضيف حجز في Revento حتى بطلب مباشر على الـ API", async ({ env }) => {
+    await users(env);
+    await env.seedShift("ahmed", { hotel: 1 });
+    const body = (room) => ({ room, guest_name: "Wrong Hotel", checkin: cairoDate(5), checkout: cairoDate(6), price_night: 100, total_room: 100, currency: "USD" });
+    const bad = await env.api("ahmed", "POST", "/rest/v1/bookings", body(210));
+    expect(bad.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(bad.body)).toContain("فندق مش فندق شيفتك");
+    const good = await env.api("ahmed", "POST", "/rest/v1/bookings", { ...body(606), guest_name: "Right Hotel" });
+    expect(good.status).toBeLessThan(300);
+    expect((await env.q("select count(*)::int n from bookings where guest_name = 'Wrong Hotel'"))[0].n).toBe(0);
+    const byManager = await env.api("rawan", "POST", "/rest/v1/bookings", { ...body(210), guest_name: "Manager Booking" });
+    expect(byManager.status).toBeLessThan(300);
+  });
+});
+
 test.describe("تقارير كل فندق ومجمّع H&S للمدير العام", () => {
   async function seedRevenue(env) {
     await users(env);

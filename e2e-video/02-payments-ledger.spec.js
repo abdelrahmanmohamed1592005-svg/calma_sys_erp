@@ -42,17 +42,18 @@ test("02 - الدفع بكل الوسائل: فيزا/فودافون/كاش، ا
 
   await say(page, "٩) مصروف في اليومية (نظافة ٥٠ جنيه) بيتخصم من رصيد الخزينة الكاش", 1500);
   await showAllRooms(page);
-  const r = lrow(page, 602);
-  await r.locator("select.cx-select").nth(0).selectOption("نظافة");
-  await r.getByPlaceholder("البيان", { exact: true }).fill("مناديل ومنظفات");
-  await r.getByPlaceholder("المبلغ").nth(0).fill("50"); await pause(page, 2000);
+  const h0 = page.getByTestId("hotel-row-0");
+  await h0.locator("select.cx-select").nth(0).selectOption("نظافة");
+  await h0.getByPlaceholder("بيان المصروف").fill("مناديل ومنظفات");
+  await h0.getByPlaceholder("مبلغ المصروف").fill("50"); await pause(page, 2000);
   await say(page, "١٠) صف فيزا يدوي من غير آخر ٤ أرقام ← إقفال الشيفت مرفوض", 1500);
-  await r.locator("select.cx-select").nth(2).selectOption("فيزا");
-  await r.getByPlaceholder("المبلغ").nth(1).fill("100");
-  await r.locator("select.cx-select").nth(3).selectOption("USD"); await pause(page, 1500);
+  const r = lrow(page, 602);
+  await r.locator("select.cx-select").nth(0).selectOption("فيزا");
+  await r.getByPlaceholder("المبلغ").fill("100");
+  await r.locator("select.cx-select").nth(1).selectOption("USD"); await pause(page, 1500);
   await page.getByRole("button", { name: /إقفال الشيفت/ }).click(); await pause(page, 3200);
   await say(page, "نكتب آخر ٤ أرقام (٦٧٨٩) ← الإقفال بيعدّي", 1200);
-  await r.locator('input[placeholder="آخر ٤ أرقام الكارت"]').fill("6789"); await pause(page, 1200);
+  await r.locator('input[placeholder="آخر 4 أرقام الكارت"]').fill("6789"); await pause(page, 1200);
   await page.getByRole("button", { name: /إقفال الشيفت/ }).click();
   await expect(page.getByText(/أُقفل بواسطة/)).toBeVisible();
   await say(page, "١١) الشيفت اتقفل: كل الخانات مقفولة، والأرصدة اتحفظت (رصيد الخزينة + عهدة الفيزا)", 3200);

@@ -8,11 +8,11 @@ select t.eqn('H1 غرف Park Plaza (401-433)', (select count(*) from rooms where
 select t.eqn('H1 غرف The Location (301-307)', (select count(*) from rooms where hotel_id = 4 and number between 301 and 307), 7);
 select t.eqn('H1 أربع فنادق', (select count(*) from hotels), 4);
 
-select t.pass('H2 حجز في غرفة Revento 205', t.ins('st1', 'H2a', 205, 300, 302, 100, 200));
+select t.pass('H2 حجز في غرفة Revento 205', t.ins('res1', 'H2a', 205, 300, 302, 100, 200));
 select t.eqn('H2 الحجز اتربط بفندق Revento', (select hotel_id from bookings where id = (select id from t.ids where name = 'H2a')), 2);
-select t.pass('H2 حجز في غرفة Park Plaza 410', t.ins('st1', 'H2b', 410, 300, 302, 100, 200));
+select t.pass('H2 حجز في غرفة Park Plaza 410', t.ins('res1', 'H2b', 410, 300, 302, 100, 200));
 select t.eqn('H2 الحجز اتربط بفندق Park Plaza', (select hotel_id from bookings where id = (select id from t.ids where name = 'H2b')), 3);
-select t.pass('H2 حجز في غرفة The Location 303', t.ins('st1', 'H2c', 303, 300, 302, 100, 200));
+select t.pass('H2 حجز في غرفة The Location 303', t.ins('res1', 'H2c', 303, 300, 302, 100, 200));
 select t.eqn('H2 الحجز اتربط بفندق The Location', (select hotel_id from bookings where id = (select id from t.ids where name = 'H2c')), 4);
 
 -- موظفين جداد: hs1 شيفت المساء في Calma، وhs2 نفس الشيفت في Revento (نفس اليوم، فندق تاني) - المفتاح (فندق، يوم، شيفت)
@@ -49,3 +49,15 @@ select t.reject('H11 موظف مايغيّرش فندق يومية', t.try('hs1'
 -- حجز مباشر بفندق غلط (الواجهة مابتبعتش hotel_id؛ التريجر بيفرض فندق الغرفة)
 select t.pass('H12 حجز بيحاول يفرض hotel_id غلط', t.try('res1', format($q$insert into bookings(room, hotel_id, guest_name, checkin, checkout, price_night, total_room, currency) values (212, 4, 'Forced', hotel_today() + 500, hotel_today() + 501, 1, 1, 'USD')$q$)));
 select t.eqn('H12 الفندق اتفرض من الغرفة مش من القيمة المبعوتة', (select hotel_id from bookings where guest_name = 'Forced'), 2);
+
+-- منع الموظف من إضافة/تعديل حجز في فندق مش فندق شيفته (hs1 شيفته Calma، hs2 شيفته Revento)
+select t.reject('H13 hs1 (شيفته Calma) يضيف حجز في Revento مرفوض', t.ins('hs1', 'H13a', 215, 600, 601, 100, 100), 'فندق مش فندق شيفتك');
+select t.reject('H13 hs2 (شيفته Revento) يضيف حجز في Calma مرفوض', t.ins('hs2', 'H13b', 606, 600, 601, 100, 100), 'فندق مش فندق شيفتك');
+select t.pass('H13 hs1 يضيف حجز في Calma (فندقه) مسموح', t.ins('hs1', 'H13c', 606, 600, 601, 100, 100));
+select t.pass('H13 hs2 يضيف حجز في Revento (فندقه) مسموح', t.ins('hs2', 'H13d', 216, 600, 601, 100, 100));
+select t.reject('H13 st2 (شيفته Calma) يضيف حجز في Revento مرفوض', t.ins('st2', 'H13e', 218, 610, 611, 100, 100), 'فندق مش فندق شيفتك');
+select t.pass('H13 مدير الحجوزات يضيف في أي فندق', t.ins('res1', 'H13f', 405, 600, 601, 100, 100));
+select t.reject('H14 hs1 مايعدّلش حجز Revento', t.upd('hs1', 'H13d', 'guest_name = guest_name'), 'فندق مش فندق شيفتك');
+-- نقل النزيل: مدير الحجوزات بس
+select t.reject('H15 موظف شيفته مفتوح ما بيقدرش ينقل نزيل', t.try('hs2', format($q$select move_booking_room(%L, 217)$q$, (select id from t.ids where name = 'H13d'))), 'مدير الحجوزات');
+select t.pass('H15 مدير الحجوزات ينقل جوه نفس الفندق', t.try('res1', format($q$select move_booking_room(%L, 217)$q$, (select id from t.ids where name = 'H13d'))));

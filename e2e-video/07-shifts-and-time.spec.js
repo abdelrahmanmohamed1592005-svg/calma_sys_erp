@@ -16,9 +16,11 @@ test("07 - الشيفتات والوقت: اختيار الشيفت، العهد
   await say(page, "تحصيل كاش ٢٠٠ ومصروف ٥٠ ← رصيد الخزينة = ٥٠٠ + ٢٠٠ - ٥٠ = ٦٥٠", 1500);
   const r = lrow(page, 601);
   await r.getByPlaceholder("بيان التحصيل").fill("حجز مباشر");
-  await r.getByPlaceholder("المبلغ").nth(1).fill("200");
-  await r.locator("select.cx-select").nth(0).selectOption("نظافة");
-  await r.getByPlaceholder("المبلغ").nth(0).fill("50");
+  await r.getByPlaceholder("المبلغ").fill("200");
+  const h0 = page.getByTestId("hotel-row-0");
+  await h0.locator("select.cx-select").nth(0).selectOption("نظافة");
+  await h0.getByPlaceholder("بيان المصروف").fill("نظافة");
+  await h0.getByPlaceholder("مبلغ المصروف").fill("50");
   await waitLedgerSaved(page); await pause(page, 2500);
   await egp.scrollIntoViewIfNeeded(); await pause(page, 2600);
   await say(page, "إقفال الشيفت: بيتحفظ الرصيد (٦٥٠) وكل الخانات بتتقفل", 1500);

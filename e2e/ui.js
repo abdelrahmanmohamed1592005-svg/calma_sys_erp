@@ -97,7 +97,8 @@ export async function setCairoTime(page, hour, minute = 0) {
   const cairoHM = (ms) => new Intl.DateTimeFormat("en-GB", { timeZone: CAIRO, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms)).split(":").map(Number);
   for (let i = 0; i < 3; i++) {
     const [h, mi] = cairoHM(t);
-    const diff = (hour * 60 + minute) - ((h % 24) * 60 + mi);
+    // الفرق لازم يتحسب في حدود ±١٢ ساعة (مش ±٢٣): تخمين التوقيت الصيفي الغلط كان بيرجّع اليوم الغلط حوالين منتصف الليل
+    const diff = ((((hour * 60 + minute) - ((h % 24) * 60 + mi)) % 1440) + 2160) % 1440 - 720;
     if (diff === 0) break;
     t += diff * 60000;
   }

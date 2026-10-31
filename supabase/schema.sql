@@ -291,6 +291,16 @@ begin
     raise exception 'مينفعش تنقل حجز لغرفة في فندق تاني - ألغي الحجز واعمل حجز جديد في الفندق التاني';
   end if;
   new.hotel_id := h;
+  -- موظف الشيفت بيضيف/يعدّل حجز في الفندق اللي اختار شيفته فيه بس (من غير جلسة مستخدم = صيانة/محرر SQL مسموح)
+  if auth.uid() is not null and is_staff() then
+    if not exists (
+      select 1 from shift_claims c
+      where c.hotel_id = h and c.date between hotel_today() - 1 and hotel_today()
+        and c.username = (select username from profiles where id = auth.uid())
+    ) then
+      raise exception 'مينفعش تضيف أو تعدّل حجز في فندق مش فندق شيفتك - اختار شيفتك في الفندق ده الأول';
+    end if;
+  end if;
   return new;
 end;
 $$;
@@ -3110,10 +3120,9 @@ create or replace function move_booking_room(p_booking uuid, p_room int, p_expec
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare b bookings%rowtype; clash bookings%rowtype; old_room int; today date := hotel_today(); new_from date;
 begin
-  if not (is_staff() or is_reservations_manager()) then raise exception 'نقل النزيل من صلاحية موظف الشيفت أو مدير الحجوزات'; end if;     -- المدير العام مابينقلش
+  if not is_reservations_manager() then raise exception 'نقل النزيل من صلاحية مدير الحجوزات بس'; end if;     -- موظف الشيفت والمدير العام والحسابات مابينقلوش
   select * into b from bookings where id = p_booking for update;
   if not found then raise exception 'الحجز مش موجود'; end if;
-  if is_staff() and (calma_my_open_shift()).hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك'; end if;          -- الموظف لازم شيفته مفتوح في نفس الفندق
   if p_expected is not null and b.updated_at is distinct from p_expected then raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني'; end if;
   if b.status = 'ملغي' then raise exception 'الحجز ملغي'; end if;
   if b.checkout <= today or b.status = 'تم تسجيل الخروج' then raise exception 'الحجز خلص - مفيش نقل'; end if;
