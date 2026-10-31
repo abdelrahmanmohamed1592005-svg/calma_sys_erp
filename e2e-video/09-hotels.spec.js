@@ -57,4 +57,20 @@ test("09 - الفنادق المتعددة H&S: بروفايل مستقل لكل
   await expect(page.getByTestId("report-per-hotel")).toBeVisible();
   await pause(page, 2000);
   await logout(page);
+
+  await say(page, "إدارة الفنادق (المدير العام): إضافة فندق جديد وغرف له من الشاشة، من غير ما نلمس قاعدة البيانات", 3200);
+  await login(page, "boss"); await pause(page, 1000);
+  await goTab(page, "إدارة المستخدمين"); await pause(page, 1800);
+  const admin = page.getByTestId("hotels-admin");
+  await admin.getByTestId("new-hotel-open").click(); await admin.getByTestId("new-hotel-name").fill("Sea View"); await admin.getByTestId("new-hotel-prefix").fill("S"); await pause(page, 1200);
+  await admin.getByTestId("new-hotel-save").click(); await expect(toast(page)).toContainText("تم إضافة الفندق"); await pause(page, 2000);
+  await admin.getByTestId("new-room-number").fill("501"); await admin.getByTestId("new-room-name").fill("Suite 501");
+  await admin.getByTestId("new-room-save").click(); await expect(toast(page)).toContainText("تم إضافة الغرفة"); await pause(page, 2200);
+  await say(page, "الفندق الجديد ظهر في الشريط بغرفته وبادئة كود حجز خاصة بيه", 2600);
+  await say(page, "وفي نفس الشاشة: تحدد الفنادق المسموحة لكل موظف", 2600);
+  await page.getByTestId("user-hotels-ahmed").scrollIntoViewIfNeeded(); await pause(page, 2600);
+  await say(page, "البحث السريع Ctrl+K بيدوّر في كل الفنادق ويفتح فندق النزيل لوحده", 2600);
+  await page.keyboard.press("Control+k"); await page.getByRole("combobox", { name: "بحث سريع" }).fill("نزيل Revento"); await pause(page, 2200);
+  await page.getByRole("option").filter({ hasText: "نزيل Revento" }).first().click(); await pause(page, 2800);
+  await logout(page);
 });
