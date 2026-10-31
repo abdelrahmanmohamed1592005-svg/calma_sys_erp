@@ -20,7 +20,7 @@ export const TAB_HINTS = {
 };
 
 
-export function Header({ user, onLogout, onChangePassword, onOpenSearch }) {
+export function Header({ user, onLogout, onChangePassword, onOpenSearch, hotels = [], hotelId, onHotelChange }) {
   const date = todayStr();
   const [showPw, setShowPw] = useState(false);
   return (
@@ -30,6 +30,14 @@ export function Header({ user, onLogout, onChangePassword, onOpenSearch }) {
           <Logo size={26} light />
           <span className="cx-date">{arabicWeekday(date)} · {arabicDateLong(date)}</span>
         </div>
+        {hotels.length > 1 && onHotelChange && (
+          <label className="cx-hotel-switch" title="اختار الفندق اللي شغال عليه">
+            <span className="cx-hotel-switch-lbl">الفندق</span>
+            <select className="cx-input cx-hotel-select" aria-label="الفندق" value={hotelId} onChange={(e) => onHotelChange(e.target.value)}>
+              {hotels.filter((h) => h.active).map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+            </select>
+          </label>
+        )}
         {onOpenSearch && (
           <button className="cx-search-btn" onClick={onOpenSearch} aria-label="بحث سريع (Ctrl+K)" title="بحث سريع (Ctrl+K)">
             <Search size={16} aria-hidden="true" /><span className="cx-search-txt">بحث عن نزيل أو غرفة...</span><kbd>Ctrl K</kbd>

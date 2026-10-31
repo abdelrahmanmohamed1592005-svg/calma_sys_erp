@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { isShiftActiveNow } from "../domain/dates";
 import { getShiftRecord, resolveMyShift } from "../data/shifts";
+import { getActiveHotelId } from "../data/hotels";
 
 /* مصدر واحد موحّد لمعرفة "هل موظف الشيفت دلوقتي في وقت شيفته المحجوز ليه
    ولسه مفتوح" - بيتستخدم في RoomBoard.jsx و BookingsPanel.jsx عشان الاتنين
@@ -15,23 +16,24 @@ import { getShiftRecord, resolveMyShift } from "../data/shifts";
    - offShift: true لو الدور مربوط بوقت شيفت (roomStatusRestricted) ومش
      فاضي يعمل حاجة دلوقتي - يا إما مش وقت شيفته، يا إما شيفته مقفول. */
 export function useShiftGate(profile, perms, dataVersion) {
-  const [state, setState] = useState({ claims: null, key: null, date: null, record: null });
+  const [state, setState] = useState({ claims: null, key: null, date: null, hotelId: null, record: null });
 
   useEffect(() => {
-    if (!perms.roomStatusRestricted || !profile) { setState({ claims: null, key: null, date: null, record: null }); return; }
+    if (!perms.roomStatusRestricted || !profile) { setState({ claims: null, key: null, date: null, hotelId: null, record: null }); return; }
     let cancelled = false;
     (async () => {
       const r = await resolveMyShift(profile.username);
       if (cancelled) return;
-      const rec = r.key ? await getShiftRecord(r.date, r.key) : null;
-      if (!cancelled) setState({ claims: r.claims, key: r.key, date: r.date, record: rec });
+      const rec = r.key ? await getShiftRecord(r.date, r.key, r.hotelId) : null;
+      if (!cancelled) setState({ claims: r.claims, key: r.key, date: r.date, hotelId: r.hotelId, record: rec });
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.username, perms.roomStatusRestricted, dataVersion]);
 
   // الشيفت لازم يفضل "نشط" لحظيًا (مش بس وقت آخر تحميل): نعيد التحقق من الوقت هنا.
-  const myActiveShiftKey = (perms.roomStatusRestricted && state.claims && profile && state.key && isShiftActiveNow(state.key)) ? state.key : null;
+  // شيفت الموظف ماينفعش يتحسب "نشط" وهو فاتح فندق تاني غير فندق شيفته
+  const myActiveShiftKey = (perms.roomStatusRestricted && state.claims && profile && state.key && state.hotelId === getActiveHotelId() && isShiftActiveNow(state.key)) ? state.key : null;
   const myActiveShiftDate = myActiveShiftKey ? state.date : null;
   const isMyShiftNow = !!myActiveShiftKey;
   const shiftClosed = !!state.record?.closed;

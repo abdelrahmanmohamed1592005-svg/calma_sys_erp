@@ -2,9 +2,10 @@ import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble } from "lucide-react";
 import { DateRange, Logo, RoomName } from "./shared";
 import { emptyMoney, computeShiftTotals, methodTransactions, bookingDueLines, formatMoneyLines, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
-import { SHIFTS, HOTEL_NAME } from "../domain/constants";
+import { SHIFTS, GROUP_NAME } from "../domain/constants";
+import { useHotel } from "../lib/hotelContext";
 import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
-import { getJournaledBookingIds, getShiftRecord, getShiftRecordsInRange } from "../data/shifts";
+import { getJournaledBookingIds, getShiftRecordsInRange } from "../data/shifts";
 import { listStaffCafeteria, staffOwed } from "../data/staffCafeteria";
 
 // أقصى مدة لتقرير الفترة - بيحمي الشاشة من فترة ضخمة (أو تاريخ غلط) تعلّقها.
@@ -35,6 +36,21 @@ function firstCashHandover(records) {
   return {};
 }
 
+/* عهدة أول شيفت في الفترة لكل فندق (كل فندق ليه درج وعهدة مستقلة) ومجموعها: في تقرير فندق واحد = عهدة أول شيفت زي ما كانت */
+function openingsAcrossHotels(records, pick) {
+  const byHotel = new Map();
+  records.forEach((r) => { const k = r.hotelId ?? 1; if (!byHotel.has(k)) byHotel.set(k, []); byHotel.get(k).push(r); });
+  const out = {};
+  byHotel.forEach((recs) => {
+    const one = pick(recs);
+    Object.entries(one).forEach(([key, val]) => {
+      if (val && typeof val === "object") { out[key] = out[key] || {}; Object.entries(val).forEach(([c, n]) => { out[key][c] = (out[key][c] || 0) + (Number(n) || 0); }); }
+      else out[key] = (out[key] || 0) + (Number(val) || 0);
+    });
+  });
+  return out;
+}
+
 function aggregateShifts(records) {
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
   const byMethodCurrency = {}, byCategory = {};
@@ -54,7 +70,8 @@ function aggregateShifts(records) {
   // في الفترة = الإجمالي دلوقتي. مبني على عهدة اليومية وتحصيلها فقط (مش
   // متضمن تحصيل الحجوزات المباشر) عشان الحساب يفضل متطابق مع قراءة الجهاز
   // الفعلية خطوة بخطوة شيفت بشيفت.
-  const methodOpening = firstMethodHandover(records);
+  const hotelIds = new Set(records.map((r) => r.hotelId ?? 1));
+  const methodOpening = hotelIds.size > 1 ? openingsAcrossHotels(records, firstMethodHandover) : firstMethodHandover(records);
   const methodClosingNow = {};
   new Set([...Object.keys(methodOpening), ...Object.keys(byMethodCurrency)]).forEach((m) => {
     if (m === "كاش") return;
@@ -67,7 +84,7 @@ function aggregateShifts(records) {
   // التحصيل النقدي - كل المصاريف (المصاريف دايمًا بتُدفع من الكاش) = رصيد
   // الدرج دلوقتي بكل عملة. ده غير netCash اللي فوق (تحصيل كل الوسائل مجمّعة
   // ناقص المصاريف) - cashClosingNow هنا مطابق لرصيد الدرج الفعلي.
-  const cashOpening = firstCashHandover(records);
+  const cashOpening = hotelIds.size > 1 ? openingsAcrossHotels(records, firstCashHandover) : firstCashHandover(records);
   const cashClosingNow = emptyMoney();
   currencyKeysOf(cashOpening, cashCollections, totalExpenses).forEach((cur) => {
     cashClosingNow[cur] = (cashOpening[cur] || 0) + (cashCollections[cur] || 0) - (totalExpenses[cur] || 0);
@@ -119,14 +136,22 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
   return { count: onlineBookings.length, totalCount: revenueBookings.length, grossRevenue, items, outstanding, byMethodCurrency };
 }
 
-export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
+export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsProp, allRooms, allBookings, dataVersion, profile }) {
+  const { hotels, hotel } = useHotel();
+  // المدير العام بس يقدر يشوف تقرير مجمّع لكل فنادق الجروب؛ الباقي بيشوفوا الفندق المفتوح بس
+  const canGroup = profile?.role === "gm" && hotels.filter((h) => h.active).length > 1;
+  const [scope, setScope] = useState("hotel");
+  const group = canGroup && scope === "all";
+  const hotelScope = group ? "all" : hotel.id;
+  const rooms = group ? (allRooms || hotelRoomsProp) : hotelRoomsProp;
+  const bookings = group ? (allBookings || hotelBookingsProp) : hotelBookingsProp;
+  const reportTitleName = group ? `مجموعة ${GROUP_NAME} - كل الفنادق` : hotel.name;
   const [rangeMode, setRangeMode] = useState("day");
   const [date, setDate] = useState(shiftDayNow());
   const [fromDate, setFromDate] = useState(addDays(shiftDayNow(), -6));
   const [toDate, setToDate] = useState(shiftDayNow());
   const [records, setRecords] = useState([]);
   const [globalJournaled, setGlobalJournaled] = useState(null);
-  const [dayRecords, setDayRecords] = useState({});
   const [loading, setLoading] = useState(true);
   const [copyText, setCopyText] = useState("");
   const [staffEntries, setStaffEntries] = useState([]);
@@ -144,18 +169,13 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     if (rangeError) { setLoading(false); return undefined; }
     let cancelled = false;
     // الشاشة بتتحدّث لوحدها (realtime كل ٦٠ ثانية): نفس التقرير مايتبدّلش بسبينر ويضيع مكان القراءة/الطباعة - السبينر لأول تحميل أو لتغيير اليوم/الفترة بس
-    const loadKey = `${rangeMode}|${date}|${effFrom}|${effTo}`;
+    const loadKey = `${rangeMode}|${date}|${effFrom}|${effTo}|${hotelScope}`;
     const first = loadedKeyRef.current !== loadKey;
     (async () => {
       if (first) setLoading(true);
-      if (rangeMode === "day") {
-        const out = {};
-        for (const s of SHIFTS) out[s.key] = await getShiftRecord(date, s.key);
-        if (!cancelled) setDayRecords(out);
-      }
-      const recs = await getShiftRecordsInRange(effFrom, effTo);
+      const recs = await getShiftRecordsInRange(effFrom, effTo, hotelScope);
       const gj = await getJournaledBookingIds();
-      const se = await listStaffCafeteria();
+      const se = await listStaffCafeteria(hotelScope);
       if (se && !cancelled) setStaffEntries(se);
       if (cancelled) return;
       // فشل القراءة (null) مايتحولش لتقرير فاضي مضلّل - بنسيب آخر بيانات سليمة
@@ -167,9 +187,15 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeMode, date, fromDate, toDate, dataVersion]);
+  }, [rangeMode, date, fromDate, toDate, dataVersion, hotelScope]);
 
   const agg = useMemo(() => aggregateShifts(records), [records]);
+  // يومية كل شيفت في اليوم المختار (لكل فندق في التقرير المجمّع)
+  const dayRecs = useMemo(() => (rangeMode === "day" ? records.filter((r) => r.date === date) : []), [records, rangeMode, date]);
+  const dayRecord = (hid, key) => dayRecs.find((r) => (r.hotelId ?? 1) === hid && r.shiftKey === key) || null;
+  const dayHotels = group ? hotels.filter((h) => h.active) : [hotel];
+  // ملخص كل فندق لوحده (للمدير العام في التقرير المجمّع)
+  const perHotel = useMemo(() => (group ? hotels.filter((h) => h.active).map((h) => ({ hotel: h, agg: aggregateShifts(records.filter((r) => (r.hotelId ?? 1) === h.id)) })) : []), [group, hotels, records]);
   // كل عمليات الفيزا/التحويلات في الفترة بتفاصيلها (آخر ٤ أرقام / اسم ورقم) من اليومية
   const nonCashTx = useMemo(() => {
     const out = [];
@@ -250,8 +276,8 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   function moneyLine(obj, currencies) { const cs = currencies || currencyKeysOf(obj); return cs.length ? cs.map((c) => `${money(obj, c)}${c === "EGP" ? "ج" : c === "USD" ? "$" : " " + c}`).join(" + ") : "0"; }
 
   function buildSummaryText() {
-    let txt = `تقرير فندق Calma\n${rangeMode === "day" ? `${arabicWeekday(date)} ${arabicDateLong(date)}` : `من ${fromDate} إلى ${toDate}`}\n\n`;
-    if (rangeMode === "day") { SHIFTS.forEach((s) => { const r = dayRecords[s.key]; if (!r) { txt += `${s.label}: لا يوجد سجل\n`; return; } const t = r.closed ? r : computeShiftTotals(r); txt += `${s.label} (${r.staffName}) — ${r.closed ? "مقفول" : "مفتوح"}\nتحصيل: ${moneyLine(t.totalCollections)} | مصاريف: ${moneyLine(t.totalExpenses)} | رصيد الخزينة: ${moneyLine(t.closingCash)}\n`; if (r.flagged) txt += `تنبيه متابعة: ${r.shiftNotes || "—"}\n`; txt += `\n`; }); }
+    let txt = `تقرير ${reportTitleName}\n${rangeMode === "day" ? `${arabicWeekday(date)} ${arabicDateLong(date)}` : `من ${fromDate} إلى ${toDate}`}\n\n`;
+    if (rangeMode === "day") { dayHotels.forEach((h) => SHIFTS.forEach((s) => { const r = dayRecord(h.id, s.key); const lbl = group ? `${h.name} - ${s.label}` : s.label; if (!r) { txt += `${lbl}: لا يوجد سجل\n`; return; } const t = r.closed ? r : computeShiftTotals(r); txt += `${lbl} (${r.staffName}) — ${r.closed ? "مقفول" : "مفتوح"}\nتحصيل: ${moneyLine(t.totalCollections)} | مصاريف: ${moneyLine(t.totalExpenses)} | رصيد الخزينة: ${moneyLine(t.closingCash)}\n`; if (r.flagged) txt += `تنبيه متابعة: ${r.shiftNotes || "—"}\n`; txt += `\n`; })); }
     txt += `إجمالي التحصيل: ${moneyLine(combinedTotalCollections)}\nإجمالي المصاريف: ${moneyLine(agg.totalExpenses)}\nصافي التحصيل بعد المصاريف: ${moneyLine(agg.netCash)}\n`;
     allMethods.forEach((m) => { const obj = combinedByMethodCurrency[m]; if (obj && currencyKeysOf(obj).length) txt += `  - ${m}: ${moneyLine(obj)}\n`; });
     txt += `إيراد الحجوزات الأونلاين: ${moneyLine(bAgg.grossRevenue)}\nنسبة الإشغال: ${avgOccupancy}%`;
@@ -263,6 +289,12 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
   return (
     <div className="cx-page">
       <div className="cx-no-print" style={{ marginBottom: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+        {canGroup && (
+          <div style={{ display: "flex", gap: 6 }} role="group" aria-label="نطاق التقرير">
+            <button className={"cx-btn " + (!group ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setScope("hotel")}>{hotel.name}</button>
+            <button className={"cx-btn " + (group ? "cx-btn-gold" : "cx-btn-outline")} data-testid="report-scope-all" onClick={() => setScope("all")}>كل فنادق {GROUP_NAME}</button>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 6 }}>
           <button className={"cx-btn " + (rangeMode === "day" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setRangeMode("day")}>يوم واحد</button>
           <button className={"cx-btn " + (rangeMode === "range" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setRangeMode("range")}>فترة</button>
@@ -286,7 +318,7 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
             <div className="cx-print-head-row">
               <div className="cx-print-brand">
                 <Logo size={30} />
-                {HOTEL_NAME && <div className="cx-print-hotel-name">{HOTEL_NAME}</div>}
+                <div className="cx-print-hotel-name">{reportTitleName}</div>
               </div>
               <div className="cx-print-meta">
                 <div className="cx-print-title">تقرير مالي وتشغيلي</div>
@@ -302,11 +334,20 @@ export function ReportsPanel({ rooms, bookings, dataVersion, profile }) {
               <table className="cx-table" style={{ fontSize: 13, minWidth: 700 }}>
                 <thead><tr><th className="cx-th">الشيفت</th><th className="cx-th">الموظف</th><th className="cx-th">الحالة</th><th className="cx-th">التحصيل</th><th className="cx-th">المصاريف</th><th className="cx-th">رصيد الخزينة</th><th className="cx-th">متابعة</th></tr></thead>
                 <tbody>
-                  {SHIFTS.map((s) => { const r = dayRecords[s.key]; if (!r) return (<tr key={s.key}><td>{s.label}</td><td colSpan={6} style={{ color: "var(--muted)" }}>لا يوجد سجل</td></tr>); const t = r.closed ? r : computeShiftTotals(r);
-                    return (<tr key={s.key}><td>{s.label}</td><td>{r.staffName}</td><td>{r.closed ? "مقفول" : "مفتوح"}</td><td>{moneyLine(t.totalCollections)}</td><td>{moneyLine(t.totalExpenses)}</td><td style={{ fontWeight: 700 }}>{moneyLine(t.closingCash)}</td><td>{r.flagged ? <AlertTriangle size={14} color="#A8503B" /> : "—"}</td></tr>);
-                  })}
+                  {dayHotels.flatMap((h) => SHIFTS.map((s) => { const r = dayRecord(h.id, s.key); const lbl = group ? `${h.name} - ${s.label}` : s.label; if (!r) return (<tr key={h.id + s.key}><td>{lbl}</td><td colSpan={6} style={{ color: "var(--muted)" }}>لا يوجد سجل</td></tr>); const t = r.closed ? r : computeShiftTotals(r);
+                    return (<tr key={h.id + s.key}><td>{lbl}</td><td>{r.staffName}</td><td>{r.closed ? "مقفول" : "مفتوح"}</td><td>{moneyLine(t.totalCollections)}</td><td>{moneyLine(t.totalExpenses)}</td><td style={{ fontWeight: 700 }}>{moneyLine(t.closingCash)}</td><td>{r.flagged ? <AlertTriangle size={14} color="#A8503B" /> : "—"}</td></tr>);
+                  }))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {group && (
+            <div className="cx-card" style={{ padding: 12, marginBottom: 14 }} data-testid="report-per-hotel">
+              <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 6, color: "var(--ink)" }}>ملخص كل فندق</div>
+              <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">الفندق</th><th className="cx-th">التحصيل</th><th className="cx-th">المصاريف</th><th className="cx-th">الصافي</th></tr></thead>
+                <tbody>{perHotel.map(({ hotel: h, agg: a }) => <tr key={h.id}><td style={{ fontWeight: 700 }}>{h.name}</td><td>{moneyLine(a.totalCollections)}</td><td>{moneyLine(a.totalExpenses)}</td><td>{moneyLine(a.netCash)}</td></tr>)}</tbody></table></div>
+              <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 6 }}>التحصيل هنا من اليوميات؛ الأرقام التفصيلية تحت مجمّعة لكل الفنادق. اختار فندق من الزرار فوق لتقريره لوحده.</div>
             </div>
           )}
 

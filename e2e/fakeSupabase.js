@@ -51,7 +51,7 @@ export async function installFakeSupabase(page, opts = {}) {
       if (!m) continue;
       const [, op, val] = m;
       out = out.filter((r) => {
-        const cell = String(r[k] ?? "");
+        const cell = String(r[k] ?? (k === "hotel_id" ? 1 : ""));
         return op === "eq" ? cell === val : op === "gte" ? cell >= val : cell <= val;
       });
     }
@@ -70,6 +70,7 @@ export async function installFakeSupabase(page, opts = {}) {
     const now = new Date().toISOString();
     const r = { ...row };
     if (table === "bookings") Object.assign(r, { id: randomUUID(), created_at: now, updated_at: now, created_by: actor?.profile.username, created_by_role: actor?.profile.role, refund_pending: false });
+    if (table === "shift_records" || table === "shift_claims") r.hotel_id = r.hotel_id ?? 1;
     if (table === "shift_records") Object.assign(r, { updated_at: now, staff_username: actor?.profile.username, staff_name: actor?.profile.name });
     if (table === "shift_claims") Object.assign(r, { claimed_at: now, username: actor?.profile.username, name: actor?.profile.name });
     if (table === "activity_log") Object.assign(r, { id: randomUUID(), ts: now, username: actor?.profile.username, user_name: actor?.profile.name, role: actor?.profile.role });
@@ -162,7 +163,7 @@ export async function installFakeSupabase(page, opts = {}) {
           const i = store[table].findIndex((r) => r[key] === item[key]);
           if (i >= 0) { store[table][i] = { ...store[table][i], ...row }; created.push(store[table][i]); continue; }
         }
-        if (table === "shift_claims" && store[table].some((r) => r.date === row.date && r.shift_key === row.shift_key)) return json(route, 409, { code: "23505", message: "duplicate key value" });
+        if (table === "shift_claims" && store[table].some((r) => (r.hotel_id ?? 1) === row.hotel_id && r.date === row.date && r.shift_key === row.shift_key)) return json(route, 409, { code: "23505", message: "duplicate key value" });
         if (table === "profiles") {
           const owner = store.users.find((x) => x.profile.id === row.id);
           if (owner) { Object.assign(owner.profile, row); delete owner.pendingSignup; }

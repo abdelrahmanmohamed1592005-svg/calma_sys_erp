@@ -220,6 +220,9 @@ export function GlobalStyle() {
       @media screen and (max-width:1023.98px){ .cx-ledbar{ top:calc(var(--top-h) + 4px); } .cx-ledbar-nav{ width:100%; } .cx-ledbar-end{ width:100%; justify-content:space-between; } }
       /* ---------- quick search (Ctrl+K) ---------- */
       .cx-search-btn{ display:flex; align-items:center; gap:10px; height:38px; padding:0 12px; border-radius:10px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.14); color:rgba(239,233,218,.85); cursor:pointer; font-family:inherit; font-size:13.5px; min-width:260px; transition:background .15s; margin-inline:auto 14px; }
+      .cx-hotel-switch{ display:flex; align-items:center; gap:8px; color:rgba(239,233,218,.85); font-size:13px; }
+      .cx-hotel-select{ height:38px; min-width:150px; font-weight:700; }
+      @media (max-width:760px){ .cx-hotel-switch-lbl{ display:none; } .cx-hotel-select{ min-width:110px; } }
       .cx-search-btn:hover{ background:rgba(255,255,255,.14); }
       .cx-search-btn kbd, .cx-pal kbd{ font-family:inherit; font-size:11px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.2); border-radius:6px; padding:1px 6px; margin-inline-start:auto; direction:ltr; }
       @media screen and (max-width:1023.98px){ .cx-search-btn{ min-width:0; width:38px; padding:0; justify-content:center; margin-inline:auto 6px; } .cx-search-txt, .cx-search-btn kbd{ display:none; } }

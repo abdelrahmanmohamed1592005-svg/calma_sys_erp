@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 // إلخ) بقت بتتحدد من الحجز نفسه مش من بيانات الغرفة الثابتة (انظر
 // domain/constants.js).
 function roomFromRow(r) {
-  return { number: r.number, name: r.name || "" };
+  return { number: r.number, name: r.name || "", hotelId: r.hotel_id ?? 1 };
 }
 
 export async function getRooms() {

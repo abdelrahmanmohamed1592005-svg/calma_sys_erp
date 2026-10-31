@@ -18,4 +18,5 @@ node -e '
 const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
 console.log(c.map((x) => `insert into t.reprice_cases values (${[x.checkin, x.checkout, x.newCheckout].map((d) => `date \x27${d}\x27`).join(",")},${x.totalRoom},${x.priceNight},${x.expected});`).join("\n"));
 ' "$HERE/reprice_cases.json" | "${PSQL[@]}"
+"${PSQL[@]}" -f "$HERE/hotels_flows.sql"
 "${PSQL[@]}" -f "$HERE/summary.sql"

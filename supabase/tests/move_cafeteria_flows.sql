@@ -134,7 +134,7 @@ select t.reject('M5 غرفة مش موجودة', t.mv('st1', 'M5b', 999), 'مش 
 -- ---------- M6: الرفض: ملغي / خلص / ممنوع / مش مفتوح شيفته / توقيت قديم
 select t.pass('M6 حجز خلص (خرج)', t.ins('st1', 'M6done', 612, -5, -1, 100, 400));
 select t.reject('M6 حجز انتهى مينقلش', t.mv('res1', 'M6done', 613), 'خلص');
-select t.pass('M6 حجز خروجه النهارده', t.ins('st1', 'M6today', (select r.number from rooms r where not exists (select 1 from bookings b where b.room = r.number and b.stay_range && daterange(hotel_today() - 2, hotel_today())) order by 1 limit 1), -2, 0, 100, 200));
+select t.pass('M6 حجز خروجه النهارده', t.ins('st1', 'M6today', (select r.number from rooms r where r.hotel_id = 1 and not exists (select 1 from bookings b where b.room = r.number and b.stay_range && daterange(hotel_today() - 2, hotel_today())) order by 1 limit 1), -2, 0, 100, 200));
 select t.reject('M6 حجز خروجه النهارده مينقلش', t.mv('res1', 'M6today', 615), 'خلص');
 select t.pass('M6 حجز عادي للتوقيت', t.ins('st1', 'M6', 616, 200, 202, 100, 200));
 select t.reject('M6 توقيت قديم مرفوض', t.mvx('st1', 'M6', 601, now() - interval '1 day'), 'اتغيّر');
@@ -208,7 +208,7 @@ select t.reject('M12 المدير العام مايغيّرش الغرفة بت�
 -- ---------- R: النقل بيحجز الغرفة الجديدة من يوم النقل بس (غرفة نزيل خرج النهارده/قبل كده متاحة)
 create function t.free_rooms(lo int, hi int) returns int[] language sql as $$
   select coalesce(array_agg(r.number order by r.number), '{}') from rooms r
-  where not exists (select 1 from bookings b where b.room = r.number and b.status <> 'ملغي' and b.occ_range && daterange(hotel_today() + lo, hotel_today() + hi, '[)'))
+  where r.hotel_id = 1 and not exists (select 1 from bookings b where b.room = r.number and b.status <> 'ملغي' and b.occ_range && daterange(hotel_today() + lo, hotel_today() + hi, '[)'))
 $$;
 create function t.cur(u text, nm text, cur text) returns text language plpgsql as $$
 declare v uuid; res jsonb;

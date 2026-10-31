@@ -3,7 +3,7 @@ import { Info, Printer, RefreshCw, ShieldCheck } from "lucide-react";
 import { GlobalStyle, Logo } from "./shared";
 import { arabicWeekday, arabicDateLong, todayStr } from "../domain/dates";
 import { validatePasswordStrength, validateUsername } from "../domain/security";
-import { HOTEL_NAME } from "../domain/constants";
+import { useHotel } from "../lib/hotelContext";
 
 function AuthBrand() {
   return (
@@ -99,6 +99,7 @@ export function LoginScreen({ onLogin }) {
 }
 
 export function LogoutReportScreen({ user, actions, onExportAndLogout, onCancel }) {
+  const { hotel } = useHotel();
   const date = todayStr();
   function handlePrintAndLogout() {
     // window.print() بتوقف تنفيذ الكود لحد ما نافذة الطباعة تقفل (طباعة أو
@@ -114,7 +115,7 @@ export function LogoutReportScreen({ user, actions, onExportAndLogout, onCancel 
           <div className="cx-print-head-row">
             <div className="cx-print-brand">
               <Logo size={30} />
-              {HOTEL_NAME && <div className="cx-print-hotel-name">{HOTEL_NAME}</div>}
+              {hotel.name && <div className="cx-print-hotel-name">{hotel.name}</div>}
             </div>
             <div className="cx-print-meta">
               <div className="cx-print-title">تقرير جلسة عمل</div>

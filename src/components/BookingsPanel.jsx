@@ -3,9 +3,10 @@ import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock, Search, Calenda
 import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHasDue, bookingDueLines, formatMoneyLines, bookingHotelTotal, refundStatusOf } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
-import { sourceOptionsFor, BOOKING_STATUSES, HOTEL_NAME, roomLabel } from "../domain/constants";
+import { sourceOptionsFor, BOOKING_STATUSES, roomLabel } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
+import { useHotel } from "../lib/hotelContext";
 import { getPaymentsIndex } from "../data/shifts";
 import { recordBookingPayment, recordBookingPaymentOther } from "../data/payments";
 import { guarded } from "../lib/busy";
@@ -69,6 +70,7 @@ function QuickPay({ booking, onDone, showToast }) {
 }
 
 export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onRefresh, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
+  const { hotel } = useHotel();
   const [form, setForm] = useState(null);
   const formBaseRef = React.useRef(null);   // نسخة الحجز اللي الفورم اتفتح عليها (لدمج تعديلاتي مع آخر نسخة لو اتغيّر من مكان تاني)
   const [filter, setFilter] = useState("");
@@ -362,7 +364,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
         <div className="cx-print-head-row">
           <div className="cx-print-brand">
             <Logo size={30} />
-            {HOTEL_NAME && <div className="cx-print-hotel-name">{HOTEL_NAME}</div>}
+            {hotel.name && <div className="cx-print-hotel-name">{hotel.name}</div>}
           </div>
           <div className="cx-print-meta">
             <div className="cx-print-title">قائمة الحجوزات</div>

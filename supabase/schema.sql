@@ -222,6 +222,83 @@ drop policy if exists "claims write" on shift_claims;
 create policy "claims write" on shift_claims for all using (is_active_user()) with check (is_active_user());
 
 -- --------------------------------------------------------------------------
+-- 6ب) الفنادق: الجروب فيه أكتر من فندق، وكل فندق ليه بروفايل مستقل (غرفه، حجوزاته، يوميته، كافيتيريته، تقاريره).
+--     الموظفين والمستخدمين مشتركين على مستوى الجروب (بيتوزعوا كل يوم على فندق وشيفت)، أما كل البيانات المالية والتشغيلية
+--     فمربوطة بفندق واحد. أرقام الغرف فريدة على مستوى الجروب (601-616 / 201-225 / 301-307 / 401-433) فرقم الغرفة بيحدد الفندق.
+--     الفندق رقم ١ هو الفندق الأصلي (Calma): كل البيانات القديمة بتتحسب عليه تلقائيًا.
+-- --------------------------------------------------------------------------
+create table if not exists hotels (
+  id integer primary key,
+  name text not null,
+  short_name text,
+  sort_order integer not null default 0,
+  active boolean not null default true
+);
+insert into hotels (id, name, short_name, sort_order) values
+  (1, 'فندق Calma', 'Calma', 1),
+  (2, 'Revento', 'Revento', 2),
+  (3, 'Park Plaza', 'Park Plaza', 3),
+  (4, 'The Location', 'The Location', 4)
+on conflict (id) do nothing;
+
+alter table hotels enable row level security;
+drop policy if exists "hotels select" on hotels;
+create policy "hotels select" on hotels for select using (is_active_user());
+drop policy if exists "hotels update" on hotels;
+create policy "hotels update" on hotels for update using (is_gm()) with check (is_gm());
+revoke all on hotels from anon, authenticated;
+grant select on hotels to authenticated;
+grant update (name, short_name, active) on hotels to authenticated;
+grant all on hotels to service_role;
+
+alter table rooms add column if not exists hotel_id integer not null default 1 references hotels(id);
+alter table bookings add column if not exists hotel_id integer not null default 1 references hotels(id);
+alter table shift_records add column if not exists hotel_id integer not null default 1 references hotels(id);
+alter table shift_claims add column if not exists hotel_id integer not null default 1 references hotels(id);
+
+-- غرف الفنادق الجديدة (الاسم = الرقم المكتوب على الباب)
+insert into rooms (number, name, hotel_id)
+select n, n::text, 2 from generate_series(201, 225) n
+union all select n, n::text, 4 from generate_series(301, 307) n
+union all select n, n::text, 3 from generate_series(401, 433) n
+on conflict (number) do nothing;
+
+create index if not exists bookings_hotel_idx on bookings (hotel_id, checkin);
+
+-- مفتاح اليومية والاختيارات بقى (فندق، تاريخ، شيفت): كل فندق ليه يومية لكل شيفت، ونفس الشيفت ممكن يتحجز في أكتر من فندق.
+do $$
+begin
+  if not exists (select 1 from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+                 where i.indrelid = 'shift_records'::regclass and i.indisprimary and a.attname = 'hotel_id') then
+    alter table shift_records drop constraint shift_records_pkey;
+    alter table shift_records add primary key (hotel_id, date, shift_key);
+  end if;
+  if not exists (select 1 from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+                 where i.indrelid = 'shift_claims'::regclass and i.indisprimary and a.attname = 'hotel_id') then
+    alter table shift_claims drop constraint shift_claims_pkey;
+    alter table shift_claims add primary key (hotel_id, date, shift_key);
+  end if;
+end $$;
+
+-- الحجز بيتبع فندق غرفته تلقائيًا، ومينفعش يتنقل لغرفة في فندق تاني (النقل بين الفنادق = إلغاء وحجز جديد)
+create or replace function bookings_set_hotel()
+returns trigger language plpgsql as $$
+declare h integer;
+begin
+  select hotel_id into h from rooms where number = new.room;
+  if h is null then return new; end if;
+  if TG_OP = 'UPDATE' and old.hotel_id is distinct from h then
+    raise exception 'مينفعش تنقل حجز لغرفة في فندق تاني - ألغي الحجز واعمل حجز جديد في الفندق التاني';
+  end if;
+  new.hotel_id := h;
+  return new;
+end;
+$$;
+drop trigger if exists bookings_set_hotel_trg on bookings;
+create trigger bookings_set_hotel_trg before insert or update on bookings
+  for each row execute function bookings_set_hotel();
+
+-- --------------------------------------------------------------------------
 -- 7) سجل الحركة
 -- --------------------------------------------------------------------------
 create table if not exists activity_log (
@@ -234,6 +311,7 @@ create table if not exists activity_log (
 );
 
 create index if not exists activity_log_ts_idx on activity_log (ts desc);
+alter table activity_log add column if not exists hotel_id integer references hotels(id);
 
 alter table activity_log enable row level security;
 drop policy if exists "activity select" on activity_log;
@@ -247,7 +325,7 @@ create policy "activity insert" on activity_log for insert with check (is_active
 do $$
 declare t text;
 begin
-  foreach t in array array['profiles','rooms','room_overrides','bookings','shift_records','shift_claims','activity_log']
+  foreach t in array array['profiles','hotels','rooms','room_overrides','bookings','shift_records','shift_claims','activity_log']
   loop
     begin
       execute format('alter publication supabase_realtime add table %I', t);
@@ -642,7 +720,7 @@ create policy "overrides write" on room_overrides for all using (is_staff_or_res
 do $$
 declare t text;
 begin
-  foreach t in array array['profiles','rooms','room_overrides','bookings','shift_records','shift_claims','activity_log']
+  foreach t in array array['profiles','hotels','rooms','room_overrides','bookings','shift_records','shift_claims','activity_log']
   loop
     begin
       execute format('alter publication supabase_realtime add table %I', t);
@@ -1298,7 +1376,7 @@ begin
   end if;
 
   select * into sr from shift_records
-    where closed = false and date >= hotel_today() - 1
+    where closed = false and hotel_id = b.hotel_id and date >= hotel_today() - 1
     order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc
     limit 1 for update;
   if not found then
@@ -1335,7 +1413,7 @@ begin
   end if;
   update shift_records set rows = v_rows,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
 
   update bookings set
     amount_paid = coalesce(amount_paid, 0) - amount,
@@ -1422,26 +1500,26 @@ create policy "claims delete" on shift_claims for delete using (is_gm());
 -- موظف الشيفت التالي (اللي اختار شيفته فعلاً) يقدر يقفل الشيفت اللي قبله
 -- لو لسه مفتوح (إقفال تلقائي لحظة ما الموظف الجديد يبدأ، حتى لو الأوفر تايم
 -- ماخلصش) - ترتيب الشيفتات: صباحي ← مسائي ← ليلي ← صباحي اليوم اللي بعده.
-create or replace function is_next_shift_claimant(rec_date date, rec_shift text)
+create or replace function is_next_shift_claimant(rec_date date, rec_shift text, rec_hotel integer default 1)
 returns boolean language sql security definer stable set search_path = public as $$
   select exists (
     select 1 from shift_claims c
-    where c.username = (select username from profiles where id = auth.uid())
+    where c.username = (select username from profiles where id = auth.uid()) and c.hotel_id = rec_hotel
       and ((rec_shift = 'morning' and c.date = rec_date and c.shift_key = 'evening')
         or (rec_shift = 'evening' and c.date = rec_date and c.shift_key = 'night')
         or (rec_shift = 'night' and c.date = rec_date + 1 and c.shift_key = 'morning'))
   );
 $$;
-grant execute on function is_next_shift_claimant(date, text) to authenticated;
+grant execute on function is_next_shift_claimant(date, text, integer) to authenticated;
 
 drop policy if exists "shifts update" on shift_records;
 create policy "shifts update" on shift_records for update using (
   (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
-                   or (closed = false and is_next_shift_claimant(date, shift_key))))
+                   or (closed = false and is_next_shift_claimant(date, shift_key, hotel_id))))
   or can_manage_financials() or (closed = true and is_gm_or_reservations())
 ) with check (
   (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
-                   or is_next_shift_claimant(date, shift_key)))
+                   or is_next_shift_claimant(date, shift_key, hotel_id)))
   or can_manage_financials() or is_gm_or_reservations()
 );
 
@@ -1487,7 +1565,7 @@ begin
   foreach f in array array[
     'is_gm()', 'is_active_user()', 'can_manage_financials()', 'is_reservations_manager()',
     'is_staff()', 'is_staff_or_reservations()', 'can_view_activity_log()', 'is_gm_or_reservations()',
-    'is_next_shift_claimant(date, text)'
+    'is_next_shift_claimant(date, text, integer)'
   ] loop
     execute format('revoke all on function %s from public, anon', f);
     execute format('grant execute on function %s to authenticated', f);
@@ -1566,7 +1644,7 @@ create policy "shifts insert" on shift_records for insert
     and date between hotel_today() - 1 and hotel_today() + 1
     and exists (
       select 1 from shift_claims c
-      where c.date = shift_records.date and c.shift_key = shift_records.shift_key
+      where c.hotel_id = shift_records.hotel_id and c.date = shift_records.date and c.shift_key = shift_records.shift_key
         and c.username = (select username from profiles where id = auth.uid())
     )
   );
@@ -1581,7 +1659,7 @@ begin
     new.created_by_role := old.created_by_role;
     new.created_at := old.created_at;
   elsif TG_TABLE_NAME = 'shift_records' then
-    if new.date is distinct from old.date or new.shift_key is distinct from old.shift_key
+    if new.date is distinct from old.date or new.shift_key is distinct from old.shift_key or new.hotel_id is distinct from old.hotel_id
        or new.staff_username is distinct from old.staff_username then
       raise exception 'تاريخ الشيفت ونوعه وصاحبه مينفعش يتغيّروا';
     end if;
@@ -1605,11 +1683,11 @@ create trigger shift_records_provenance_guard before update on shift_records
 drop policy if exists "shifts update" on shift_records;
 create policy "shifts update" on shift_records for update using (
   (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
-                   or (closed = false and is_next_shift_claimant(date, shift_key))))
+                   or (closed = false and is_next_shift_claimant(date, shift_key, hotel_id))))
   or (closed = true and (can_manage_financials() or is_gm_or_reservations()))
 ) with check (
   (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
-                   or is_next_shift_claimant(date, shift_key)))
+                   or is_next_shift_claimant(date, shift_key, hotel_id)))
   or can_manage_financials() or is_gm_or_reservations()
 );
 
@@ -1785,7 +1863,7 @@ begin
   end if;
 
   select * into sr from shift_records
-    where closed = false and date >= hotel_today() - 1
+    where closed = false and hotel_id = b.hotel_id and date >= hotel_today() - 1
     order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc
     limit 1 for update;
   if not found then
@@ -1836,7 +1914,7 @@ begin
   end if;
   update shift_records set rows = v_rows,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
 
   update bookings set
     amount_paid = coalesce(amount_paid, 0) - amount,
@@ -2024,6 +2102,7 @@ create table if not exists staff_cafeteria (
   updated_at timestamptz not null default now(),
   constraint staff_cafeteria_paid_le_amount check (paid_amount <= amount)
 );
+alter table staff_cafeteria add column if not exists hotel_id integer not null default 1 references hotels(id);
 create index if not exists staff_cafeteria_day_idx on staff_cafeteria (day desc);
 create index if not exists staff_cafeteria_consumer_idx on staff_cafeteria (consumer_name);
 
@@ -2132,7 +2211,7 @@ begin
   end if;
 
   select * into sr from shift_records
-    where closed = false and date >= hotel_today() - 1
+    where closed = false and hotel_id = b.hotel_id and date >= hotel_today() - 1
     order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc
     limit 1 for update;
   if not found then
@@ -2221,7 +2300,7 @@ begin
   end loop;
   update shift_records set rows = v_rows,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
 
   update bookings set
     amount_paid = coalesce(amount_paid, 0) - amount,
@@ -2379,6 +2458,7 @@ begin
   due := greatest(0, booking_hotel_total(b) - coalesce(b.amount_paid, 0));
   if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل (%)', trim_scale(due); end if;
   sr := calma_my_open_shift();
+  if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
   -- الدفعة بتسدّد خدمات كافيتيريا النزيل الأول، والباقي لصف الغرفة
   cafe_out := greatest(0, calma_num(b.extras ->> 'cafeteria') - calma_num(b.extras ->> 'cafeteriaPaid'));
   cafe := least(amt, cafe_out);
@@ -2395,7 +2475,7 @@ begin
   end if;
   update shift_records set rows = v_rows, cafeteria_rows = v_caf,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   return jsonb_build_object('amount', amt, 'cafeteria', cafe, 'left', due - amt, 'currency', b.currency, 'method', p_method, 'details', det, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
 end;
 $$;
@@ -2418,15 +2498,15 @@ begin
     det := calma_clean_details(p_method, coalesce(p_details, '{}'::jsonb));
   end if;
   perform set_config('calma.staff_rpc', '1', true);
-  insert into staff_cafeteria(day, shift_key, consumer_username, consumer_name, description, amount, currency, paid_amount, payments)
-  values (sr.date, sr.shift_key, nullif(btrim(coalesce(p_username, '')), ''), nm, left(coalesce(p_desc, ''), 300), amt, p_currency, case when paid then amt else 0 end,
+  insert into staff_cafeteria(hotel_id, day, shift_key, consumer_username, consumer_name, description, amount, currency, paid_amount, payments)
+  values (sr.hotel_id, sr.date, sr.shift_key, nullif(btrim(coalesce(p_username, '')), ''), nm, left(coalesce(p_desc, ''), 300), amt, p_currency, case when paid then amt else 0 end,
           case when paid then jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'at', (extract(epoch from now()) * 1000)::bigint, 'amount', amt, 'method', p_method, 'details', det, 'day', sr.date, 'shiftKey', sr.shift_key)) else '[]'::jsonb end)
   returning id into v_id;
   perform set_config('calma.staff_rpc', '', true);
   if paid then
     update shift_records set cafeteria_rows = calma_apply_cafe_collection(coalesce(cafeteria_rows, '[]'::jsonb), 'staff', coalesce(nullif(btrim(coalesce(p_username, '')), ''), lower(nm)), nm, null, p_method, p_currency, det, amt,
       'كافيتيريا استاف - ' || nm || ' (+' || trim_scale(amt) || ' ' || p_currency || ')')
-      where date = sr.date and shift_key = sr.shift_key;
+      where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   end if;
   return jsonb_build_object('id', v_id, 'amount', amt, 'paid', paid);
 end;
@@ -2449,16 +2529,16 @@ begin
   sr := calma_my_open_shift();
   -- قفل صفوف المديونية الأول (موظفين مختلفين ممكن يسدّدوا نفس الشخص في نفس اللحظة)، وبعدين نحسب المتبقي من آخر نسخة
   perform 1 from staff_cafeteria
-    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount
+    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and hotel_id = sr.hotel_id and paid_amount < amount
     order by created_at, id for update;
   select coalesce(sum(amount - paid_amount), 0) into owed from staff_cafeteria
-    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount;
+    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and hotel_id = sr.hotel_id and paid_amount < amount;
   if owed <= 0 then raise exception 'مفيش مديونية على الموظف ده'; end if;
   if amt > owed then raise exception 'المبلغ أكبر من المديونية (%)', trim_scale(owed); end if;
   left_amt := amt;
   perform set_config('calma.staff_rpc', '1', true);
   for e in select id, amount, paid_amount from staff_cafeteria
-           where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount
+           where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and hotel_id = sr.hotel_id and paid_amount < amount
            order by created_at, id for update loop
     exit when left_amt <= 0;
     part := least(left_amt, e.amount - e.paid_amount);
@@ -2471,7 +2551,7 @@ begin
   if left_amt > 0 then raise exception 'المديونية اتغيّرت - حدّث وجرّب تاني'; end if;
   update shift_records set cafeteria_rows = calma_apply_cafe_collection(coalesce(cafeteria_rows, '[]'::jsonb), 'staff', k, nm, null, p_method, p_currency, det, amt,
     'كافيتيريا استاف - ' || nm || ' (+' || trim_scale(amt) || ' ' || p_currency || ')')
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   return jsonb_build_object('amount', amt, 'left', owed - amt, 'currency', p_currency);
 end;
 $$;
@@ -2776,6 +2856,7 @@ begin
   if covered <= 0 then raise exception 'المبلغ صغير جدًا بالنسبة لسعر الصرف'; end if;
   if covered > due then raise exception 'المبلغ (= % %) أكبر من المتبقي على النزيل (% %)', trim_scale(covered), b.currency, trim_scale(due), b.currency; end if;
   sr := calma_my_open_shift();
+  if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
   cafe_out := greatest(0, calma_num(b.extras ->> 'cafeteria') - calma_num(b.extras ->> 'cafeteriaPaid'));
   cafe := least(covered, cafe_out);
   cafe_x := case when cafe > 0 then round(amt * cafe / covered, 2) else 0 end;
@@ -2799,7 +2880,7 @@ begin
   end if;
   update shift_records set rows = v_rows, cafeteria_rows = v_caf,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   return jsonb_build_object('amount', amt, 'currency', cur, 'covered', covered, 'bookingCurrency', b.currency, 'rate', rate, 'cafeteria', cafe,
     'left', due - covered, 'method', p_method, 'details', det, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
 end;
@@ -2953,6 +3034,7 @@ begin
   if due <= 0 then raise exception 'مفيش متبقي على النزيل بالـ %', cur; end if;
   if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل بالـ % (%)', cur, trim_scale(due); end if;
   sr := calma_my_open_shift();
+  if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
   cafe_out := greatest(0, calma_num(c ->> 'cafeteria') - calma_num(c ->> 'cafeteriaPaid'));
   cafe := least(amt, cafe_out);
   if cafe > 0 then c := jsonb_set(c, '{cafeteriaPaid}', to_jsonb(calma_num(c ->> 'cafeteriaPaid') + cafe)); end if;
@@ -2973,7 +3055,7 @@ begin
   end if;
   update shift_records set rows = v_rows, cafeteria_rows = v_caf,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   return jsonb_build_object('amount', amt, 'currency', cur, 'cafeteria', cafe, 'left', due - amt, 'method', p_method, 'details', det, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
 end;
 $$;
@@ -3029,13 +3111,14 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare b bookings%rowtype; clash bookings%rowtype; old_room int; today date := hotel_today(); new_from date;
 begin
   if not (is_staff() or is_reservations_manager()) then raise exception 'نقل النزيل من صلاحية موظف الشيفت أو مدير الحجوزات'; end if;     -- المدير العام مابينقلش
-  if is_staff() then perform calma_my_open_shift(); end if;          -- الموظف لازم شيفته مفتوح
   select * into b from bookings where id = p_booking for update;
   if not found then raise exception 'الحجز مش موجود'; end if;
+  if is_staff() and (calma_my_open_shift()).hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك'; end if;          -- الموظف لازم شيفته مفتوح في نفس الفندق
   if p_expected is not null and b.updated_at is distinct from p_expected then raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني'; end if;
   if b.status = 'ملغي' then raise exception 'الحجز ملغي'; end if;
   if b.checkout <= today or b.status = 'تم تسجيل الخروج' then raise exception 'الحجز خلص - مفيش نقل'; end if;
   if not exists (select 1 from rooms where number = p_room) then raise exception 'الغرفة دي مش موجودة'; end if;
+  if not exists (select 1 from rooms where number = p_room and hotel_id = b.hotel_id) then raise exception 'الغرفة دي في فندق تاني - النقل بين الفنادق مش متاح'; end if;
   if p_room = b.room then raise exception 'النزيل في الغرفة دي أصلًا'; end if;
   -- الغرفة الجديدة مطلوبة من يوم النقل (أو أول الإقامة لو لسه ماجاش) لحد الخروج
   new_from := case when b.checkin < today then today else null end;
@@ -3084,8 +3167,8 @@ begin
   ) then
     raise exception 'فيه تحصيل على الحجز ده في شيفت اتقفل - تعديل العملة لازم يتعمل من الحسابات أو المدير العام';
   end if;
-  for sr in select s.date, s.shift_key, s.rows, s.cafeteria_rows from shift_records s
-    where s.closed = false and exists (
+  for sr in select s.hotel_id, s.date, s.shift_key, s.rows, s.cafeteria_rows from shift_records s
+    where s.closed = false and s.hotel_id = b.hotel_id and exists (
       select 1 from jsonb_array_elements(coalesce(s.rows, '[]'::jsonb) || coalesce(s.cafeteria_rows, '[]'::jsonb)) e
       where e ->> 'bookingId' = b.id::text and e ->> 'collectionCurrency' = old_cur)
     for update
@@ -3107,7 +3190,7 @@ begin
       end if;
       new_caf := new_caf || jsonb_build_array(el);
     end loop;
-    update shift_records set rows = new_rows, cafeteria_rows = new_caf where date = sr.date and shift_key = sr.shift_key;
+    update shift_records set rows = new_rows, cafeteria_rows = new_caf where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   end loop;
   perform set_config('calma.currency_rpc', '1', true);
   perform set_config('calma.pay_rpc', '1', true);
@@ -3164,7 +3247,7 @@ drop trigger if exists bookings_guests_sync on bookings;
 create trigger bookings_guests_sync after insert or update of pax, room, guest_codes, checkin, status on bookings
   for each row execute function bookings_sync_guests();
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 41 $$;
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 42 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

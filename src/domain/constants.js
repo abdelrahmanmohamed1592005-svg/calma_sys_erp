@@ -3,6 +3,9 @@
    فندق يظهر، هيفضل شعار Calma بس. */
 export const HOTEL_NAME = "فندق Calma";
 
+/* اسم مجموعة الفنادق (الجروب) - بيظهر في التقرير المجمّع للمدير العام */
+export const GROUP_NAME = "H&S";
+
 export const SHIFTS = [
   { key: "morning", label: "الشيفت الصباحي", time: "8ص - 4م" },
   { key: "evening", label: "الشيفت المسائي", time: "4م - 12ص" },

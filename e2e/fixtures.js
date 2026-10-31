@@ -83,8 +83,8 @@ export const test = base.extend({
     };
     /* شيفت محجوز + يومية جاهزة لموظف (الشيفت الحالي بتوقيت القاهرة). collections: تحصيلات سابقة اتسجّلت في اليومية. */
     const seedShift = async (username = "ahmed", o = {}) => {
-      const { key = myShiftKey(), day = shiftDay(), collections = [], closed = false, closingCash = null, methodClosing = null, rowsPatch = {}, cafePatch = {}, handover = { EGP: 0 }, flagged = false, notes = "", stored = {} } = o;
-      const rooms = (await q("select number from rooms order by number")).map((r) => r.number);
+      const { key = myShiftKey(), day = shiftDay(), hotel = 1, collections = [], closed = false, closingCash = null, methodClosing = null, rowsPatch = {}, cafePatch = {}, handover = { EGP: 0 }, flagged = false, notes = "", stored = {} } = o;
+      const rooms = (await q("select number from rooms where hotel_id = $1 order by number", [hotel])).map((r) => r.number);
       const rows = rooms.map(emptyRow);
       const bc = [];
       for (const c of collections) {
@@ -94,14 +94,14 @@ export const test = base.extend({
       }
       for (const [room, patch] of Object.entries(rowsPatch)) Object.assign(rows.find((x) => String(x.room) === String(room)), patch);
       const cafe = { ...emptyRow("كافيتيريا"), ...cafePatch };
-      await q("insert into shift_claims(date, shift_key, username, name) select $1, $2, username, name from profiles where username = $3", [day, key, username]);
-      await q(`insert into shift_records(date, shift_key, staff_name, staff_username, handover, rows, cafeteria, booking_collections, closed, closed_by, closing_cash, method_closing, flagged, shift_notes,
+      await q("insert into shift_claims(hotel_id, date, shift_key, username, name) select $4, $1, $2, username, name from profiles where username = $3", [day, key, username, hotel]);
+      await q(`insert into shift_records(hotel_id, date, shift_key, staff_name, staff_username, handover, rows, cafeteria, booking_collections, closed, closed_by, closing_cash, method_closing, flagged, shift_notes,
                                           total_expenses, total_collections, cash_collections, by_method_currency, by_category)
-               select $1, $2, name, username, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8, case when $8 then name end, $9::jsonb, $10::jsonb, $11, $12,
+               select $18, $1, $2, name, username, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8, case when $8 then name end, $9::jsonb, $10::jsonb, $11, $12,
                       $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb from profiles where username = $3`,
         [day, key, username, JSON.stringify(handover), JSON.stringify(rows), JSON.stringify(cafe), JSON.stringify(bc), closed, closingCash && JSON.stringify(closingCash), methodClosing && JSON.stringify(methodClosing), flagged, notes,
-         ...["total_expenses", "total_collections", "cash_collections", "by_method_currency", "by_category"].map((k) => (stored[k] ? JSON.stringify(stored[k]) : null))]);
-      return { day, key };
+         ...["total_expenses", "total_collections", "cash_collections", "by_method_currency", "by_category"].map((k) => (stored[k] ? JSON.stringify(stored[k]) : null)), hotel]);
+      return { day, key, hotel };
     };
     await use({ pool, q, qRaw, seedUser, seedBooking, seedShift, bridge, name, api, newSession });
     // نوقف أي طلبات لسه جاية من الصفحات قبل ما نقفل الاتصال بالقاعدة ونمسحها

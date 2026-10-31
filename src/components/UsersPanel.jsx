@@ -5,9 +5,11 @@ import { ROLES, SHIFTS } from "../domain/constants";
 import { shiftDayNow, isShiftOver } from "../domain/dates";
 import { getClaimsForDate, clearClaimRow, deleteShiftRecord, getShiftRecord } from "../data/shifts";
 import { adminCreateUser, setProfileActive, adminResetPassword } from "../lib/auth";
+import { useHotel } from "../lib/hotelContext";
 import { validatePasswordStrength, validateUsername, sanitizeText } from "../domain/security";
 
 export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog, showToast, dataVersion }) {
+  const { hotel } = useHotel();
   const [form, setForm] = useState(null);
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPw, setResetPw] = useState("");
@@ -79,7 +81,7 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
 
       {!readOnly && claims && (
         <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
-          <SectionHead icon={CalendarClock} tone="amber" title="شيفتات النهارده" hint="مين اختار أنهي شيفت النهارده" />
+          <SectionHead icon={CalendarClock} tone="amber" title={`شيفتات النهارده - ${hotel.name}`} hint="مين اختار أنهي شيفت النهارده في الفندق المفتوح (غيّر الفندق من أعلى الصفحة)" />
           <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8, lineHeight: 1.7 }}>لو حد اختار شيفت غلط بالغلط، تقدر تلغي اختياره من هنا عشان يقدر يختار تاني (تصحيح إداري بس) - طول ما معاد الشيفت لسه ماخلصش. تنبيه: ده بيمسح ورقة اليومية بتاعة الشيفت ده كاملة، أما أي حجوزات أو تغييرات غرف حصلت في نفس الوقت فمش بتُمسح أو تترجع تلقائيًا - لازم تراجعيها وتصلّحيها يدويًا لو فيها خطأ.</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {SHIFTS.map((s) => (
