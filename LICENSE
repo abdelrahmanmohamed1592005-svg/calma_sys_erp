@@ -1,0 +1,25 @@
+Proprietary Software License / ترخيص برمجيات مملوكة
+
+Copyright (c) 2026 [OWNER NAME / اسم المالك]. All rights reserved. / جميع الحقوق محفوظة.
+
+This software (the "Software") - including its source code, database schema, documentation,
+tests and design - is the proprietary property of the copyright holder named above.
+
+No license or right to use, copy, modify, merge, publish, distribute, sublicense, sell, host or
+create derivative works of the Software is granted except under a separate written agreement
+signed by the copyright holder (for example a sale or license agreement).
+
+The Software is provided "AS IS", without warranty of any kind, express or implied, including but
+not limited to merchantability, fitness for a particular purpose and non-infringement. In no event
+shall the copyright holder be liable for any claim, damages or other liability arising from the
+use of the Software. Verify financial figures (ledgers, collections, reports) against your own
+records before relying on them.
+
+Third-party open-source components bundled with the Software remain under their own licenses;
+see THIRD_PARTY_LICENSES.md.
+
+البرنامج (شامل الكود وقاعدة البيانات والتوثيق والاختبارات والتصميم) ملك لصاحب حقوق النشر المذكور
+أعلاه. لا يُمنح أي حق في الاستخدام أو النسخ أو التعديل أو النشر أو التوزيع أو البيع أو الاستضافة إلا
+بموجب اتفاق مكتوب موقّع من المالك (مثل عقد بيع أو ترخيص). البرنامج مقدّم "كما هو" بدون أي ضمان، والمالك
+غير مسؤول عن أي خسارة ناتجة عن استخدامه. راجع الأرقام المالية قبل الاعتماد عليها. المكتبات المفتوحة
+المستخدمة تخضع لتراخيصها الخاصة (انظر THIRD_PARTY_LICENSES.md).
