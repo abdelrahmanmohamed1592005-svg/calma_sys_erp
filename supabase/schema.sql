@@ -3434,6 +3434,14 @@ drop trigger if exists hotels_guard_prefix_trg on hotels;
 create trigger hotels_guard_prefix_trg before update on hotels
   for each row execute function hotels_guard_prefix();
 
+-- تشديد أمني: الغرف تتضاف وتتمسح من دوال المدير العام بس (مدير الحجوزات يعدّل الاسم بس) - كان يقدر يضيف غرفة بأي فندق مباشرة
+drop policy if exists "rooms write" on rooms;
+drop policy if exists "rooms update" on rooms;
+create policy "rooms update" on rooms for update using (is_reservations_manager()) with check (is_reservations_manager());
+revoke insert, delete on rooms from authenticated;
+revoke all on function can_work_in_hotel(integer) from public, anon;
+grant execute on function can_work_in_hotel(integer) to authenticated;
+
 create or replace function calma_schema_version() returns int language sql immutable as $$ select 43 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;

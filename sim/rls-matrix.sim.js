@@ -44,7 +44,7 @@ describe.skipIf(!enabled)("مصفوفة الصلاحيات", () => {
     // [وصف، SQL، المسموح لهم، نوع، params]
     ["rooms: قراءة", "select count(*) n from rooms", ALL, "read"],
     ["rooms: تعديل", "update rooms set name = name where number = 601", ["res1"]],
-    ["rooms: إضافة", "insert into rooms(number, name) values (999, 'x')", ["res1"]],
+    ["rooms: إضافة (من الدوال بس - مفيش إضافة مباشرة لأي دور)", "insert into rooms(number, name) values (999, 'x')", []],
     ["room_overrides: قراءة", "select count(*) n from room_overrides", ALL, "read"],
     ["room_overrides: تعديل", "update room_overrides set status = 'cleaning' where room_number = 602", ["st1", "st2", "res1"]],
     ["room_overrides: مسح", "delete from room_overrides where room_number = 602", ["st1", "st2", "res1"]],

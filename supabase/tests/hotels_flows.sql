@@ -121,3 +121,9 @@ select t.reject('H22 بادئة بصيغة غلط مرفوضة', t.try('gm1', $q
 select t.pass('H22 تغيير بادئة فندق من غير حجوزات مسموح', t.try('gm1', $q$update hotels set code_prefix = 'W' where name = 'Fresh Hotel'$q$));
 select t.eq('H22 البادئة اتغيّرت', (select code_prefix from hotels where name = 'Fresh Hotel'), 'W');
 select t.reject('H22 مينفعش تغيير بادئة فندق عنده حجوزات (Park Plaza)', t.try('gm1', $q$update hotels set code_prefix = 'Q' where id = 3$q$), 'بعد ما الفندق بقى له حجوزات');
+
+-- تشديد: مفيش إضافة/مسح غرف مباشرة من الـ API (المدير العام بالدوال بس)، وتعديل الاسم لمدير الحجوزات لسه شغال
+select t.reject('H23 مدير الحجوزات مايضيفش غرفة مباشرة (حتى بفندق تاني)', t.try('res1', $q$insert into rooms(number, name, hotel_id) values (9001, 'x', 2)$q$), 'permission denied');
+select t.reject('H23 مدير الحجوزات مايمسحش غرفة', t.try('res1', $q$delete from rooms where number = 9001$q$), 'permission denied');
+select t.pass('H23 تعديل اسم غرفة لسه شغال لمدير الحجوزات', t.try('res1', $q$update rooms set name = 'اسم جديد' where number = 602$q$));
+select t.eq('H23 الاسم اتغيّر', (select name from rooms where number = 602), 'اسم جديد');
