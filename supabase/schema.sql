@@ -1521,7 +1521,7 @@ create policy "claims delete" on shift_claims for delete using (is_gm());
 -- موظف الشيفت التالي (اللي اختار شيفته فعلاً) يقدر يقفل الشيفت اللي قبله
 -- لو لسه مفتوح (إقفال تلقائي لحظة ما الموظف الجديد يبدأ، حتى لو الأوفر تايم
 -- ماخلصش) - ترتيب الشيفتات: صباحي ← مسائي ← ليلي ← صباحي اليوم اللي بعده.
-create or replace function is_next_shift_claimant(rec_date date, rec_shift text, rec_hotel integer default 1)
+create or replace function is_next_shift_claimant(rec_date date, rec_shift text, rec_hotel integer default null)    -- من غير فندق = false (مفيش افتراض فندق ١)
 returns boolean language sql security definer stable set search_path = public as $$
   select exists (
     select 1 from shift_claims c
@@ -3414,6 +3414,25 @@ $$;
 drop trigger if exists rooms_guard_identity_trg on rooms;
 create trigger rooms_guard_identity_trg before update on rooms
   for each row execute function rooms_guard_identity();
+
+-- بادئة كود الحجز: حرف أو حرفين إنجليزي، فريدة بين الفنادق، ومينفعش تتغيّر بعد ما الفندق يبقى له حجوزات
+-- (غير كده فندقين ممكن يطلعوا نفس الكود فيفشل حفظ الحجز بقيد التفرّد)
+do $$ begin
+  alter table hotels add constraint hotels_prefix_format_chk check (code_prefix ~ '^[A-Z]{1,2}$');
+exception when duplicate_object then null; end $$;
+create unique index if not exists hotels_code_prefix_uidx on hotels (code_prefix);
+create or replace function hotels_guard_prefix()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.code_prefix is distinct from old.code_prefix and exists (select 1 from bookings where hotel_id = old.id) then
+    raise exception 'مينفعش تغيّر بادئة كود الحجز بعد ما الفندق بقى له حجوزات - الأكواد القديمة هتتعارض';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists hotels_guard_prefix_trg on hotels;
+create trigger hotels_guard_prefix_trg before update on hotels
+  for each row execute function hotels_guard_prefix();
 
 create or replace function calma_schema_version() returns int language sql immutable as $$ select 43 $$;
 revoke all on function calma_schema_version() from public, anon;

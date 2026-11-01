@@ -212,7 +212,7 @@ export default function App() {
 
   function logActivity(action) {
     const entry = { userName: currentProfile?.name || "—", username: currentProfile?.username || "—", role: currentProfile?.role || "—", action, hotelId: getActiveHotelId() };
-    setActivity((prev) => [{ id: uid(), hotelId: getActiveHotelId(), ts: Date.now(), user: entry.userName, username: entry.username, role: entry.role, action }, ...prev].slice(0, 300));
+    setActivity((prev) => [{ id: uid(), hotelId: getActiveHotelId(), ts: Date.now(), user: entry.userName, username: entry.username, role: entry.role, action }, ...prev].slice(0, 1000));
     addActivity(entry).then((r) => { if (r?.error) showToast("⚠ تعذر تسجيل الحركة في سجل الحركة - اتأكد من النت وسجّل الإجراء تاني لو لزم"); });
   }
 
@@ -299,7 +299,7 @@ export default function App() {
       <GlobalStyle />
       <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} onOpenSearch={() => setPaletteOpen(true)} />
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={{}} />
-      <main className="cx-main">
+      <main className="cx-main" id="hotel-panel">
       {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
       <HotelBar hotels={visibleHotels} hotelId={hotel.id} onChange={switchHotel} roomCounts={roomCounts} />
       <PageHead tab={activeTab} />

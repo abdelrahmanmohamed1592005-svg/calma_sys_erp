@@ -4,6 +4,13 @@ import { friendlyDbError } from "./schemaCheck";
 import { shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
 import { getActiveHotelId, resolveHotelScope } from "./hotels";
 
+/* القراءات/الكتابات على سجل واحد لازم تكون على فندق واحد: نطاق "all" هنا غلط برمجي فنرميه بدل ما نقع على الفندق الشغال بصمت */
+function oneHotel(hotelId) {
+  const h = resolveHotelScope(hotelId);
+  if (h == null) throw new Error("نطاق كل الفنادق مش مدعوم في العملية دي");
+  return h;
+}
+
 function shiftFromRow(r) {
   return {
     hotelId: r.hotel_id ?? 1, date: r.date, shiftKey: r.shift_key, staffName: r.staff_name, staffUsername: r.staff_username,
@@ -32,7 +39,7 @@ function shiftToRow(rec) {
 }
 
 export async function getShiftRecord(date, shiftKey, hotelId) {
-  const { data, error } = await supabase.from("shift_records").select("*").eq("hotel_id", resolveHotelScope(hotelId) ?? getActiveHotelId()).eq("date", date).eq("shift_key", shiftKey).maybeSingle();
+  const { data, error } = await supabase.from("shift_records").select("*").eq("hotel_id", oneHotel(hotelId)).eq("date", date).eq("shift_key", shiftKey).maybeSingle();
   if (error || !data) return null;
   return shiftFromRow(data);
 }
@@ -40,7 +47,7 @@ export async function getShiftRecord(date, shiftKey, hotelId) {
 /* زي getShiftRecord بس بتفرّق بين "مفيش سجل" (data = null) و"القراءة فشلت" (error): قراءة فاشلة (نت وقع لحظة) ما تتعاملش كأن
    اليومية مش موجودة - وإلا كان هيتعمل سجل جديد برصيد افتتاحي صفر وتتكتب فوق عهدة الشيفت اللي قبله. */
 export async function getShiftRecordStrict(date, shiftKey, hotelId) {
-  const { data, error } = await supabase.from("shift_records").select("*").eq("hotel_id", resolveHotelScope(hotelId) ?? getActiveHotelId()).eq("date", date).eq("shift_key", shiftKey).maybeSingle();
+  const { data, error } = await supabase.from("shift_records").select("*").eq("hotel_id", oneHotel(hotelId)).eq("date", date).eq("shift_key", shiftKey).maybeSingle();
   if (error) return { error: friendlyDbError(error) };
   return { data: data ? shiftFromRow(data) : null };
 }
@@ -80,7 +87,7 @@ export async function getShiftRecordsInRange(fromDate, toDate, hotelId) {
 }
 
 export async function getClaimsForDate(date, hotelId) {
-  const { data, error } = await supabase.from("shift_claims").select("*").eq("date", date).eq("hotel_id", resolveHotelScope(hotelId) ?? getActiveHotelId());
+  const { data, error } = await supabase.from("shift_claims").select("*").eq("date", date).eq("hotel_id", oneHotel(hotelId));
   if (error || !data) return {};
   const map = {};
   data.forEach((c) => { map[c.shift_key] = { username: c.username, name: c.name, claimedAt: new Date(c.claimed_at).getTime() }; });
@@ -90,7 +97,7 @@ export async function getClaimsForDate(date, hotelId) {
 /* الحجز على مفتاح (date, shift_key) في الجدول بيمنع تلقائيًا حد تاني ياخد نفس الشيفت
    نفس اليوم - لو حد سبقك، الـ insert هيفشل بخطأ "duplicate key" بدل ما يتكتب فوقه. */
 export async function claimShiftRow(date, shiftKey, username, name, hotelId) {
-  const { error } = await supabase.from("shift_claims").insert({ hotel_id: resolveHotelScope(hotelId) ?? getActiveHotelId(), date, shift_key: shiftKey, username, name });
+  const { error } = await supabase.from("shift_claims").insert({ hotel_id: oneHotel(hotelId), date, shift_key: shiftKey, username, name });
   if (error) {
     // الموظف عنده اختيار شيفت النهارده بالفعل (في الفندق ده أو فندق تاني): شيفت واحد لكل موظف في اليوم
     if (error.code === "23505" && /one_per_user_day/.test(error.message || "")) return { alreadyClaimed: true };
@@ -101,7 +108,7 @@ export async function claimShiftRow(date, shiftKey, username, name, hotelId) {
 }
 
 export async function clearClaimRow(date, shiftKey, hotelId) {
-  const { error } = await supabase.from("shift_claims").delete().eq("hotel_id", resolveHotelScope(hotelId) ?? getActiveHotelId()).eq("date", date).eq("shift_key", shiftKey);
+  const { error } = await supabase.from("shift_claims").delete().eq("hotel_id", oneHotel(hotelId)).eq("date", date).eq("shift_key", shiftKey);
   return { error: error?.message };
 }
 
@@ -113,7 +120,7 @@ export async function clearClaimRow(date, shiftKey, hotelId) {
 export async function deleteShiftRecord(date, shiftKey, hotelId) {
   // .select() عشان نعرف عدد الصفوف اللي اتمسحت فعلاً: قاعدة البيانات بترفض مسح يومية مقفولة
   // (من غير خطأ - بترجّع صفر صفوف)، ومينفعش نقول للمدير إنها اتمسحت وهي لسه موجودة.
-  const { data, error } = await supabase.from("shift_records").delete().eq("hotel_id", resolveHotelScope(hotelId) ?? getActiveHotelId()).eq("date", date).eq("shift_key", shiftKey).select("date");
+  const { data, error } = await supabase.from("shift_records").delete().eq("hotel_id", oneHotel(hotelId)).eq("date", date).eq("shift_key", shiftKey).select("date");
   return { error: error?.message, deleted: data?.length || 0 };
 }
 

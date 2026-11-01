@@ -109,13 +109,23 @@ export function PageHead({ tab, actions }) {
 export function HotelBar({ hotels, hotelId, onChange, roomCounts = {} }) {
   const list = hotels.filter((h) => h.active);
   if (list.length < 2) return null;
+  // أسهم اليمين/الشمال بتنقل بين الفنادق (في الواجهة العربي اليمين = الأول)، وTab بيدخل على الفندق المفتوح بس
+  function onKey(e) {
+    const i = list.findIndex((h) => h.id === hotelId);
+    const step = e.key === "ArrowLeft" ? 1 : e.key === "ArrowRight" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = list[(i + step + list.length) % list.length];
+    onChange(next.id);
+    requestAnimationFrame(() => document.querySelector(`[data-hotel-id="${next.id}"]`)?.focus());
+  }
   return (
-    <div className="cx-hotelbar cx-no-print" role="tablist" aria-label={GROUP_TITLE}>
+    <div className="cx-hotelbar cx-no-print" role="tablist" aria-label={GROUP_TITLE} onKeyDown={onKey}>
       {list.map((h) => {
         const acc = hotelAccent(hotels, h.id);
         const active = h.id === hotelId;
         return (
-          <button key={h.id} role="tab" aria-selected={active} aria-label={h.name} data-hotel-id={h.id} className={"cx-hchip" + (active ? " active" : "")} style={{ "--acc": acc }} onClick={() => onChange(h.id)}>
+          <button key={h.id} role="tab" aria-selected={active} aria-controls="hotel-panel" tabIndex={active ? 0 : -1} aria-label={h.name} data-hotel-id={h.id} className={"cx-hchip" + (active ? " active" : "")} style={{ "--acc": acc }} onClick={() => onChange(h.id)}>
             <span className="dot" aria-hidden="true">{String(h.shortName || h.name).trim().charAt(0).toUpperCase()}</span>
             <span style={{ minWidth: 0 }}>
               <div className="nm">{h.name}</div>

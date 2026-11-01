@@ -113,3 +113,11 @@ update hotels set active = false where id = 4;
 update profiles set allowed_hotels = null where username = 'st2';
 select t.reject('H21 مينفعش حد يختار شيفت في فندق موقوف', t.try('hs1', format($q$insert into shift_claims(hotel_id, date, shift_key, username, name) values (4, %L, 'night', 'hs1', 'hs1')$q$, hotel_today() + 1)));
 update hotels set active = true where id = 4;
+
+-- مراجعة الكود: بادئة كود الحجز فريدة وبصيغة صحيحة ومينفعش تتغيّر بعد وجود حجوزات
+select t.pass('H22 فندق جديد من غير حجوزات', t.try('gm1', $q$select create_hotel('Fresh Hotel', 'F', 'F')$q$));
+select t.reject('H22 بادئة مكررة بين فندقين مرفوضة', t.try('gm1', $q$update hotels set code_prefix = 'B' where name = 'Fresh Hotel'$q$), 'hotels_code_prefix_uidx');
+select t.reject('H22 بادئة بصيغة غلط مرفوضة', t.try('gm1', $q$update hotels set code_prefix = 'Z9' where name = 'Fresh Hotel'$q$), 'hotels_prefix_format_chk');
+select t.pass('H22 تغيير بادئة فندق من غير حجوزات مسموح', t.try('gm1', $q$update hotels set code_prefix = 'W' where name = 'Fresh Hotel'$q$));
+select t.eq('H22 البادئة اتغيّرت', (select code_prefix from hotels where name = 'Fresh Hotel'), 'W');
+select t.reject('H22 مينفعش تغيير بادئة فندق عنده حجوزات (Park Plaza)', t.try('gm1', $q$update hotels set code_prefix = 'Q' where id = 3$q$), 'بعد ما الفندق بقى له حجوزات');

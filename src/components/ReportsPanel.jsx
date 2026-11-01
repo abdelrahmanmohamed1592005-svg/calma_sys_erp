@@ -193,9 +193,12 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
   // يومية كل شيفت في اليوم المختار (لكل فندق في التقرير المجمّع)
   const dayRecs = useMemo(() => (rangeMode === "day" ? records.filter((r) => r.date === date) : []), [records, rangeMode, date]);
   const dayRecord = (hid, key) => dayRecs.find((r) => (r.hotelId ?? 1) === hid && r.shiftKey === key) || null;
-  const dayHotels = group ? hotels.filter((h) => h.active) : [hotel];
+  // التقرير المجمّع بيعرض كمان أي فندق موقوف عنده يوميات في الفترة (من غير كده الأرقام الكلية ماتطابقش صفوف الملخص)
+  const hotelsWithData = new Set(records.map((r) => r.hotelId ?? 1));
+  const reportHotels = hotels.filter((h) => h.active || hotelsWithData.has(h.id));
+  const dayHotels = group ? reportHotels : [hotel];
   // ملخص كل فندق لوحده (للمدير العام في التقرير المجمّع)
-  const perHotel = useMemo(() => (group ? hotels.filter((h) => h.active).map((h) => ({ hotel: h, agg: aggregateShifts(records.filter((r) => (r.hotelId ?? 1) === h.id)) })) : []), [group, hotels, records]);
+  const perHotel = useMemo(() => (group ? reportHotels.map((h) => ({ hotel: h, agg: aggregateShifts(records.filter((r) => (r.hotelId ?? 1) === h.id)) })) : []), [group, reportHotels, records]);
   // كل عمليات الفيزا/التحويلات في الفترة بتفاصيلها (آخر ٤ أرقام / اسم ورقم) من اليومية
   const nonCashTx = useMemo(() => {
     const out = [];

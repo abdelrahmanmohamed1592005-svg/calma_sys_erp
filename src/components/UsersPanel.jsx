@@ -75,7 +75,8 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
     if (!next.length) { showToast("لازم الموظف يكون مسموحله بفندق واحد على الأقل"); return; }
     const res = await setProfileHotels(u.id, next.length === activeIds.length ? null : next);
     if (res.error) { showToast(res.error); return; }
-    onRefresh(); onLog(`تحديد فنادق الموظف ${u.username}: ${next.length === activeIds.length ? "كل الفنادق" : hotels.filter((h) => next.includes(h.id)).map((h) => h.name).join("، ")}`); showToast("تم تحديث فنادق الموظف");
+    await onRefresh();            // نستنى قايمة المستخدمين تتحدّث قبل أي ضغطة تانية (من غير كده ضغطتين سريعتين بيكتبوا فوق بعض)
+    onLog(`تحديد فنادق الموظف ${u.username}: ${next.length === activeIds.length ? "كل الفنادق" : hotels.filter((h) => next.includes(h.id)).map((h) => h.name).join("، ")}`); showToast("تم تحديث فنادق الموظف");
   }
   async function submitReset() { return guarded(submitResetInner); }
   async function submitResetInner() {
