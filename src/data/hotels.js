@@ -11,13 +11,7 @@ export async function getHotels() {
   return data.map((h) => ({ id: h.id, name: h.name, shortName: h.short_name || h.name, prefix: h.code_prefix || "B", active: h.active !== false }));
 }
 
-/* "الفندق الشغال" على مستوى الواجهة كلها: كل قراءة/كتابة لليومية والاختيارات وكافيتيريا الاستاف بتتعمل على الفندق ده
-   (الواجهة بتغيّره من مبدّل الفنادق في الهيدر، وبتعمل إعادة تحميل كاملة للشاشات بعدها). */
-let activeHotelId = 1;
-export function setActiveHotelId(id) { activeHotelId = Number(id) || 1; }
-export function getActiveHotelId() { return activeHotelId; }
-/* hotelId صريح (رقم) أو "all" (كل الفنادق - للتقارير المجمّعة) أو undefined (الفندق الشغال) */
-export function resolveHotelScope(hotelId) { return hotelId === "all" ? null : (hotelId == null ? activeHotelId : Number(hotelId)); }
+export { setActiveHotelId, getActiveHotelId, resolveHotelScope } from "./hotelScope";
 
 /* إدارة الفنادق والغرف (المدير العام بس - القاعدة بتفرض ده): كل العمليات دوال في قاعدة البيانات، ومفيش مسح لفندق أو غرفة */
 export async function createHotel({ name, shortName, prefix }) {

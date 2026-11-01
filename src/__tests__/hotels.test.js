@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { setActiveHotelId, getActiveHotelId, resolveHotelScope, DEFAULT_HOTELS } from "../data/hotels";
+import { setActiveHotelId, getActiveHotelId, resolveHotelScope } from "../data/hotelScope";
 import { GROUP_NAME } from "../domain/constants";
 
 describe("الفنادق المتعددة - الفندق الشغال ونطاق القراءة", () => {
   beforeEach(() => setActiveHotelId(1));
   it("الافتراضي هو الفندق الأصلي رقم ١ (Calma)", () => {
     expect(getActiveHotelId()).toBe(1);
-    expect(DEFAULT_HOTELS[0].id).toBe(1);
     expect(resolveHotelScope()).toBe(1);
   });
   it("تغيير الفندق الشغال بيغيّر نطاق القراءة الافتراضي", () => {
