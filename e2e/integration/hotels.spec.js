@@ -241,3 +241,23 @@ test.describe("تقارير كل فندق ومجمّع H&S للمدير العا
     await page.goto("/");
   });
 });
+
+test.describe("الجهاز المشترك: الموظف مايختارش شيفته في فندق غلط بالغلط", () => {
+  test("موظف من غير شيفت بيفتح على أول فندق مش على اللي المدير اختاره قبله على نفس الجهاز، واللافتة بتوضّح الفندق قبل الاختيار", async ({ page, env }) => {
+    await users(env);
+    await page.goto("/");
+    await login(page, "boss");
+    await switchHotel(page, "Park Plaza");                       // المدير سايب الجهاز على Park Plaza
+    await page.getByTitle("تسجيل خروج").click();
+    const gate = page.getByRole("button", { name: /طباعة التقرير وتسجيل الخروج/ });
+    if (await gate.isVisible().catch(() => false)) { await page.evaluate(() => { window.print = () => {}; }); await gate.click(); }
+    await login(page, "ahmed");                                   // موظف بيدخل على نفس الجهاز
+    await expect.poll(() => activeHotelId(page)).toBe("1");        // فندق ١ مش Park Plaza
+    await goTab(page, "اليومية");
+    const banner = page.getByTestId("claim-hotel-banner");
+    await expect(banner).toContainText("فندق Calma");
+    await switchHotel(page, "Revento");
+    await expect(banner).toContainText("Revento");                // اللافتة بتتبع الفندق المفتوح
+    expect((await env.q("select count(*)::int n from shift_claims"))[0].n).toBe(0);   // لسه ماختارش حاجة
+  });
+});

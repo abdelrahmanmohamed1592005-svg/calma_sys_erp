@@ -17,7 +17,7 @@ import { signUpUser, signIn, signOut, getSession, onAuthStateChange, getMyProfil
 import { getRooms, getRoomOverrides, setRoomOverride } from "./data/rooms";
 import { getBookings, insertBooking, updateBookingIfUnchanged } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
-import { getHotels, DEFAULT_HOTELS, setActiveHotelId } from "./data/hotels";
+import { getHotels, DEFAULT_HOTELS, setActiveHotelId, getActiveHotelId } from "./data/hotels";
 import { getMyClaims } from "./data/shifts";
 import { HotelContext } from "./lib/hotelContext";
 
@@ -68,14 +68,20 @@ export default function App() {
   function switchHotel(id) {
     const n = Number(id);
     if (!n || n === hotelId) return;
-    try { localStorage.setItem("calma_hotel", String(n)); } catch { /* التخزين المحلي اختياري */ }
+    // موظف الشيفت مابنحفظش اختياره على الجهاز (الجهاز ممكن يكون مشترك): كل مرة بيبدأ من فندق شيفته أو أول فندق مسموح
+    if (currentProfile?.role !== "staff") { try { localStorage.setItem("calma_hotel", String(n)); } catch { /* التخزين المحلي اختياري */ } }
     setActiveHotelId(n); setHotelId(n); setPendingEditBookingId(null); setJump(null); setDataVersion((v) => v + 1);
   }
   // موظف الشيفت اللي اختار شيفته النهارده في فندق معين: نفتحله فندقه تلقائيًا أول ما يدخل
   useEffect(() => {
     if (!currentProfile || currentProfile.role !== "staff") return;
     let cancelled = false;
-    getMyClaims(shiftDayNow(), currentProfile.username).then((c) => { if (!cancelled && c[0] && c[0].hotelId !== hotelId) switchHotel(c[0].hotelId); });
+    getMyClaims(shiftDayNow(), currentProfile.username).then((c) => {
+      if (cancelled) return;
+      if (c[0]) { if (c[0].hotelId !== hotelId) switchHotel(c[0].hotelId); return; }
+      const first = currentProfile.allowed_hotels?.length ? currentProfile.allowed_hotels[0] : 1;      // من غير شيفت النهارده: أول فندق مسموح مش اللي اتختار قبل كده على الجهاز
+      if (first !== hotelId) switchHotel(first);
+    });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- مرة عند الدخول بس
   }, [currentProfile?.id]);
@@ -205,8 +211,8 @@ export default function App() {
   }, [currentProfile?.id, dataVersion]);
 
   function logActivity(action) {
-    const entry = { userName: currentProfile?.name || "—", username: currentProfile?.username || "—", role: currentProfile?.role || "—", action, hotelId };
-    setActivity((prev) => [{ id: uid(), hotelId, ts: Date.now(), user: entry.userName, username: entry.username, role: entry.role, action }, ...prev].slice(0, 300));
+    const entry = { userName: currentProfile?.name || "—", username: currentProfile?.username || "—", role: currentProfile?.role || "—", action, hotelId: getActiveHotelId() };
+    setActivity((prev) => [{ id: uid(), hotelId: getActiveHotelId(), ts: Date.now(), user: entry.userName, username: entry.username, role: entry.role, action }, ...prev].slice(0, 300));
     addActivity(entry).then((r) => { if (r?.error) showToast("⚠ تعذر تسجيل الحركة في سجل الحركة - اتأكد من النت وسجّل الإجراء تاني لو لزم"); });
   }
 
@@ -308,7 +314,7 @@ export default function App() {
         </React.Fragment>
       )}
       </main>
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} tabs={perms.tabs} rooms={rooms} bookings={bookings} overrides={overrides} hotels={visibleHotels} hotelId={hotel.id}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} tabs={perms.tabs} rooms={rooms.filter((r) => visibleHotels.some((h) => h.id === (r.hotelId ?? 1)))} bookings={bookings.filter((b) => visibleHotels.some((h) => h.id === (b.hotelId ?? 1)))} overrides={overrides} hotels={visibleHotels} hotelId={hotel.id}
         onGoTab={(t) => setTab(t)}
         onOpenRoom={(r, h) => { if (h) switchHotel(h); setTab(perms.tabs.includes("board") ? "board" : perms.tabs[0]); setJump({ room: r, nonce: Date.now() }); }}
         onFindBooking={(name, h) => { if (perms.tabs.includes("bookings")) { if (h) switchHotel(h); setTab("bookings"); setJump({ query: name, nonce: Date.now() }); } }} />

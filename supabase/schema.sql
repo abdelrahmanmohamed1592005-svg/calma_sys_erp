@@ -257,7 +257,8 @@ update hotels set code_prefix = case id when 2 then 'R' when 3 then 'P' when 4 t
 alter table profiles add column if not exists allowed_hotels integer[];
 create or replace function can_work_in_hotel(h integer)
 returns boolean language sql security definer stable set search_path = public as $$
-  select coalesce((select allowed_hotels is null or h = any(allowed_hotels) from profiles where id = auth.uid()), false);
+  select coalesce((select allowed_hotels is null or h = any(allowed_hotels) from profiles where id = auth.uid()), false)
+         and exists (select 1 from hotels where id = h and active);       -- فندق موقوف مينفعش حد يختار فيه شيفت
 $$;
 grant execute on function can_work_in_hotel(integer) to authenticated;
 alter table rooms add column if not exists hotel_id integer not null default 1 references hotels(id);
@@ -3327,6 +3328,9 @@ begin
   if pre = '' then pre := upper(left(regexp_replace(nm, '[^A-Za-z]', '', 'g'), 1)); end if;
   if pre = '' or pre !~ '^[A-Z]{1,2}$' then raise exception 'بادئة كود الحجز: حرف أو حرفين إنجليزي'; end if;
   if exists (select 1 from hotels where code_prefix = pre) then raise exception 'بادئة الكود دي مستخدمة في فندق تاني - اختار حرف تاني'; end if;
+  perform pg_advisory_xact_lock(424201);          -- مديرين اتنين بيضيفوا فندق في نفس اللحظة: واحد ورا التاني (مفيش تعارض في الرقم)
+  if exists (select 1 from hotels where lower(name) = lower(nm)) then raise exception 'فيه فندق بنفس الاسم'; end if;
+  if exists (select 1 from hotels where code_prefix = pre) then raise exception 'بادئة الكود دي مستخدمة في فندق تاني - اختار حرف تاني'; end if;
   select coalesce(max(id), 0) + 1 into nid from hotels;
   insert into hotels(id, name, short_name, sort_order, code_prefix) values (nid, nm, nullif(btrim(coalesce(p_short, '')), ''), nid, pre);
   return nid;
@@ -3380,6 +3384,36 @@ $$;
 drop trigger if exists profiles_validate_hotels on profiles;
 create trigger profiles_validate_hotels before insert or update on profiles
   for each row execute function validate_allowed_hotels();
+
+-- مينفعش يتوقّف فندق فيه شيفت مفتوح (الموظف كان هيفقد يوميته من قدامه): اقفلوا الشيفتات الأول
+create or replace function hotels_block_deactivate_with_open_shift()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.active and not new.active and exists (
+    select 1 from shift_records s where s.hotel_id = old.id and s.closed = false and s.date >= hotel_today() - 1
+  ) then
+    raise exception 'مينفعش توقّف الفندق وفيه شيفت مفتوح - اقفل الشيفتات المفتوحة الأول';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists hotels_block_deactivate_trg on hotels;
+create trigger hotels_block_deactivate_trg before update on hotels
+  for each row execute function hotels_block_deactivate_with_open_shift();
+
+-- الغرفة مينفعش تتنقل لفندق تاني ولا يتغيّر رقمها من الـ API (كانت بتبوّظ ارتباط حجوزاتها بالفندق) - المدير العام بيعدّل الاسم من الدالة
+create or replace function rooms_guard_identity()
+returns trigger language plpgsql as $$
+begin
+  if auth.uid() is not null and (new.number is distinct from old.number or new.hotel_id is distinct from old.hotel_id) then
+    raise exception 'رقم الغرفة وفندقها مينفعش يتغيّروا - ضيف غرفة جديدة في الفندق المطلوب';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists rooms_guard_identity_trg on rooms;
+create trigger rooms_guard_identity_trg before update on rooms
+  for each row execute function rooms_guard_identity();
 
 create or replace function calma_schema_version() returns int language sql immutable as $$ select 43 $$;
 revoke all on function calma_schema_version() from public, anon;

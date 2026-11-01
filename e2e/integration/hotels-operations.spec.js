@@ -153,3 +153,21 @@ test.describe("إدارة الفنادق والغرف (المدير العام)"
     expect(bad.status).toBeGreaterThanOrEqual(400);
   });
 });
+
+test.describe("إيقاف فندق", () => {
+  test("مينفعش يتوقّف فندق فيه شيفت مفتوح، وبعد القفل بيتوقّف ويختفي من الشريط", async ({ page, env }) => {
+    await users(env);
+    await env.seedShift("ahmed", { hotel: 2 });
+    await page.goto("/");
+    await login(page, "boss");
+    await goTab(page, "إدارة المستخدمين");
+    const card = page.getByTestId("hotel-admin-2");
+    await card.getByRole("button", { name: "إيقاف" }).click();
+    await expect(toast(page)).toContainText("شيفت مفتوح");
+    await expect(tab(page, "Revento")).toBeVisible();
+    await env.q("update shift_records set closed = true where hotel_id = 2");
+    await card.getByRole("button", { name: "إيقاف" }).click();
+    await expect(toast(page)).toContainText("الفندق اتوقف");
+    await expect(tab(page, "Revento")).toHaveCount(0);
+  });
+});

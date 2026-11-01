@@ -204,9 +204,16 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
 
 function ShiftClaimPicker({ date, claims, onClaim }) {
   const nowShift = defaultShiftForNow();
+  const { hotels, hotel } = useHotel();
   return (
     <div className="cx-card" style={{ padding: 16 }}>
       <div style={{ fontWeight: 800, marginBottom: 4 }}>اختار شيفتك النهارده ({arabicWeekday(date)} · <bdi dir="ltr" className="cx-rn">{date}</bdi>)</div>
+      {hotels.filter((h) => h.active).length > 1 && (
+        <div data-testid="claim-hotel-banner" style={{ background: "var(--warn-bg)", border: "1px solid #E9D49A", borderRadius: 10, padding: "8px 12px", marginBottom: 10, fontSize: 14, fontWeight: 700 }}>
+          هتبدأ شيفتك في فندق: <span className="cx-hotel-tag" style={{ margin: 0 }}>{hotel.name}</span>
+          <div style={{ fontWeight: 500, fontSize: 12.5, color: "var(--muted)", marginTop: 4 }}>اتأكد إن ده فندقك قبل ما تختار - غيّره من شريط الفنادق فوق لو غلط. الاختيار مابيتغيّرش بعد كده.</div>
+        </div>
+      )}
       <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>الاختيار ده بيتحدد مرة واحدة بس ومينفعش تغيّره بعد كده، وهتقدر تعدل بس على الشيفت ده لحد ما يخلص اليوم. كل شيفت مينفتحش غير في معاده الفعلي.</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {SHIFTS.map((s) => {

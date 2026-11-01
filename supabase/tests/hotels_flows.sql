@@ -94,3 +94,22 @@ select t.try('gm1', $q$update profiles set allowed_hotels = array[99] where user
 select t.chk('H18 فندق مش موجود مرفوض في القايمة', (select allowed_hotels is null from profiles where username = 'st1'));
 select t.try('st2', $q$update profiles set allowed_hotels = null where username = 'st2'$q$);
 select t.chk('H18 الموظف مايفكّش قيد نفسه', (select allowed_hotels = array[3] from profiles where username = 'st2'));
+
+-- إيقاف فندق: مرفوض لو فيه شيفت مفتوح، ومسموح بعد القفل
+select t.reject('H19 المدير العام مايوقّفش فندق فيه شيفت مفتوح (Revento: hs2 شيفته مفتوح)', t.try('gm1', $q$update hotels set active = false where id = 2$q$), 'شيفت مفتوح');
+select t.chk('H19 الفندق لسه فعّال', (select active from hotels where id = 2));
+update shift_records set closed = true where hotel_id = 2;
+select t.pass('H19 بعد قفل الشيفتات يتوقّف', t.try('gm1', $q$update hotels set active = false where id = 2$q$));
+select t.chk('H19 الفندق اتوقّف', (select not active from hotels where id = 2));
+select t.pass('H19 ويتفعّل تاني', t.try('gm1', $q$update hotels set active = true where id = 2$q$));
+
+-- مراجعة: الغرفة مينفعش تتنقل لفندق تاني ولا يتغيّر رقمها من الـ API، والفندق الموقوف مينفعش حد يختار فيه شيفت
+select t.reject('H20 مدير الحجوزات مايغيّرش فندق غرفة', t.try('res1', $q$update rooms set hotel_id = 2 where number = 601$q$), 'مينفعش يتغيّروا');
+select t.reject('H20 مدير الحجوزات مايغيّرش رقم غرفة', t.try('res1', $q$update rooms set number = 1601 where number = 601$q$), 'مينفعش يتغيّروا');
+select t.try('gm1', $q$update rooms set hotel_id = 2 where number = 601$q$);
+select t.eqn('H20 فندق الغرفة 601 لسه Calma (المدير العام ماقدرش يغيّره من الـ API)', (select hotel_id from rooms where number = 601), 1);
+select t.pass('H20 تعديل اسم الغرفة لسه مسموح لمدير الحجوزات', t.try('res1', $q$update rooms set name = '601 داخلي' where number = 601$q$));
+update hotels set active = false where id = 4;
+update profiles set allowed_hotels = null where username = 'st2';
+select t.reject('H21 مينفعش حد يختار شيفت في فندق موقوف', t.try('hs1', format($q$insert into shift_claims(hotel_id, date, shift_key, username, name) values (4, %L, 'night', 'hs1', 'hs1')$q$, hotel_today() + 1)));
+update hotels set active = true where id = 4;

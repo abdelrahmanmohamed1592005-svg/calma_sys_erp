@@ -85,4 +85,25 @@ describe.skipIf(!enabled)("فنادق متعددة: عزل التحصيل وال
       } finally { await db.close(); }
     });
   }
+
+  it("إضافة فنادق من أكتر من مدير في نفس اللحظة: كلها بتنجح بأرقام مختلفة، ونفس الاسم/البادئة بيترفض مرة واحدة بس", async () => {
+    const db = await newDb();
+    try {
+      const ids = ["gm1", "gm2", "gm3"];
+      for (const u of ["gm2", "gm3"]) {
+        const id = randomUUID(); db.ids[u] = id;
+        await db.pool.query("insert into auth.users(id, email) values ($1, $2)", [id, `${u}@calma.internal`]);
+        await db.pool.query("insert into profiles(id, username, name, role) values ($1, $2, $2, 'gm')", [id, u]);
+      }
+      const calls = ["A", "B", "C", "D", "E", "F"].map((x, i) => db.tx(ids[i % 3], (c) => c.query("select create_hotel($1, $1, $2) id", [`Hotel ${x}`, x + x])));
+      const res = await Promise.all(calls);
+      expect(res.every((r) => r.ok), JSON.stringify(res.map((r) => r.err?.message))).toBe(true);
+      const got = res.map((r) => r.r.rows[0].id).sort((a, b) => a - b);
+      expect(got).toEqual([5, 6, 7, 8, 9, 10]);
+      // نفس الاسم من اتنين في نفس اللحظة: واحد ينجح والتاني يتقفل برسالة واضحة (مش خطأ تقني)
+      const dup = await Promise.all([0, 1].map((i) => db.tx(ids[i], (c) => c.query("select create_hotel('Same Name', 'S', $1) id", [i ? "Y" : "Z"]))));
+      expect(dup.filter((r) => r.ok)).toHaveLength(1);
+      expect(dup.find((r) => !r.ok).err.message).toContain("بنفس الاسم");
+    } finally { await db.close(); }
+  });
 });
