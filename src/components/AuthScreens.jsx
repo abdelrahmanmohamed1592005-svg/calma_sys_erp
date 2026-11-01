@@ -3,15 +3,15 @@ import { Info, Printer, RefreshCw, ShieldCheck } from "lucide-react";
 import { GlobalStyle, Logo } from "./shared";
 import { arabicWeekday, arabicDateLong, todayStr } from "../domain/dates";
 import { validatePasswordStrength, validateUsername } from "../domain/security";
-import { HOTEL_NAME } from "../domain/constants";
+import { useHotel } from "../lib/hotelContext";
 
 function AuthBrand() {
   return (
     <div className="cx-auth-brand" aria-hidden="true">
       <Logo size={40} light />
       <div>
-        <h2>كل شغل الفندق في مكان واحد.</h2>
-        <p>الغرف، الحجوزات، يومية الشيفت، التحصيل والتقارير - بشكل واضح وسريع لكل موظف حسب دوره.</p>
+        <h2>كل فنادق المجموعة في مكان واحد.</h2>
+        <p>الغرف، الحجوزات، يومية الشيفت، التحصيل والتقارير - لكل فندق بروفايل مستقل، وبشكل واضح وسريع لكل موظف حسب دوره.</p>
       </div>
       <div className="cx-auth-feats">
         <span><RefreshCw size={15} />لحظي بين كل الأجهزة</span><span><ShieldCheck size={15} />صلاحيات لكل دور</span><span><Printer size={15} />تقارير جاهزة للطباعة</span>
@@ -84,7 +84,7 @@ export function LoginScreen({ onLogin }) {
       <AuthBrand />
       <div className="cx-auth-form">
       <div className="cx-card" style={{ width: "100%", maxWidth: 400, padding: "32px 26px" }}>
-        <div style={{ marginBottom: 22 }}><Logo /><div style={{ fontSize: 22, fontWeight: 700, color: "var(--ink)", marginTop: 14 }}>أهلاً بيك</div><div style={{ fontSize: 14, color: "var(--muted)", marginTop: 2 }}>سجّل دخولك لنظام إدارة الفندق</div></div>
+        <div style={{ marginBottom: 22 }}><Logo /><div style={{ fontSize: 22, fontWeight: 700, color: "var(--ink)", marginTop: 14 }}>أهلاً بيك</div><div style={{ fontSize: 14, color: "var(--muted)", marginTop: 2 }}>سجّل دخولك لنظام مجموعة H&S للفنادق</div></div>
         <label style={{ fontSize: 14, fontWeight: 700, display: "block", marginBottom: 4 }}>اسم المستخدم</label>
         <input className="cx-input" aria-label="اسم المستخدم" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} style={{ marginBottom: 12 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
         <label style={{ fontSize: 14, fontWeight: 700, display: "block", marginBottom: 4 }}>كلمة المرور</label>
@@ -99,6 +99,7 @@ export function LoginScreen({ onLogin }) {
 }
 
 export function LogoutReportScreen({ user, actions, onExportAndLogout, onCancel }) {
+  const { hotel } = useHotel();
   const date = todayStr();
   function handlePrintAndLogout() {
     // window.print() بتوقف تنفيذ الكود لحد ما نافذة الطباعة تقفل (طباعة أو
@@ -114,7 +115,7 @@ export function LogoutReportScreen({ user, actions, onExportAndLogout, onCancel 
           <div className="cx-print-head-row">
             <div className="cx-print-brand">
               <Logo size={30} />
-              {HOTEL_NAME && <div className="cx-print-hotel-name">{HOTEL_NAME}</div>}
+              {hotel.name && <div className="cx-print-hotel-name">{hotel.name}</div>}
             </div>
             <div className="cx-print-meta">
               <div className="cx-print-title">تقرير جلسة عمل</div>
@@ -143,7 +144,7 @@ export function LogoutReportScreen({ user, actions, onExportAndLogout, onCancel 
             <span>توقيع: ______________________</span>
             <span>الختم:</span>
           </div>
-          <div className="cx-print-generated">تم إصدار هذا التقرير أوتوماتيكيًا من نظام إدارة الفندق Calma</div>
+          <div className="cx-print-generated">تم إصدار هذا التقرير أوتوماتيكيًا من نظام مجموعة H&S للفنادق</div>
         </div>
       </div>
     </div>

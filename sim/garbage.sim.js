@@ -8,7 +8,7 @@ import { enabled, buildTemplate, dropTemplate, newDb } from "./helpers.js";
 
 describe.skipIf(!enabled)("مدخلات غلط", () => {
   let db, today;
-  beforeAll(async () => { await buildTemplate(); db = await newDb(); [{ today }] = await db.q("select hotel_today()::text today"); });
+  beforeAll(async () => { await buildTemplate(); db = await newDb(); [{ today }] = await db.q("select hotel_today()::text today"); await db.q("insert into shift_claims(hotel_id, date, shift_key, username, name) values (1, $1, 'morning', 'st1', 'st1')", [today]); });
   afterAll(async () => { await db?.close(); await dropTemplate(); });
 
   const base = () => ({ room: 601, guest_name: "G", checkin: today, checkout: null, price_night: 100, total_room: 100, currency: "USD", source: "مباشر", status: "مؤكد", pax: 1, amount_paid: 0 });

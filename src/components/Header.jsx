@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { LogOut, Key, Search, LayoutGrid, NotebookPen, CalendarCheck2, BarChart3, History, Users } from "lucide-react";
 import { Logo, initials } from "./shared";
+import { useHotel } from "../lib/hotelContext";
+import { hotelAccent, GROUP_TITLE } from "../domain/constants";
 import { arabicWeekday, arabicDateLong, todayStr } from "../domain/dates";
 import { ROLES, TAB_LABELS } from "../domain/constants";
 import { validatePasswordStrength } from "../domain/security";
@@ -27,7 +29,8 @@ export function Header({ user, onLogout, onChangePassword, onOpenSearch }) {
     <>
       <header className="cx-header cx-no-print">
         <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
-          <Logo size={26} light />
+          <Logo size={30} light />
+          <span className="cx-divider-v" aria-hidden="true" />
           <span className="cx-date">{arabicWeekday(date)} · {arabicDateLong(date)}</span>
         </div>
         {onOpenSearch && (
@@ -89,13 +92,48 @@ export function TabBar({ tabs, active, onChange, badges = {} }) {
 }
 
 export function PageHead({ tab, actions }) {
+  const { hotel, hotels } = useHotel();
   return (
     <div className="cx-page-head cx-no-print">
       <div>
-        <h1>{TAB_LABELS[tab]}</h1>
+        <h1>{TAB_LABELS[tab]}{hotels.length > 1 && <span className="cx-hotel-tag" style={{ "--acc": hotelAccent(hotels, hotel.id) }} data-testid="hotel-tag">{hotel.name}</span>}</h1>
         <p>{TAB_HINTS[tab]}</p>
       </div>
       {actions}
+    </div>
+  );
+}
+
+
+/* شريط الفنادق: كل فندق بروفايل مستقل - اضغط على الفندق عشان تشتغل عليه (الغرف والحجوزات واليومية والتقارير كلها بتتغيّر) */
+export function HotelBar({ hotels, hotelId, onChange, roomCounts = {} }) {
+  const list = hotels.filter((h) => h.active);
+  if (list.length < 2) return null;
+  // أسهم اليمين/الشمال بتنقل بين الفنادق (في الواجهة العربي اليمين = الأول)، وTab بيدخل على الفندق المفتوح بس
+  function onKey(e) {
+    const i = list.findIndex((h) => h.id === hotelId);
+    const step = e.key === "ArrowLeft" ? 1 : e.key === "ArrowRight" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = list[(i + step + list.length) % list.length];
+    onChange(next.id);
+    requestAnimationFrame(() => document.querySelector(`[data-hotel-id="${next.id}"]`)?.focus());
+  }
+  return (
+    <div className="cx-hotelbar cx-no-print" role="tablist" aria-label={GROUP_TITLE} onKeyDown={onKey}>
+      {list.map((h) => {
+        const acc = hotelAccent(hotels, h.id);
+        const active = h.id === hotelId;
+        return (
+          <button key={h.id} role="tab" aria-selected={active} aria-controls="hotel-panel" tabIndex={active ? 0 : -1} aria-label={h.name} data-hotel-id={h.id} className={"cx-hchip" + (active ? " active" : "")} style={{ "--acc": acc }} onClick={() => onChange(h.id)}>
+            <span className="dot" aria-hidden="true">{String(h.shortName || h.name).trim().charAt(0).toUpperCase()}</span>
+            <span style={{ minWidth: 0 }}>
+              <div className="nm">{h.name}</div>
+              <div className="sub">{roomCounts[h.id] != null ? `${roomCounts[h.id]} غرفة` : "—"}</div>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

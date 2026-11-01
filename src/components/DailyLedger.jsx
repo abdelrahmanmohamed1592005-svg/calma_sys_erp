@@ -5,10 +5,11 @@ import { guarded } from "../lib/busy";
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { listStaffCafeteria } from "../data/staffCafeteria";
 import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails } from "../domain/money";
-import { SHIFTS, HOTEL_NAME } from "../domain/constants";
+import { SHIFTS } from "../domain/constants";
+import { useHotel } from "../lib/hotelContext";
 import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord } from "../data/shifts";
+import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -203,9 +204,16 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
 
 function ShiftClaimPicker({ date, claims, onClaim }) {
   const nowShift = defaultShiftForNow();
+  const { hotels, hotel } = useHotel();
   return (
     <div className="cx-card" style={{ padding: 16 }}>
       <div style={{ fontWeight: 800, marginBottom: 4 }}>اختار شيفتك النهارده ({arabicWeekday(date)} · <bdi dir="ltr" className="cx-rn">{date}</bdi>)</div>
+      {hotels.filter((h) => h.active).length > 1 && (
+        <div data-testid="claim-hotel-banner" style={{ background: "var(--warn-bg)", border: "1px solid #E9D49A", borderRadius: 10, padding: "8px 12px", marginBottom: 10, fontSize: 14, fontWeight: 700 }}>
+          هتبدأ شيفتك في فندق: <span className="cx-hotel-tag" style={{ margin: 0 }}>{hotel.name}</span>
+          <div style={{ fontWeight: 500, fontSize: 12.5, color: "var(--muted)", marginTop: 4 }}>اتأكد إن ده فندقك قبل ما تختار - غيّره من شريط الفنادق فوق لو غلط. الاختيار مابيتغيّرش بعد كده.</div>
+        </div>
+      )}
       <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>الاختيار ده بيتحدد مرة واحدة بس ومينفعش تغيّره بعد كده، وهتقدر تعدل بس على الشيفت ده لحد ما يخلص اليوم. كل شيفت مينفتحش غير في معاده الفعلي.</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {SHIFTS.map((s) => {
@@ -226,6 +234,7 @@ function ShiftClaimPicker({ date, claims, onClaim }) {
 }
 
 export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, showToast, dataVersion }) {
+  const { hotels, hotel, hotelId } = useHotel();
   const [mode, setMode] = useState(perms.editLedger ? "live" : "history");
   const [claims, setClaims] = useState(null);
   const [myShiftKey, setMyShiftKey] = useState(null);
@@ -265,7 +274,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
       if (!mine) {
         // شيفت ليلي بدأ قبل ٨ص وأوفر تايمه لسه شغال بعد ٨ص: بيفضل على تاريخه الأصلي
         const r = await resolveMyShift(profile.username);
-        if (r.key === "night" && r.date !== day) { day = r.date; c = r.claims; mine = ["night", r.claims.night]; }
+        if (r.key === "night" && r.date !== day && r.hotelId === hotelId) { day = r.date; c = r.claims; mine = ["night", r.claims.night]; }
       }
       if (cancelled) return;
       setLiveDay(day);
@@ -372,6 +381,12 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   async function claimShiftInner(shiftKey) {
     if (shiftKey !== defaultShiftForNow()) { showToast("الشيفت ده لسه مش في ميعاده"); return; }
     const res = await claimShiftRow(today, shiftKey, profile.username, profile.name);
+    if (res.alreadyClaimed) {
+      const mineToday = await getMyClaims(today, profile.username);
+      const h = hotels.find((x) => x.id === mineToday[0]?.hotelId);
+      showToast(`انت اخترت شيفتك النهارده بالفعل${h ? ` في ${h.name}` : ""} - شيفت واحد في اليوم`);
+      return;
+    }
     if (res.conflict) { showToast("حد تاني اختار نفس الشيفت في نفس اللحظة بالظبط - اختار شيفت تاني"); setRefreshKey((k) => k + 1); return; }
     if (res.error) { showToast(res.error); return; }
     onLog(`${profile.name} اختار ${SHIFTS.find((s) => s.key === shiftKey)?.label} ليوم ${today}`);
@@ -550,7 +565,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
           <div className="cx-print-head-row">
             <div className="cx-print-brand">
               <Logo size={30} />
-              {HOTEL_NAME && <div className="cx-print-hotel-name">{HOTEL_NAME}</div>}
+              {hotel.name && <div className="cx-print-hotel-name">{hotel.name}</div>}
             </div>
             <div className="cx-print-meta">
               <div className="cx-print-title">يومية شيفت</div>
@@ -670,7 +685,7 @@ function LedgerPrintFooter() {
         <span>توقيع الموظف المسؤول عن الشيفت: ______________________</span>
         <span>الختم:</span>
       </div>
-      <div className="cx-print-generated">تم إصدار هذا المستند أوتوماتيكيًا من نظام إدارة الفندق Calma</div>
+      <div className="cx-print-generated">تم إصدار هذا المستند أوتوماتيكيًا من نظام مجموعة H&S للفنادق</div>
     </div>
   );
 }

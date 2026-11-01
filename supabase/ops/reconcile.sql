@@ -14,7 +14,7 @@ with ledger as (        -- كل تحصيل في اليومية مربوط بحج
 ),
 per_booking as (select booking_id, cur, sum(amt) as led from ledger group by 1, 2)
 select 'خطأ' as level, 'المدفوع على الحجز مش مطابق لتحصيله في اليومية' as check_name, b.id::text as ref,
-       format('%s غرفة %s: مدفوع %s %s / في اليومية %s', b.guest_name, b.room, b.amount_paid, b.currency, coalesce(p.led, 0)) as detail
+       format('[%s] %s غرفة %s: مدفوع %s %s / في اليومية %s', (select name from hotels h where h.id = b.hotel_id), b.guest_name, b.room, b.amount_paid, b.currency, coalesce(p.led, 0)) as detail
 from bookings b left join per_booking p on p.booking_id = b.id::text and p.cur = b.currency
 where coalesce(b.amount_paid, 0) <> coalesce(p.led, 0)
 union all
@@ -24,36 +24,36 @@ where b.id is null and p.led <> 0
 union all
 -- خدمات/دفعات بعملة غير عملة الحجز (other_paid): كل عملة لازم تطابق تحصيلها في اليومية بنفس العملة
 select 'خطأ', 'المدفوع بعملة تانية على الحجز مش مطابق لتحصيله في اليومية', b.id::text,
-       format('%s غرفة %s: مدفوع %s %s / في اليومية %s', b.guest_name, b.room, coalesce(nullif(b.other_paid ->> c.cur, '')::numeric, 0), c.cur, coalesce(p.led, 0))
+       format('[%s] %s غرفة %s: مدفوع %s %s / في اليومية %s', (select name from hotels h where h.id = b.hotel_id), b.guest_name, b.room, coalesce(nullif(b.other_paid ->> c.cur, '')::numeric, 0), c.cur, coalesce(p.led, 0))
 from bookings b
 cross join lateral (select jsonb_object_keys(coalesce(b.other_paid, '{}'::jsonb)) as cur
                     union select p2.cur from per_booking p2 where p2.booking_id = b.id::text and p2.cur <> b.currency) c
 left join per_booking p on p.booking_id = b.id::text and p.cur = c.cur
 where c.cur <> b.currency and coalesce(nullif(b.other_paid ->> c.cur, '')::numeric, 0) <> coalesce(p.led, 0)
 union all
-select 'خطأ', 'حالة "مدفوع بالكامل" مش مطابقة للمعادلة', b.id::text, format('%s: settled=%s مدفوع %s من %s', b.guest_name, b.settled, b.amount_paid, booking_hotel_total(b))
+select 'خطأ', 'حالة "مدفوع بالكامل" مش مطابقة للمعادلة', b.id::text, format('[%s] %s: settled=%s مدفوع %s من %s', (select name from hotels h where h.id = b.hotel_id), b.guest_name, b.settled, b.amount_paid, booking_hotel_total(b))
 from bookings b
 where b.settled is distinct from (b.status is distinct from 'ملغي' and coalesce(b.amount_paid, 0) >= booking_hotel_total(b) and booking_other_due(b) = '{}'::jsonb)
 union all
-select 'خطأ', 'مدفوع كافيتيريا النزيل أكبر من قيمة الكافيتيريا', b.id::text, format('%s: مدفوع %s من %s', b.guest_name, b.extras ->> 'cafeteriaPaid', b.extras ->> 'cafeteria')
+select 'خطأ', 'مدفوع كافيتيريا النزيل أكبر من قيمة الكافيتيريا', b.id::text, format('[%s] %s: مدفوع %s من %s', (select name from hotels h where h.id = b.hotel_id), b.guest_name, b.extras ->> 'cafeteriaPaid', b.extras ->> 'cafeteria')
 from bookings b
 where coalesce(nullif(b.extras ->> 'cafeteriaPaid', '')::numeric, 0) > coalesce(nullif(b.extras ->> 'cafeteria', '')::numeric, 0) + 0.005
 union all
 select 'خطأ', 'كافيتيريا استاف: المدفوع مش مطابق لمجموع الدفعات أو أكبر من المبلغ', e.id::text,
-       format('%s: مدفوع %s / مجموع الدفعات %s / المبلغ %s', e.consumer_name, e.paid_amount, coalesce((select sum((p ->> 'amount')::numeric) from jsonb_array_elements(e.payments) p), 0), e.amount)
+       format('[%s] %s: مدفوع %s / مجموع الدفعات %s / المبلغ %s', (select name from hotels h where h.id = e.hotel_id), e.consumer_name, e.paid_amount, coalesce((select sum((p ->> 'amount')::numeric) from jsonb_array_elements(e.payments) p), 0), e.amount)
 from staff_cafeteria e
 where e.paid_amount > e.amount + 0.005 or abs(e.paid_amount - coalesce((select sum((p ->> 'amount')::numeric) from jsonb_array_elements(e.payments) p), 0)) > 0.005
 union all
-select 'خطأ', 'طلب رد فلوس معلّق على حجز مفيش عليه زيادة ولا ملغي', b.id::text, format('%s: مدفوع %s من %s', b.guest_name, b.amount_paid, booking_grand_total(b))
+select 'خطأ', 'طلب رد فلوس معلّق على حجز مفيش عليه زيادة ولا ملغي', b.id::text, format('[%s] %s: مدفوع %s من %s', (select name from hotels h where h.id = b.hotel_id), b.guest_name, b.amount_paid, booking_grand_total(b))
 from bookings b
 where b.refund_pending and not (b.status = 'ملغي' and coalesce(b.amount_paid, 0) > 0) and not (coalesce(b.amount_paid, 0) > booking_grand_total(b))
 union all
 select 'تنبيه', 'رصيد وسيلة دفع سالب على حجز (رد أكبر من التحصيل بنفس الوسيلة)', l.booking_id, format('%s غرفة %s: %s %s = %s', coalesce(b.guest_name, '؟'), coalesce(b.room::text, '؟'), l.method, l.cur, sum(l.amt))
 from ledger l left join bookings b on b.id::text = l.booking_id group by l.booking_id, b.guest_name, b.room, l.method, l.cur having sum(l.amt) < -0.005
 union all
-select 'تنبيه', 'شيفت لسه مفتوح من أكتر من يومين', s.date::text || ' ' || s.shift_key, s.staff_name
+select 'تنبيه', 'شيفت لسه مفتوح من أكتر من يومين', s.date::text || ' ' || s.shift_key, format('[%s] %s', (select name from hotels h where h.id = s.hotel_id), s.staff_name)
 from shift_records s where not s.closed and s.date < hotel_today() - 1
 union all
-select 'تنبيه', 'مديونية كافيتيريا استاف مفتوحة', e.consumer_name, format('%s %s', sum(e.amount - e.paid_amount), e.currency)
-from staff_cafeteria e where e.paid_amount < e.amount group by e.consumer_name, e.currency
+select 'تنبيه', 'مديونية كافيتيريا استاف مفتوحة', e.consumer_name, format('[%s] %s %s', (select name from hotels h where h.id = e.hotel_id), sum(e.amount - e.paid_amount), e.currency)
+from staff_cafeteria e where e.paid_amount < e.amount group by e.consumer_name, e.currency, e.hotel_id
 order by 1, 2, 3;

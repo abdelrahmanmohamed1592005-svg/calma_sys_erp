@@ -89,10 +89,9 @@ test("دفعة بالجنيه من قايمة الحجوزات (تحصيل سر�
 
 test("نقل النزيل لغرفة تانية: الحجز كله بيتنقل بكل تفاصيله، الغرفة القديمة بتفضى، والغرف المشغولة في نفس التواريخ مش في القايمة", async ({ page, env }) => {
   await users(env);
-  await env.seedShift("ahmed");
-  const id = await env.seedBooking({ room: 603, guest: "Mover", start: -1, nights: 3, price: 100, paid: 120, extras: { laundry: 20, cafeteria: 0, tours: 0, pickup: 0 } });
+    const id = await env.seedBooking({ room: 603, guest: "Mover", start: -1, nights: 3, price: 100, paid: 120, extras: { laundry: 20, cafeteria: 0, tours: 0, pickup: 0 } });
   await env.seedBooking({ room: 604, guest: "Blocker", start: 1, nights: 2, price: 100 });        // 604 مشغولة جوه مدة الحجز
-  await page.goto("/"); await login(page, "ahmed");
+  await page.goto("/"); await login(page, "rawan");
   await goTab(page, "لوحة الغرف");
   await openRoom(page, 603);
   await roomCard(page).getByTestId("move-open").click();

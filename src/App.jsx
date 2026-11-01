@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { GlobalStyle, BackToTop, LoadingScreen, ConfigWarningBanner, SchemaOutdatedBanner } from "./components/shared";
 import { checkSchemaVersion, REQUIRED_SCHEMA_VERSION } from "./data/schemaCheck";
-import { Header, TabBar, PageHead } from "./components/Header";
+import { Header, TabBar, PageHead, HotelBar } from "./components/Header";
 import { SetupScreen, LoginScreen, LogoutReportScreen } from "./components/AuthScreens";
 import { RoomBoard } from "./components/RoomBoard";
 import { DailyLedger } from "./components/DailyLedger";
@@ -17,9 +17,12 @@ import { signUpUser, signIn, signOut, getSession, onAuthStateChange, getMyProfil
 import { getRooms, getRoomOverrides, setRoomOverride } from "./data/rooms";
 import { getBookings, insertBooking, updateBookingIfUnchanged } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
+import { getHotels, DEFAULT_HOTELS, setActiveHotelId, getActiveHotelId } from "./data/hotels";
+import { getMyClaims } from "./data/shifts";
+import { HotelContext } from "./lib/hotelContext";
 
-import { PERMISSIONS, ROOMS_DEFAULT } from "./domain/constants";
-import { todayStr, isSameDay, uid } from "./domain/dates";
+import { PERMISSIONS, ROOMS_DEFAULT, hotelAccent } from "./domain/constants";
+import { todayStr, isSameDay, uid, shiftDayNow } from "./domain/dates";
 
 export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -28,6 +31,10 @@ export default function App() {
   const [setupNeeded, setSetupNeeded] = useState(false);
   const [tab, setTab] = useState("board");
   const [rooms, setRooms] = useState(ROOMS_DEFAULT);
+  const [hotels, setHotels] = useState(DEFAULT_HOTELS);
+  // الفندق المفتوح: كل الشاشات (غرف، حجوزات، يومية، كافيتيريا، تقارير) بتشتغل على فندق واحد، والمبدّل في الهيدر
+  const [hotelId, setHotelId] = useState(() => { try { return Number(localStorage.getItem("calma_hotel")) || 1; } catch { return 1; } });
+  setActiveHotelId(hotelId);
   const [overrides, setOverrides] = useState({});
   const [bookings, setBookings] = useState([]);
   const [activity, setActivity] = useState([]);
@@ -56,6 +63,27 @@ export default function App() {
     document.addEventListener("visibilitychange", onVis);
     return () => { cancelled = true; document.removeEventListener("visibilitychange", onVis); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- بنعيد الفحص لما يتغيّر المستخدم (id) بس؛ كائن الـ profile بيتغيّر مرجعه كل تحديث
+  }, [currentProfile?.id]);
+
+  function switchHotel(id) {
+    const n = Number(id);
+    if (!n || n === hotelId) return;
+    // موظف الشيفت مابنحفظش اختياره على الجهاز (الجهاز ممكن يكون مشترك): كل مرة بيبدأ من فندق شيفته أو أول فندق مسموح
+    if (currentProfile?.role !== "staff") { try { localStorage.setItem("calma_hotel", String(n)); } catch { /* التخزين المحلي اختياري */ } }
+    setActiveHotelId(n); setHotelId(n); setPendingEditBookingId(null); setJump(null); setDataVersion((v) => v + 1);
+  }
+  // موظف الشيفت اللي اختار شيفته النهارده في فندق معين: نفتحله فندقه تلقائيًا أول ما يدخل
+  useEffect(() => {
+    if (!currentProfile || currentProfile.role !== "staff") return;
+    let cancelled = false;
+    getMyClaims(shiftDayNow(), currentProfile.username).then((c) => {
+      if (cancelled) return;
+      if (c[0]) { if (c[0].hotelId !== hotelId) switchHotel(c[0].hotelId); return; }
+      const first = currentProfile.allowed_hotels?.length ? currentProfile.allowed_hotels[0] : 1;      // من غير شيفت النهارده: أول فندق مسموح مش اللي اتختار قبل كده على الجهاز
+      if (first !== hotelId) switchHotel(first);
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- مرة عند الدخول بس
   }, [currentProfile?.id]);
 
   function requestEditBooking(id) { setPendingEditBookingId(id); setTab("bookings"); }
@@ -161,13 +189,14 @@ export default function App() {
     let cancelled = false;
     const seqAtStart = mutationSeq.current;
     (async () => {
-      const [r, o, b, a] = await Promise.all([getRooms(), getRoomOverrides(), getBookings(), getActivity()]);
+      const [r, o, b, a, h] = await Promise.all([getRooms(), getRoomOverrides(), getBookings(), getActivity(), getHotels()]);
       if (cancelled) return;
       if (mutationSeq.current !== seqAtStart) { setDataVersion((v) => v + 1); return; }
       if (r) setRooms(r.length ? r : ROOMS_DEFAULT);
       if (o) setOverrides(o);
       if (b) { setBookings(b); loadedOnce.current = true; }
       if (a) setActivity(a);
+      if (h) setHotels(h);
       // أول تحميل والحجوزات ماتقرتش (نت/سيرفر): ماننزلش شاشة "فندق فاضي" ولا نمرّر فحص التعارض على قايمة فاضية؛
       // بنفضل على التحميل ونعيد المحاولة تلقائيًا
       if (!loadedOnce.current) {
@@ -182,8 +211,8 @@ export default function App() {
   }, [currentProfile?.id, dataVersion]);
 
   function logActivity(action) {
-    const entry = { userName: currentProfile?.name || "—", username: currentProfile?.username || "—", role: currentProfile?.role || "—", action };
-    setActivity((prev) => [{ id: uid(), ts: Date.now(), user: entry.userName, username: entry.username, role: entry.role, action }, ...prev].slice(0, 300));
+    const entry = { userName: currentProfile?.name || "—", username: currentProfile?.username || "—", role: currentProfile?.role || "—", action, hotelId: getActiveHotelId() };
+    setActivity((prev) => [{ id: uid(), hotelId: getActiveHotelId(), ts: Date.now(), user: entry.userName, username: entry.username, role: entry.role, action }, ...prev].slice(0, 1000));
     addActivity(entry).then((r) => { if (r?.error) showToast("⚠ تعذر تسجيل الحركة في سجل الحركة - اتأكد من النت وسجّل الإجراء تاني لو لزم"); });
   }
 
@@ -246,39 +275,53 @@ export default function App() {
   if (!currentProfile) return <><LoginScreen onLogin={handleLogin} />{!supabaseConfigured && <ConfigWarningBanner />}</>;
 
   const perms = PERMISSIONS[currentProfile.role];
+  // الفندق المختار لو مش موجود في القايمة (اتشال/قديم) نرجع لأول فندق
+  // الموظف المقيّد بفنادق معيّنة بيشوف فنادقه بس (لحد ما قايمة الفنادق تتحمّل بنفضل على الكل عشان الشاشة ماتقعش)
+  const allowedList = (currentProfile.role === "staff" && currentProfile.allowed_hotels?.length) ? hotels.filter((h) => currentProfile.allowed_hotels.includes(h.id)) : [];
+  const visibleHotels = allowedList.length ? allowedList : hotels;
+  const hotel = visibleHotels.find((h) => h.id === hotelId && h.active !== false) || visibleHotels.find((h) => h.active !== false) || visibleHotels[0];
+  const hotelRooms = rooms.filter((r) => (r.hotelId ?? 1) === hotel.id);
+  const hotelBookings = bookings.filter((b) => (b.hotelId ?? 1) === hotel.id);
+  const hotelActivity = activity.filter((a) => a.hotelId == null || a.hotelId === hotel.id);
+  setActiveHotelId(hotel.id);
+  const roomCounts = rooms.reduce((m, r) => { const k = r.hotelId ?? 1; m[k] = (m[k] || 0) + 1; return m; }, {});
+  const hotelCtx = { hotels: visibleHotels, hotel, hotelId: hotel.id };
   const activeTab = perms.tabs.includes(tab) ? tab : perms.tabs[0];
 
   if (logoutGate) {
     const mine = activity.filter((a) => a.username === currentProfile.username && isSameDay(a.ts, todayStr()));
-    return <LogoutReportScreen user={currentProfile} actions={mine} onExportAndLogout={finishLogoutExport} onCancel={() => setLogoutGate(false)} />;
+    return <HotelContext.Provider value={hotelCtx}><LogoutReportScreen user={currentProfile} actions={mine} onExportAndLogout={finishLogoutExport} onCancel={() => setLogoutGate(false)} /></HotelContext.Provider>;
   }
 
   return (
-    <div className="calma-app cx-shell" dir="rtl">
+    <HotelContext.Provider value={hotelCtx}>
+    <div className="calma-app cx-shell" dir="rtl" style={{ "--hotel": hotelAccent(visibleHotels, hotel.id) }}>
       <GlobalStyle />
       <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} onOpenSearch={() => setPaletteOpen(true)} />
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={{}} />
-      <main className="cx-main">
+      <main className="cx-main" id="hotel-panel">
       {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
+      <HotelBar hotels={visibleHotels} hotelId={hotel.id} onChange={switchHotel} roomCounts={roomCounts} />
       <PageHead tab={activeTab} />
       {loadingData ? <LoadingScreen /> : (
-        <>
-          {activeTab === "board" && <RoomBoard jumpRoom={jump?.room != null ? jump : null} onJumpDone={() => setJump(null)} rooms={rooms} overrides={overrides} bookings={bookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "ledger" && <DailyLedger rooms={rooms} bookings={bookings} profiles={allProfiles} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "bookings" && <BookingsPanel jumpQuery={jump?.query != null ? jump : null} onJumpDone={() => setJump(null)} rooms={rooms} bookings={bookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
-          {activeTab === "reports" && <ReportsPanel rooms={rooms} bookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
-          {activeTab === "activity" && <ActivityPanel activity={activity} />}
-          {activeTab === "users" && <UsersPanel users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-        </>
+        <React.Fragment key={hotel.id}>
+          {activeTab === "board" && <RoomBoard jumpRoom={jump?.room != null ? jump : null} onJumpDone={() => setJump(null)} rooms={hotelRooms} overrides={overrides} bookings={hotelBookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "ledger" && <DailyLedger rooms={hotelRooms} bookings={hotelBookings} profiles={allProfiles} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "bookings" && <BookingsPanel jumpQuery={jump?.query != null ? jump : null} onJumpDone={() => setJump(null)} rooms={hotelRooms} bookings={hotelBookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
+          {activeTab === "reports" && <ReportsPanel rooms={hotelRooms} bookings={hotelBookings} allRooms={rooms} allBookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
+          {activeTab === "activity" && <ActivityPanel activity={hotelActivity} />}
+          {activeTab === "users" && <UsersPanel allRooms={rooms} onHotelsChanged={() => setDataVersion((v) => v + 1)} users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+        </React.Fragment>
       )}
       </main>
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} tabs={perms.tabs} rooms={rooms} bookings={bookings} overrides={overrides}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} tabs={perms.tabs} rooms={rooms.filter((r) => visibleHotels.some((h) => h.id === (r.hotelId ?? 1)))} bookings={bookings.filter((b) => visibleHotels.some((h) => h.id === (b.hotelId ?? 1)))} overrides={overrides} hotels={visibleHotels} hotelId={hotel.id}
         onGoTab={(t) => setTab(t)}
-        onOpenRoom={(r) => { setTab(perms.tabs.includes("board") ? "board" : perms.tabs[0]); setJump({ room: r, nonce: Date.now() }); }}
-        onFindBooking={(name) => { if (perms.tabs.includes("bookings")) { setTab("bookings"); setJump({ query: name, nonce: Date.now() }); } }} />
+        onOpenRoom={(r, h) => { if (h) switchHotel(h); setTab(perms.tabs.includes("board") ? "board" : perms.tabs[0]); setJump({ room: r, nonce: Date.now() }); }}
+        onFindBooking={(name, h) => { if (perms.tabs.includes("bookings")) { if (h) switchHotel(h); setTab("bookings"); setJump({ query: name, nonce: Date.now() }); } }} />
       <BackToTop />
       {toast && <div className="cx-toast" role="status">{toast}</div>}
       {!supabaseConfigured && <ConfigWarningBanner />}
     </div>
+    </HotelContext.Provider>
   );
 }

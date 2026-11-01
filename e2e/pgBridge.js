@@ -17,7 +17,7 @@ pg.types.setTypeParser(1184, (v) => v.replace(" ", "T").replace(/([+-]\d{2})$/, 
 
 const IDENT = /^[a-z_][a-z0-9_]*$/;
 const ident = (s) => { if (!IDENT.test(s)) throw new Error("bad identifier " + s); return `"${s}"`; };
-const PK = { booking_guests: ["id"], rooms: ["number"], room_overrides: ["room_number"], profiles: ["id"], bookings: ["id"], shift_records: ["date", "shift_key"], shift_claims: ["date", "shift_key"], activity_log: ["id"], staff_cafeteria: ["id"] };
+const PK = { booking_guests: ["id"], hotels: ["id"], rooms: ["number"], room_overrides: ["room_number"], profiles: ["id"], bookings: ["id"], shift_records: ["hotel_id", "date", "shift_key"], shift_claims: ["hotel_id", "date", "shift_key"], activity_log: ["id"], staff_cafeteria: ["id"] };
 const TABLES = Object.keys(PK);
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 
@@ -29,7 +29,9 @@ const subOf = (headers) => {
   if (!m) return null;
   try { return JSON.parse(Buffer.from(m[1].split(".")[1], "base64url").toString()).sub || null; } catch { return null; }
 };
-const param = (v) => (v !== null && typeof v === "object" ? JSON.stringify(v) : v);
+// أعمدة Postgres من نوع مصفوفة (مش jsonb): PostgREST الحقيقي بيحوّل JSON array لمصفوفة، فالجسر لازم يعمل زيه
+const PG_ARRAY_COLS = new Set(["allowed_hotels"]);
+const param = (v, col) => (v !== null && typeof v === "object" ? (Array.isArray(v) && PG_ARRAY_COLS.has(col) ? `{${v.join(",")}}` : JSON.stringify(v)) : v);
 
 export function makeBridge(pool, { log } = {}) {
   const calls = { rest: [], functions: [] };
@@ -142,7 +144,7 @@ export function makeBridge(pool, { log } = {}) {
         calls.rest.push({ method, rpc: rpc[1], body });
         const keys = Object.keys(body || {});
         const sql = `select ${ident(rpc[1])}(${keys.map((k, i) => `${ident(k)} => $${i + 1}`).join(", ")}) as result`;
-        const r = await inTx(sub, (c) => c.query(sql, keys.map((k) => param(body[k]))));
+        const r = await inTx(sub, (c) => c.query(sql, keys.map((k) => param(body[k], k))));
         return json(200, r.rows[0].result);
       }
       const t = path.match(/^\/rest\/v1\/([a-z_]+)$/);
@@ -186,7 +188,7 @@ export function makeBridge(pool, { log } = {}) {
       if (method === "POST") {
         const items = Array.isArray(body) ? body : [body];
         const colNames = [...new Set(items.flatMap((i) => Object.keys(i)))];
-        const vals = []; const tuples = items.map((it) => `(${colNames.map((cn) => { vals.push(cn in it ? param(it[cn]) : null); return `$${vals.length}`; }).join(", ")})`);
+        const vals = []; const tuples = items.map((it) => `(${colNames.map((cn) => { vals.push(cn in it ? param(it[cn], cn) : null); return `$${vals.length}`; }).join(", ")})`);
         let sql = `insert into public.${ident(table)} (${colNames.map(ident).join(", ")}) values ${tuples.join(", ")}`;
         if (prefer.includes("resolution=merge-duplicates")) {
           const target = (url.searchParams.get("on_conflict")?.split(",") || PK[table]).map(ident);
@@ -201,7 +203,7 @@ export function makeBridge(pool, { log } = {}) {
         let sql; let vals = [];
         if (method === "PATCH") {
           const setCols = Object.keys(body);
-          vals = setCols.map((cn) => param(body[cn]));
+          vals = setCols.map((cn) => param(body[cn], cn));
           sql = `update public.${ident(table)} set ${setCols.map((cn, i) => `${ident(cn)} = $${i + 1}`).join(", ")}`;
         } else sql = `delete from public.${ident(table)}`;
         const { where, vals: fv } = filtersOf(url.searchParams, vals.length + 1);

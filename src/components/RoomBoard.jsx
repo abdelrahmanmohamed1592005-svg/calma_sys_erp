@@ -503,7 +503,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                   <span data-testid="early-leave"><TwoStepButton label="غادر مبكرًا (تقصير الإقامة)" confirmLabel={`تأكيد المغادرة المبكرة؟ ${earlyLeavePreview(b)}`} onConfirm={() => earlyLeave(b)} /></span>
                 )}
                 {perms.editBookings && onEditBooking && <button className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} onClick={() => onEditBooking(b.id)}><Pencil size={13} /> تعديل الحجز</button>}
-                {((perms.markPaymentReceived && !offShift) || perms.editBookings) && b.status !== "ملغي" && b.checkout > date && (
+                {perms.moveGuest && b.status !== "ملغي" && b.checkout > date && (
                   <button className="cx-btn cx-btn-outline" data-testid="move-open" style={{ fontSize: 13 }} onClick={() => { setMoveTo(""); setMoveOpen((v) => !v); }}><ArrowLeftRight size={13} /> نقل لغرفة تانية</button>
                 )}
                 {((perms.markPaymentReceived && !offShift) || perms.editBookings) && b.status !== "ملغي" && (

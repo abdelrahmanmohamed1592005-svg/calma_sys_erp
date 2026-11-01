@@ -10,7 +10,10 @@ const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const jwt = (sub) => { const h = b64({ alg: "HS256", typ: "JWT" }), p = b64({ sub, role: "authenticated", exp: Math.floor(Date.now() / 1000) + 3600 }); return `${h}.${p}.${crypto.createHmac("sha256", secret).update(`${h}.${p}`).digest("base64url")}`; };
 const client = (sub) => createClient("http://localhost:3001", jwt(sub), { realtime: { transport: NoWS }, auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${jwt(sub)}` } } });
 const st = client("11111111-1111-1111-1111-111111111111"), res = client("22222222-2222-2222-2222-222222222222");
-const ok = (c, m, extra) => { console.log(c ? "PASS" : "FAIL", m, c ? "" : JSON.stringify(extra)); if (!c) process.exitCode = 1; };
+const failures = [];
+const ok = (c, m, extra) => { console.log(c ? "PASS" : "FAIL", m, c ? "" : JSON.stringify(extra)); if (!c) { process.exitCode = 1; failures.push(m); } };
+// ملخص الفشل في آخر المخرجات: من غير كده سطر فشل واحد في الآخر بيخفي إن خطوة قبله فشلت وسببت اللي بعدها (آخر سطر بس هو اللي بيبان)
+process.on("exit", () => { if (failures.length) console.log(`SMOKE FAILURES (${failures.length}): ${failures.join(" | ")}`); });
 const today = new Date().toISOString().slice(0, 10);
 const tomorrow = new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10);
 let r = await st.from("bookings").insert({ room: 601, guest_name: "Real API", checkin: today, checkout: tomorrow, price_night: 100, total_room: 200, currency: "USD", extras: { laundry: 0, cafeteria: 30, tours: 0, pickup: 0 } }).select().single();
@@ -54,9 +57,11 @@ console.log("ledger", JSON.stringify(led.data ? { room: sum(led.data.rows), cafe
   const admin = new Client({ connectionString: process.env.SMOKE_DB_URL }); await admin.connect();
   await admin.query(`insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, currency)
     select 601 + (g % 16), 'Bulk ' || g, date '2020-01-01' + (g / 16), date '2020-01-01' + (g / 16) + 1, 10, 10, 'USD' from generate_series(0, 2499) g`);
+  const { rows: [{ n: totalBookings }] } = await admin.query("select count(*)::int n from bookings");
   await admin.end();
   const plain = await st.from("bookings").select("id");
   ok(!plain.error && plain.data.length === 1000, "plain select is silently capped at 1000 (proves the cap is active)", plain.data?.length);
   const all = await fetchAll(() => st.from("bookings").select("*", { count: "exact" }).order("checkin", { ascending: false }).order("id"));
-  ok(!all.error && all.data.length === 2500 + 1 && new Set(all.data.map((r) => r.id)).size === all.data.length, "fetchAll returns all 2501 rows with no duplicates", all.error || all.data?.length);
+  // العدد المتوقع = اللي في القاعدة فعلًا (مش رقم ثابت مربوط بنجاح خطوات قبله) - الفحص ده بيختبر fetchAll بس
+  ok(!all.error && all.data.length === totalBookings && totalBookings >= 2500 && new Set(all.data.map((r) => r.id)).size === all.data.length, `fetchAll returns all ${totalBookings} rows with no duplicates`, { error: all.error, got: all.data?.length, expected: totalBookings });
 }

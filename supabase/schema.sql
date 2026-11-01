@@ -222,6 +222,104 @@ drop policy if exists "claims write" on shift_claims;
 create policy "claims write" on shift_claims for all using (is_active_user()) with check (is_active_user());
 
 -- --------------------------------------------------------------------------
+-- 6ب) الفنادق: الجروب فيه أكتر من فندق، وكل فندق ليه بروفايل مستقل (غرفه، حجوزاته، يوميته، كافيتيريته، تقاريره).
+--     الموظفين والمستخدمين مشتركين على مستوى الجروب (بيتوزعوا كل يوم على فندق وشيفت)، أما كل البيانات المالية والتشغيلية
+--     فمربوطة بفندق واحد. أرقام الغرف فريدة على مستوى الجروب (601-616 / 201-225 / 301-307 / 401-433) فرقم الغرفة بيحدد الفندق.
+--     الفندق رقم ١ هو الفندق الأصلي (Calma): كل البيانات القديمة بتتحسب عليه تلقائيًا.
+-- --------------------------------------------------------------------------
+create table if not exists hotels (
+  id integer primary key,
+  name text not null,
+  short_name text,
+  sort_order integer not null default 0,
+  active boolean not null default true
+);
+insert into hotels (id, name, short_name, sort_order) values
+  (1, 'فندق Calma', 'Calma', 1),
+  (2, 'Revento', 'Revento', 2),
+  (3, 'Park Plaza', 'Park Plaza', 3),
+  (4, 'The Location', 'The Location', 4)
+on conflict (id) do nothing;
+
+alter table hotels enable row level security;
+drop policy if exists "hotels select" on hotels;
+create policy "hotels select" on hotels for select using (is_active_user());
+drop policy if exists "hotels update" on hotels;
+create policy "hotels update" on hotels for update using (is_gm()) with check (is_gm());
+revoke all on hotels from anon, authenticated;
+grant select on hotels to authenticated;
+grant update (name, short_name, active) on hotels to authenticated;
+grant all on hotels to service_role;
+
+alter table hotels add column if not exists code_prefix text not null default 'B';
+update hotels set code_prefix = case id when 2 then 'R' when 3 then 'P' when 4 then 'L' else code_prefix end where code_prefix = 'B' and id in (2, 3, 4);
+-- الفنادق اللي الموظف مسموحله يشتغل فيها (null = كلها): المدير العام بيحدّدها من شاشة الفنادق
+alter table profiles add column if not exists allowed_hotels integer[];
+create or replace function can_work_in_hotel(h integer)
+returns boolean language sql security definer stable set search_path = public as $$
+  select coalesce((select allowed_hotels is null or h = any(allowed_hotels) from profiles where id = auth.uid()), false)
+         and exists (select 1 from hotels where id = h and active);       -- فندق موقوف مينفعش حد يختار فيه شيفت
+$$;
+grant execute on function can_work_in_hotel(integer) to authenticated;
+alter table rooms add column if not exists hotel_id integer not null default 1 references hotels(id);
+alter table bookings add column if not exists hotel_id integer not null default 1 references hotels(id);
+alter table shift_records add column if not exists hotel_id integer not null default 1 references hotels(id);
+alter table shift_claims add column if not exists hotel_id integer not null default 1 references hotels(id);
+
+-- غرف الفنادق الجديدة (الاسم = الرقم المكتوب على الباب)
+insert into rooms (number, name, hotel_id)
+select n, n::text, 2 from generate_series(201, 225) n
+union all select n, n::text, 4 from generate_series(301, 307) n
+union all select n, n::text, 3 from generate_series(401, 433) n
+on conflict (number) do nothing;
+
+create index if not exists bookings_hotel_idx on bookings (hotel_id, checkin);
+
+-- مفتاح اليومية والاختيارات بقى (فندق، تاريخ، شيفت): كل فندق ليه يومية لكل شيفت، ونفس الشيفت ممكن يتحجز في أكتر من فندق.
+do $$
+begin
+  if not exists (select 1 from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+                 where i.indrelid = 'shift_records'::regclass and i.indisprimary and a.attname = 'hotel_id') then
+    alter table shift_records drop constraint shift_records_pkey;
+    alter table shift_records add primary key (hotel_id, date, shift_key);
+  end if;
+  if not exists (select 1 from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+                 where i.indrelid = 'shift_claims'::regclass and i.indisprimary and a.attname = 'hotel_id') then
+    alter table shift_claims drop constraint shift_claims_pkey;
+    alter table shift_claims add primary key (hotel_id, date, shift_key);
+  end if;
+end $$;
+
+-- الحجز بيتبع فندق غرفته تلقائيًا، ومينفعش يتنقل لغرفة في فندق تاني (النقل بين الفنادق = إلغاء وحجز جديد)
+create or replace function bookings_set_hotel()
+returns trigger language plpgsql as $$
+declare h integer;
+begin
+  select hotel_id into h from rooms where number = new.room;
+  if h is null then return new; end if;
+  if TG_OP = 'UPDATE' and old.hotel_id is distinct from h then
+    raise exception 'مينفعش تنقل حجز لغرفة في فندق تاني - ألغي الحجز واعمل حجز جديد في الفندق التاني';
+  end if;
+  new.hotel_id := h;
+  -- موظف الشيفت بيضيف/يعدّل حجز في الفندق اللي اختار شيفته فيه بس (من غير جلسة مستخدم = صيانة/محرر SQL مسموح)
+  if auth.uid() is not null and is_staff() then
+    if not exists (
+      select 1 from shift_claims c
+      where c.hotel_id = h and c.date between hotel_today() - 1 and hotel_today()
+        and c.username = (select username from profiles where id = auth.uid())
+    ) then
+      raise exception 'مينفعش تضيف أو تعدّل حجز في فندق مش فندق شيفتك - اختار شيفتك في الفندق ده الأول';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists bookings_set_hotel_trg on bookings;
+drop trigger if exists bookings_0_set_hotel_trg on bookings;
+create trigger bookings_0_set_hotel_trg before insert or update on bookings
+  for each row execute function bookings_set_hotel();
+
+-- --------------------------------------------------------------------------
 -- 7) سجل الحركة
 -- --------------------------------------------------------------------------
 create table if not exists activity_log (
@@ -234,6 +332,7 @@ create table if not exists activity_log (
 );
 
 create index if not exists activity_log_ts_idx on activity_log (ts desc);
+alter table activity_log add column if not exists hotel_id integer references hotels(id);
 
 alter table activity_log enable row level security;
 drop policy if exists "activity select" on activity_log;
@@ -247,7 +346,7 @@ create policy "activity insert" on activity_log for insert with check (is_active
 do $$
 declare t text;
 begin
-  foreach t in array array['profiles','rooms','room_overrides','bookings','shift_records','shift_claims','activity_log']
+  foreach t in array array['profiles','hotels','rooms','room_overrides','bookings','shift_records','shift_claims','activity_log']
   loop
     begin
       execute format('alter publication supabase_realtime add table %I', t);
@@ -642,7 +741,7 @@ create policy "overrides write" on room_overrides for all using (is_staff_or_res
 do $$
 declare t text;
 begin
-  foreach t in array array['profiles','rooms','room_overrides','bookings','shift_records','shift_claims','activity_log']
+  foreach t in array array['profiles','hotels','rooms','room_overrides','bookings','shift_records','shift_claims','activity_log']
   loop
     begin
       execute format('alter publication supabase_realtime add table %I', t);
@@ -1298,7 +1397,7 @@ begin
   end if;
 
   select * into sr from shift_records
-    where closed = false and date >= hotel_today() - 1
+    where closed = false and hotel_id = b.hotel_id and date >= hotel_today() - 1
     order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc
     limit 1 for update;
   if not found then
@@ -1335,7 +1434,7 @@ begin
   end if;
   update shift_records set rows = v_rows,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
 
   update bookings set
     amount_paid = coalesce(amount_paid, 0) - amount,
@@ -1422,26 +1521,26 @@ create policy "claims delete" on shift_claims for delete using (is_gm());
 -- موظف الشيفت التالي (اللي اختار شيفته فعلاً) يقدر يقفل الشيفت اللي قبله
 -- لو لسه مفتوح (إقفال تلقائي لحظة ما الموظف الجديد يبدأ، حتى لو الأوفر تايم
 -- ماخلصش) - ترتيب الشيفتات: صباحي ← مسائي ← ليلي ← صباحي اليوم اللي بعده.
-create or replace function is_next_shift_claimant(rec_date date, rec_shift text)
+create or replace function is_next_shift_claimant(rec_date date, rec_shift text, rec_hotel integer default null)    -- من غير فندق = false (مفيش افتراض فندق ١)
 returns boolean language sql security definer stable set search_path = public as $$
   select exists (
     select 1 from shift_claims c
-    where c.username = (select username from profiles where id = auth.uid())
+    where c.username = (select username from profiles where id = auth.uid()) and c.hotel_id = rec_hotel
       and ((rec_shift = 'morning' and c.date = rec_date and c.shift_key = 'evening')
         or (rec_shift = 'evening' and c.date = rec_date and c.shift_key = 'night')
         or (rec_shift = 'night' and c.date = rec_date + 1 and c.shift_key = 'morning'))
   );
 $$;
-grant execute on function is_next_shift_claimant(date, text) to authenticated;
+grant execute on function is_next_shift_claimant(date, text, integer) to authenticated;
 
 drop policy if exists "shifts update" on shift_records;
 create policy "shifts update" on shift_records for update using (
   (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
-                   or (closed = false and is_next_shift_claimant(date, shift_key))))
+                   or (closed = false and is_next_shift_claimant(date, shift_key, hotel_id))))
   or can_manage_financials() or (closed = true and is_gm_or_reservations())
 ) with check (
   (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
-                   or is_next_shift_claimant(date, shift_key)))
+                   or is_next_shift_claimant(date, shift_key, hotel_id)))
   or can_manage_financials() or is_gm_or_reservations()
 );
 
@@ -1487,7 +1586,7 @@ begin
   foreach f in array array[
     'is_gm()', 'is_active_user()', 'can_manage_financials()', 'is_reservations_manager()',
     'is_staff()', 'is_staff_or_reservations()', 'can_view_activity_log()', 'is_gm_or_reservations()',
-    'is_next_shift_claimant(date, text)'
+    'is_next_shift_claimant(date, text, integer)'
   ] loop
     execute format('revoke all on function %s from public, anon', f);
     execute format('grant execute on function %s to authenticated', f);
@@ -1556,7 +1655,7 @@ $$;
 --     الشيفتات اللي بيبدأ ٨ص) - مش أي تاريخ بعيد يحجز شيفتات مقدّمًا.
 drop policy if exists "claims insert" on shift_claims;
 create policy "claims insert" on shift_claims for insert
-  with check (is_staff() and date between hotel_today() - 1 and hotel_today() + 1);
+  with check (is_staff() and date between hotel_today() - 1 and hotel_today() + 1 and can_work_in_hotel(hotel_id));
 
 -- إنشاء يومية شيفت: لنفس الموظف اللي حاجز الشيفت ده فعلاً وبتاريخ قريب.
 drop policy if exists "shifts insert" on shift_records;
@@ -1566,7 +1665,7 @@ create policy "shifts insert" on shift_records for insert
     and date between hotel_today() - 1 and hotel_today() + 1
     and exists (
       select 1 from shift_claims c
-      where c.date = shift_records.date and c.shift_key = shift_records.shift_key
+      where c.hotel_id = shift_records.hotel_id and c.date = shift_records.date and c.shift_key = shift_records.shift_key
         and c.username = (select username from profiles where id = auth.uid())
     )
   );
@@ -1581,7 +1680,7 @@ begin
     new.created_by_role := old.created_by_role;
     new.created_at := old.created_at;
   elsif TG_TABLE_NAME = 'shift_records' then
-    if new.date is distinct from old.date or new.shift_key is distinct from old.shift_key
+    if new.date is distinct from old.date or new.shift_key is distinct from old.shift_key or new.hotel_id is distinct from old.hotel_id
        or new.staff_username is distinct from old.staff_username then
       raise exception 'تاريخ الشيفت ونوعه وصاحبه مينفعش يتغيّروا';
     end if;
@@ -1605,11 +1704,11 @@ create trigger shift_records_provenance_guard before update on shift_records
 drop policy if exists "shifts update" on shift_records;
 create policy "shifts update" on shift_records for update using (
   (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
-                   or (closed = false and is_next_shift_claimant(date, shift_key))))
+                   or (closed = false and is_next_shift_claimant(date, shift_key, hotel_id))))
   or (closed = true and (can_manage_financials() or is_gm_or_reservations()))
 ) with check (
   (is_staff() and (staff_username = (select username from profiles where id = auth.uid())
-                   or is_next_shift_claimant(date, shift_key)))
+                   or is_next_shift_claimant(date, shift_key, hotel_id)))
   or can_manage_financials() or is_gm_or_reservations()
 );
 
@@ -1785,7 +1884,7 @@ begin
   end if;
 
   select * into sr from shift_records
-    where closed = false and date >= hotel_today() - 1
+    where closed = false and hotel_id = b.hotel_id and date >= hotel_today() - 1
     order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc
     limit 1 for update;
   if not found then
@@ -1836,7 +1935,7 @@ begin
   end if;
   update shift_records set rows = v_rows,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
 
   update bookings set
     amount_paid = coalesce(amount_paid, 0) - amount,
@@ -2024,6 +2123,7 @@ create table if not exists staff_cafeteria (
   updated_at timestamptz not null default now(),
   constraint staff_cafeteria_paid_le_amount check (paid_amount <= amount)
 );
+alter table staff_cafeteria add column if not exists hotel_id integer not null default 1 references hotels(id);
 create index if not exists staff_cafeteria_day_idx on staff_cafeteria (day desc);
 create index if not exists staff_cafeteria_consumer_idx on staff_cafeteria (consumer_name);
 
@@ -2132,7 +2232,7 @@ begin
   end if;
 
   select * into sr from shift_records
-    where closed = false and date >= hotel_today() - 1
+    where closed = false and hotel_id = b.hotel_id and date >= hotel_today() - 1
     order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc
     limit 1 for update;
   if not found then
@@ -2221,7 +2321,7 @@ begin
   end loop;
   update shift_records set rows = v_rows,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
 
   update bookings set
     amount_paid = coalesce(amount_paid, 0) - amount,
@@ -2379,6 +2479,7 @@ begin
   due := greatest(0, booking_hotel_total(b) - coalesce(b.amount_paid, 0));
   if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل (%)', trim_scale(due); end if;
   sr := calma_my_open_shift();
+  if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
   -- الدفعة بتسدّد خدمات كافيتيريا النزيل الأول، والباقي لصف الغرفة
   cafe_out := greatest(0, calma_num(b.extras ->> 'cafeteria') - calma_num(b.extras ->> 'cafeteriaPaid'));
   cafe := least(amt, cafe_out);
@@ -2395,7 +2496,7 @@ begin
   end if;
   update shift_records set rows = v_rows, cafeteria_rows = v_caf,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   return jsonb_build_object('amount', amt, 'cafeteria', cafe, 'left', due - amt, 'currency', b.currency, 'method', p_method, 'details', det, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
 end;
 $$;
@@ -2418,15 +2519,15 @@ begin
     det := calma_clean_details(p_method, coalesce(p_details, '{}'::jsonb));
   end if;
   perform set_config('calma.staff_rpc', '1', true);
-  insert into staff_cafeteria(day, shift_key, consumer_username, consumer_name, description, amount, currency, paid_amount, payments)
-  values (sr.date, sr.shift_key, nullif(btrim(coalesce(p_username, '')), ''), nm, left(coalesce(p_desc, ''), 300), amt, p_currency, case when paid then amt else 0 end,
+  insert into staff_cafeteria(hotel_id, day, shift_key, consumer_username, consumer_name, description, amount, currency, paid_amount, payments)
+  values (sr.hotel_id, sr.date, sr.shift_key, nullif(btrim(coalesce(p_username, '')), ''), nm, left(coalesce(p_desc, ''), 300), amt, p_currency, case when paid then amt else 0 end,
           case when paid then jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'at', (extract(epoch from now()) * 1000)::bigint, 'amount', amt, 'method', p_method, 'details', det, 'day', sr.date, 'shiftKey', sr.shift_key)) else '[]'::jsonb end)
   returning id into v_id;
   perform set_config('calma.staff_rpc', '', true);
   if paid then
     update shift_records set cafeteria_rows = calma_apply_cafe_collection(coalesce(cafeteria_rows, '[]'::jsonb), 'staff', coalesce(nullif(btrim(coalesce(p_username, '')), ''), lower(nm)), nm, null, p_method, p_currency, det, amt,
       'كافيتيريا استاف - ' || nm || ' (+' || trim_scale(amt) || ' ' || p_currency || ')')
-      where date = sr.date and shift_key = sr.shift_key;
+      where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   end if;
   return jsonb_build_object('id', v_id, 'amount', amt, 'paid', paid);
 end;
@@ -2449,16 +2550,16 @@ begin
   sr := calma_my_open_shift();
   -- قفل صفوف المديونية الأول (موظفين مختلفين ممكن يسدّدوا نفس الشخص في نفس اللحظة)، وبعدين نحسب المتبقي من آخر نسخة
   perform 1 from staff_cafeteria
-    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount
+    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and hotel_id = sr.hotel_id and paid_amount < amount
     order by created_at, id for update;
   select coalesce(sum(amount - paid_amount), 0) into owed from staff_cafeteria
-    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount;
+    where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and hotel_id = sr.hotel_id and paid_amount < amount;
   if owed <= 0 then raise exception 'مفيش مديونية على الموظف ده'; end if;
   if amt > owed then raise exception 'المبلغ أكبر من المديونية (%)', trim_scale(owed); end if;
   left_amt := amt;
   perform set_config('calma.staff_rpc', '1', true);
   for e in select id, amount, paid_amount from staff_cafeteria
-           where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and paid_amount < amount
+           where coalesce(nullif(consumer_username, ''), lower(btrim(consumer_name))) = k and currency = p_currency and hotel_id = sr.hotel_id and paid_amount < amount
            order by created_at, id for update loop
     exit when left_amt <= 0;
     part := least(left_amt, e.amount - e.paid_amount);
@@ -2471,7 +2572,7 @@ begin
   if left_amt > 0 then raise exception 'المديونية اتغيّرت - حدّث وجرّب تاني'; end if;
   update shift_records set cafeteria_rows = calma_apply_cafe_collection(coalesce(cafeteria_rows, '[]'::jsonb), 'staff', k, nm, null, p_method, p_currency, det, amt,
     'كافيتيريا استاف - ' || nm || ' (+' || trim_scale(amt) || ' ' || p_currency || ')')
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   return jsonb_build_object('amount', amt, 'left', owed - amt, 'currency', p_currency);
 end;
 $$;
@@ -2776,6 +2877,7 @@ begin
   if covered <= 0 then raise exception 'المبلغ صغير جدًا بالنسبة لسعر الصرف'; end if;
   if covered > due then raise exception 'المبلغ (= % %) أكبر من المتبقي على النزيل (% %)', trim_scale(covered), b.currency, trim_scale(due), b.currency; end if;
   sr := calma_my_open_shift();
+  if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
   cafe_out := greatest(0, calma_num(b.extras ->> 'cafeteria') - calma_num(b.extras ->> 'cafeteriaPaid'));
   cafe := least(covered, cafe_out);
   cafe_x := case when cafe > 0 then round(amt * cafe / covered, 2) else 0 end;
@@ -2799,7 +2901,7 @@ begin
   end if;
   update shift_records set rows = v_rows, cafeteria_rows = v_caf,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   return jsonb_build_object('amount', amt, 'currency', cur, 'covered', covered, 'bookingCurrency', b.currency, 'rate', rate, 'cafeteria', cafe,
     'left', due - covered, 'method', p_method, 'details', det, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
 end;
@@ -2953,6 +3055,7 @@ begin
   if due <= 0 then raise exception 'مفيش متبقي على النزيل بالـ %', cur; end if;
   if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل بالـ % (%)', cur, trim_scale(due); end if;
   sr := calma_my_open_shift();
+  if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
   cafe_out := greatest(0, calma_num(c ->> 'cafeteria') - calma_num(c ->> 'cafeteriaPaid'));
   cafe := least(amt, cafe_out);
   if cafe > 0 then c := jsonb_set(c, '{cafeteriaPaid}', to_jsonb(calma_num(c ->> 'cafeteriaPaid') + cafe)); end if;
@@ -2973,7 +3076,7 @@ begin
   end if;
   update shift_records set rows = v_rows, cafeteria_rows = v_caf,
     booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
-    where date = sr.date and shift_key = sr.shift_key;
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   return jsonb_build_object('amount', amt, 'currency', cur, 'cafeteria', cafe, 'left', due - amt, 'method', p_method, 'details', det, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
 end;
 $$;
@@ -3028,14 +3131,14 @@ create or replace function move_booking_room(p_booking uuid, p_room int, p_expec
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare b bookings%rowtype; clash bookings%rowtype; old_room int; today date := hotel_today(); new_from date;
 begin
-  if not (is_staff() or is_reservations_manager()) then raise exception 'نقل النزيل من صلاحية موظف الشيفت أو مدير الحجوزات'; end if;     -- المدير العام مابينقلش
-  if is_staff() then perform calma_my_open_shift(); end if;          -- الموظف لازم شيفته مفتوح
+  if not is_reservations_manager() then raise exception 'نقل النزيل من صلاحية مدير الحجوزات بس'; end if;     -- موظف الشيفت والمدير العام والحسابات مابينقلوش
   select * into b from bookings where id = p_booking for update;
   if not found then raise exception 'الحجز مش موجود'; end if;
   if p_expected is not null and b.updated_at is distinct from p_expected then raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني'; end if;
   if b.status = 'ملغي' then raise exception 'الحجز ملغي'; end if;
   if b.checkout <= today or b.status = 'تم تسجيل الخروج' then raise exception 'الحجز خلص - مفيش نقل'; end if;
   if not exists (select 1 from rooms where number = p_room) then raise exception 'الغرفة دي مش موجودة'; end if;
+  if not exists (select 1 from rooms where number = p_room and hotel_id = b.hotel_id) then raise exception 'الغرفة دي في فندق تاني - النقل بين الفنادق مش متاح'; end if;
   if p_room = b.room then raise exception 'النزيل في الغرفة دي أصلًا'; end if;
   -- الغرفة الجديدة مطلوبة من يوم النقل (أو أول الإقامة لو لسه ماجاش) لحد الخروج
   new_from := case when b.checkin < today then today else null end;
@@ -3084,8 +3187,8 @@ begin
   ) then
     raise exception 'فيه تحصيل على الحجز ده في شيفت اتقفل - تعديل العملة لازم يتعمل من الحسابات أو المدير العام';
   end if;
-  for sr in select s.date, s.shift_key, s.rows, s.cafeteria_rows from shift_records s
-    where s.closed = false and exists (
+  for sr in select s.hotel_id, s.date, s.shift_key, s.rows, s.cafeteria_rows from shift_records s
+    where s.closed = false and s.hotel_id = b.hotel_id and exists (
       select 1 from jsonb_array_elements(coalesce(s.rows, '[]'::jsonb) || coalesce(s.cafeteria_rows, '[]'::jsonb)) e
       where e ->> 'bookingId' = b.id::text and e ->> 'collectionCurrency' = old_cur)
     for update
@@ -3107,7 +3210,7 @@ begin
       end if;
       new_caf := new_caf || jsonb_build_array(el);
     end loop;
-    update shift_records set rows = new_rows, cafeteria_rows = new_caf where date = sr.date and shift_key = sr.shift_key;
+    update shift_records set rows = new_rows, cafeteria_rows = new_caf where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
   end loop;
   perform set_config('calma.currency_rpc', '1', true);
   perform set_config('calma.pay_rpc', '1', true);
@@ -3164,7 +3267,182 @@ drop trigger if exists bookings_guests_sync on bookings;
 create trigger bookings_guests_sync after insert or update of pax, room, guest_codes, checkin, status on bookings
   for each row execute function bookings_sync_guests();
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 41 $$;
+
+-- --------------------------------------------------------------------------
+-- 43) إدارة الفنادق (المدير العام) + أكواد حجز لكل فندق + صلاحية الموظف على فنادق معيّنة
+--     - كود الحجز: بادئة الفندق + سنة/شهر + رقم متسلسل لكل فندق (Calma = B زي ما كان، Revento = R، Park Plaza = P، The Location = L).
+--     - المدير العام بيضيف فندق جديد وغرف جديدة ويعدّل الأسماء من الواجهة (دوال محمية، مفيش مسح).
+--     - allowed_hotels على الموظف: لو متحدد، مايقدرش يختار شيفت إلا في الفنادق دي (القاعدة بتفرض ده).
+-- --------------------------------------------------------------------------
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_name = 'booking_code_counters' and column_name = 'hotel_id') then
+    alter table booking_code_counters add column hotel_id integer not null default 1;
+    alter table booking_code_counters drop constraint if exists booking_code_counters_pkey;
+    alter table booking_code_counters add primary key (ym, hotel_id);
+  end if;
+end $$;
+
+create or replace function next_booking_code_h(p_day date, p_hotel integer)
+returns text language plpgsql security definer set search_path = public as $$
+declare ym_v text := to_char(coalesce(p_day, hotel_today()), 'YYMM'); k int; pre text;
+begin
+  select coalesce(nullif(btrim(code_prefix), ''), 'B') into pre from hotels where id = p_hotel;
+  insert into booking_code_counters(ym, hotel_id, n) values (ym_v, coalesce(p_hotel, 1), 1)
+    on conflict (ym, hotel_id) do update set n = booking_code_counters.n + 1
+    returning n into k;
+  return coalesce(pre, 'B') || ym_v || '-' || (case when k < 10000 then lpad(k::text, 4, '0') else k::text end);    -- الرقم الأطول من ٤ خانات بيتكتب كامل (من غير قصّ)
+end;
+$$;
+revoke all on function next_booking_code_h(date, integer) from public, anon, authenticated;
+-- النسخة القديمة (من غير فندق) بقت بتحسب على الفندق ١
+create or replace function next_booking_code(p_day date default null)
+returns text language sql security definer set search_path = public as $$ select next_booking_code_h(p_day, 1) $$;
+revoke all on function next_booking_code(date) from public, anon, authenticated;
+
+create or replace function bookings_auto_code()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare h integer;
+begin
+  select hotel_id into h from rooms where number = new.room;
+  h := coalesce(h, 1);
+  if TG_OP = 'INSERT' then
+    new.code := next_booking_code_h(null, h);
+  elsif coalesce(old.code, '') <> '' then
+    new.code := old.code;                       -- مابيتغيّرش
+  elsif coalesce(new.code, '') = '' then
+    new.code := next_booking_code_h(null, h);
+  end if;
+  return new;
+end;
+$$;
+revoke all on function bookings_auto_code() from public, anon, authenticated;
+
+-- إدارة الفنادق والغرف: المدير العام بس، من خلال دوال (مفيش مسح لفندق أو غرفة عشان مايبوّظش حجوزات ويوميات)
+create or replace function create_hotel(p_name text, p_short text default null, p_prefix text default null)
+returns integer language plpgsql security definer set search_path = public as $$
+declare nid integer; nm text := btrim(coalesce(p_name, '')); pre text := upper(btrim(coalesce(p_prefix, '')));
+begin
+  if not is_gm() then raise exception 'إضافة فندق من صلاحية المدير العام بس'; end if;
+  if char_length(nm) < 2 or char_length(nm) > 60 then raise exception 'اكتب اسم الفندق (٢ لـ ٦٠ حرف)'; end if;
+  if exists (select 1 from hotels where lower(name) = lower(nm)) then raise exception 'فيه فندق بنفس الاسم'; end if;
+  if pre = '' then pre := upper(left(regexp_replace(nm, '[^A-Za-z]', '', 'g'), 1)); end if;
+  if pre = '' or pre !~ '^[A-Z]{1,2}$' then raise exception 'بادئة كود الحجز: حرف أو حرفين إنجليزي'; end if;
+  if exists (select 1 from hotels where code_prefix = pre) then raise exception 'بادئة الكود دي مستخدمة في فندق تاني - اختار حرف تاني'; end if;
+  perform pg_advisory_xact_lock(424201);          -- مديرين اتنين بيضيفوا فندق في نفس اللحظة: واحد ورا التاني (مفيش تعارض في الرقم)
+  if exists (select 1 from hotels where lower(name) = lower(nm)) then raise exception 'فيه فندق بنفس الاسم'; end if;
+  if exists (select 1 from hotels where code_prefix = pre) then raise exception 'بادئة الكود دي مستخدمة في فندق تاني - اختار حرف تاني'; end if;
+  select coalesce(max(id), 0) + 1 into nid from hotels;
+  insert into hotels(id, name, short_name, sort_order, code_prefix) values (nid, nm, nullif(btrim(coalesce(p_short, '')), ''), nid, pre);
+  return nid;
+end;
+$$;
+revoke all on function create_hotel(text, text, text) from public, anon;
+grant execute on function create_hotel(text, text, text) to authenticated;
+
+create or replace function add_hotel_room(p_hotel integer, p_number integer, p_name text default null)
+returns integer language plpgsql security definer set search_path = public as $$
+begin
+  if not is_gm() then raise exception 'إضافة غرفة من صلاحية المدير العام بس'; end if;
+  if not exists (select 1 from hotels where id = p_hotel) then raise exception 'الفندق مش موجود'; end if;
+  if p_number is null or p_number < 1 or p_number > 99999 then raise exception 'رقم الغرفة لازم يكون رقم صحيح'; end if;
+  if exists (select 1 from rooms where number = p_number) then raise exception 'رقم الغرفة ده مستخدم بالفعل (أرقام الغرف فريدة على مستوى الجروب)'; end if;
+  insert into rooms(number, name, hotel_id) values (p_number, left(coalesce(nullif(btrim(coalesce(p_name, '')), ''), p_number::text), 80), p_hotel);
+  return p_number;
+end;
+$$;
+revoke all on function add_hotel_room(integer, integer, text) from public, anon;
+grant execute on function add_hotel_room(integer, integer, text) to authenticated;
+
+create or replace function rename_hotel_room(p_number integer, p_name text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_gm() then raise exception 'تعديل اسم الغرفة من صلاحية المدير العام بس'; end if;
+  if btrim(coalesce(p_name, '')) = '' then raise exception 'اكتب اسم الغرفة'; end if;
+  update rooms set name = left(btrim(p_name), 80) where number = p_number;
+  if not found then raise exception 'الغرفة مش موجودة'; end if;
+end;
+$$;
+revoke all on function rename_hotel_room(integer, text) from public, anon;
+grant execute on function rename_hotel_room(integer, text) to authenticated;
+
+-- المدير العام يعدّل بادئة الكود كمان (الأكواد القديمة مابتتغيّرش)
+grant update (name, short_name, active, code_prefix) on hotels to authenticated;
+
+-- تحديد فنادق الموظف: المدير العام بس (سياسة تعديل profiles أصلاً للمدير العام بس)
+create or replace function validate_allowed_hotels()
+returns trigger language plpgsql as $$
+begin
+  if new.allowed_hotels is not null then
+    if cardinality(new.allowed_hotels) = 0 then new.allowed_hotels := null; end if;
+    if exists (select 1 from unnest(new.allowed_hotels) h where not exists (select 1 from hotels where id = h)) then
+      raise exception 'فندق غير موجود في قايمة الفنادق المسموحة';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists profiles_validate_hotels on profiles;
+create trigger profiles_validate_hotels before insert or update on profiles
+  for each row execute function validate_allowed_hotels();
+
+-- مينفعش يتوقّف فندق فيه شيفت مفتوح (الموظف كان هيفقد يوميته من قدامه): اقفلوا الشيفتات الأول
+create or replace function hotels_block_deactivate_with_open_shift()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.active and not new.active and exists (
+    select 1 from shift_records s where s.hotel_id = old.id and s.closed = false and s.date >= hotel_today() - 1
+  ) then
+    raise exception 'مينفعش توقّف الفندق وفيه شيفت مفتوح - اقفل الشيفتات المفتوحة الأول';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists hotels_block_deactivate_trg on hotels;
+create trigger hotels_block_deactivate_trg before update on hotels
+  for each row execute function hotels_block_deactivate_with_open_shift();
+
+-- الغرفة مينفعش تتنقل لفندق تاني ولا يتغيّر رقمها من الـ API (كانت بتبوّظ ارتباط حجوزاتها بالفندق) - المدير العام بيعدّل الاسم من الدالة
+create or replace function rooms_guard_identity()
+returns trigger language plpgsql as $$
+begin
+  if auth.uid() is not null and (new.number is distinct from old.number or new.hotel_id is distinct from old.hotel_id) then
+    raise exception 'رقم الغرفة وفندقها مينفعش يتغيّروا - ضيف غرفة جديدة في الفندق المطلوب';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists rooms_guard_identity_trg on rooms;
+create trigger rooms_guard_identity_trg before update on rooms
+  for each row execute function rooms_guard_identity();
+
+-- بادئة كود الحجز: حرف أو حرفين إنجليزي، فريدة بين الفنادق، ومينفعش تتغيّر بعد ما الفندق يبقى له حجوزات
+-- (غير كده فندقين ممكن يطلعوا نفس الكود فيفشل حفظ الحجز بقيد التفرّد)
+do $$ begin
+  alter table hotels add constraint hotels_prefix_format_chk check (code_prefix ~ '^[A-Z]{1,2}$');
+exception when duplicate_object then null; end $$;
+create unique index if not exists hotels_code_prefix_uidx on hotels (code_prefix);
+create or replace function hotels_guard_prefix()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.code_prefix is distinct from old.code_prefix and exists (select 1 from bookings where hotel_id = old.id) then
+    raise exception 'مينفعش تغيّر بادئة كود الحجز بعد ما الفندق بقى له حجوزات - الأكواد القديمة هتتعارض';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists hotels_guard_prefix_trg on hotels;
+create trigger hotels_guard_prefix_trg before update on hotels
+  for each row execute function hotels_guard_prefix();
+
+-- تشديد أمني: الغرف تتضاف وتتمسح من دوال المدير العام بس (مدير الحجوزات يعدّل الاسم بس) - كان يقدر يضيف غرفة بأي فندق مباشرة
+drop policy if exists "rooms write" on rooms;
+drop policy if exists "rooms update" on rooms;
+create policy "rooms update" on rooms for update using (is_reservations_manager()) with check (is_reservations_manager());
+revoke insert, delete on rooms from authenticated;
+revoke all on function can_work_in_hotel(integer) from public, anon;
+grant execute on function can_work_in_hotel(integer) to authenticated;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 43 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

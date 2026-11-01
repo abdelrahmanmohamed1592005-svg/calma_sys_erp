@@ -3,6 +3,13 @@
    فندق يظهر، هيفضل شعار Calma بس. */
 export const HOTEL_NAME = "فندق Calma";
 
+/* اسم مجموعة الفنادق (الجروب) - بيظهر في التقرير المجمّع للمدير العام */
+export const GROUP_NAME = "H&S";
+export const GROUP_TITLE = "مجموعة H&S للفنادق";
+/* لون مميّز لكل فندق (بالترتيب) - بيظهر في شريط الفنادق وخط الهيدر عشان تعرف إنت في أنهي فندق */
+export const HOTEL_ACCENTS = ["#1F6B66", "#5B4BA6", "#B07A12", "#A63D63", "#2E6B9E", "#2F7A4F"];
+export const hotelAccent = (_hotels, id) => HOTEL_ACCENTS[(Math.max(1, Number(id) || 1) - 1) % HOTEL_ACCENTS.length];
+
 export const SHIFTS = [
   { key: "morning", label: "الشيفت الصباحي", time: "8ص - 4م" },
   { key: "evening", label: "الشيفت المسائي", time: "4م - 12ص" },
@@ -21,7 +28,7 @@ export const TAB_LABELS = { board: "لوحة الغرف", ledger: "اليومي�
 /* staff: يشتغل باليومية والحجوزات (عرض + إضافة حجز مباشر) وحالة الغرف (بقيود).
    كل حاجة باينة للمدير العام باينة كمان لمديرة الحسابات ومدير الحجوزات - عرض بس، غير الصلاحيات المحددة لكل دور. */
 export const PERMISSIONS = {
-  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true, reopenShift: false, decideRefund: false },
+  staff: { tabs: ["board", "ledger", "bookings"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, viewReports: false, viewActivity: false, manageUsers: false, markPaymentReceived: true, moveGuest: false, reopenShift: false, decideRefund: false },
   // markPaymentReceived بقت false لمدير الحجوزات عمدًا - شغله يضيف الحجوزات
   // ويحدد سعرها بس، أما "استلمنا الفلوس فعليًا ولا لأ" فده قرار موظف الشيفت
   // اللي قدام النزيل فعليًا، مش مدير الحجوزات. هو يقدر يشوف المتبقي/المتحصّل
@@ -30,7 +37,7 @@ export const PERMISSIONS = {
   // الحجوزات بس - بيجيله إشعار لما حجز يتلغي/يتقصّر وعليه فلوس متحصّلة.
   // reopenShift: لو موظف قفل شيفته بالغلط، مدير الحجوزات والمدير العام بس
   // يقدروا يفتحوه تاني (انظر قسم ١٦ في schema.sql).
-  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false, reopenShift: true, decideRefund: true },
+  reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, moveGuest: true, manageUsers: false, markPaymentReceived: false, reopenShift: true, decideRefund: true },
   accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false, reopenShift: false },
   gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false, reopenShift: true },
 };

@@ -2,7 +2,7 @@ import { supabase } from "./supabaseClient";
 
 const WATCHED_TABLES = ["rooms", "room_overrides", "bookings", "shift_records", "shift_claims", "activity_log", "profiles"];
 // جدول اختياري: لو مش موجود/مش منشور (قاعدة لسه ماتحدّثتش) قناته لوحدها تفشل من غير ما تقتل التحديث اللحظي للباقي
-const OPTIONAL_TABLES = ["staff_cafeteria"];
+const OPTIONAL_TABLES = ["staff_cafeteria", "hotels"];
 
 /*
   بث لحظي حقيقي: أي جهاز يعدّل أي جدول من الجداول دي، كل الأجهزة التانية المفتوحة

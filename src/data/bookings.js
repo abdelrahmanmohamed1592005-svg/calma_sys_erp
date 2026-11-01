@@ -4,7 +4,7 @@ import { isMissingFunctionError, OUTDATED_SCHEMA_MESSAGE } from "./schemaCheck";
 
 function bookingFromRow(r) {
   return {
-    id: r.id, code: r.code || "", room: r.room, guestName: r.guest_name || "", phone: r.phone || "", pax: r.pax || 1,
+    id: r.id, hotelId: r.hotel_id ?? 1, code: r.code || "", room: r.room, guestName: r.guest_name || "", phone: r.phone || "", pax: r.pax || 1,
     checkin: r.checkin, checkout: r.checkout, roomFrom: r.room_from || null, priceNight: Number(r.price_night) || 0, currency: r.currency,
     totalRoom: Number(r.total_room) || 0, extras: r.extras || { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 },
     earlyCheckin: r.early_checkin || { applied: false, fee: 0, note: "" },

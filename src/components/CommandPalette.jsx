@@ -12,7 +12,7 @@ const norm = (s) => String(s ?? "").toLowerCase().replace(/[أإآ]/g, "ا").rep
   بحث سريع (Ctrl+K / ⌘K): من أي شاشة تكتب اسم نزيل أو رقم غرفة أو كود حجز/فرد أو اسم قسم
   وتروح له على طول. الأسهم للتنقل، Enter للفتح، Esc للقفل.
 */
-export function CommandPalette({ open, onClose, tabs, rooms, bookings, overrides, onGoTab, onOpenRoom, onFindBooking }) {
+export function CommandPalette({ open, onClose, tabs, rooms, bookings, overrides, onGoTab, onOpenRoom, onFindBooking, hotels = [], hotelId }) {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const inputRef = useRef(null);
@@ -23,19 +23,22 @@ export function CommandPalette({ open, onClose, tabs, rooms, bookings, overrides
   const items = useMemo(() => {
     const nq = norm(q);
     const out = [];
+    const multi = hotels.length > 1;
+    const hname = (id) => hotels.find((h) => h.id === (id ?? 1))?.name || "";
+    const tag = (id) => (multi && id !== hotelId ? ` · ${hname(id)}` : "");
     tabs.forEach((t) => { if (!nq || norm(TAB_LABELS[t]).includes(nq)) out.push({ kind: "tab", key: "t-" + t, tab: t, label: TAB_LABELS[t], sub: "قسم", Icon: TAB_ICONS[t] }); });
     if (nq) {
       rooms.filter((r) => norm(r.number).includes(nq) || norm(r.name).includes(nq)).slice(0, 6).forEach((r) => {
         const st = computeRoomStatus(r.number, bookings, overrides, date);
-        out.push({ kind: "room", key: "r-" + r.number, room: r.number, label: <RoomName rooms={rooms} number={r.number} />, sub: st.guest ? `${st.label} · ${st.guest}` : st.label, Icon: DoorOpen });
+        out.push({ kind: "room", key: "r-" + r.number, room: r.number, hotel: r.hotelId ?? 1, label: <RoomName rooms={rooms} number={r.number} />, sub: (st.guest ? `${st.label} · ${st.guest}` : st.label) + tag(r.hotelId ?? 1), Icon: DoorOpen });
       });
       bookings.filter((b) => norm(b.guestName).includes(nq) || norm(b.code).includes(nq) || norm(b.phone).includes(nq) || guestCodeEntries(b).some((g) => norm(g.code) === nq))
         .sort((a, b) => b.checkin.localeCompare(a.checkin)).slice(0, 8).forEach((b) => {
-          out.push({ kind: "booking", key: "b-" + b.id, booking: b, label: b.guestName, sub: <><RoomName rooms={rooms} number={b.room} /> · <DateRange from={b.checkin} to={b.checkout} />{b.status === "ملغي" ? " · ملغي" : ""}</>, Icon: User });
+          out.push({ kind: "booking", key: "b-" + b.id, booking: b, hotel: b.hotelId ?? 1, label: b.guestName, sub: <><RoomName rooms={rooms} number={b.room} /> · <DateRange from={b.checkin} to={b.checkout} />{b.status === "ملغي" ? " · ملغي" : ""}{tag(b.hotelId ?? 1)}</>, Icon: User });
         });
     }
     return out;
-  }, [q, tabs, rooms, bookings, overrides, date]);
+  }, [q, tabs, rooms, bookings, overrides, date, hotels, hotelId]);
 
   useEffect(() => { setSel(0); }, [q]);
   useEffect(() => { listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" }); }, [sel]);
@@ -45,11 +48,11 @@ export function CommandPalette({ open, onClose, tabs, rooms, bookings, overrides
     if (!it) return;
     onClose();
     if (it.kind === "tab") onGoTab(it.tab);
-    else if (it.kind === "room") onOpenRoom(it.room);
+    else if (it.kind === "room") onOpenRoom(it.room, it.hotel);
     else if (it.kind === "booking") {
       const b = it.booking;
       const living = b.status !== "ملغي" && b.checkin <= date && date < b.checkout;
-      if (living && tabs.includes("board")) onOpenRoom(b.room); else onFindBooking(b.guestName);
+      if (living && tabs.includes("board")) onOpenRoom(b.room, it.hotel); else onFindBooking(b.guestName, it.hotel);
     }
   }
   function onKey(e) {

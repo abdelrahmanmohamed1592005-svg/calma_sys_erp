@@ -25,7 +25,7 @@ try {
   }
   const as = async (pool, user, fn) => { const c = await pool.connect(); try { await c.query("begin"); await c.query("select set_config('request.jwt.claim.sub',$1,true)", [ids[user]]); await c.query("set local role authenticated"); const r = await fn(c); await c.query("commit"); return r; } catch (e) { await c.query("rollback").catch(() => {}); throw e; } finally { c.release(); } };
   const today = (await src.query("select hotel_today()::text d")).rows[0].d;
-  const rooms = (await src.query("select number from rooms order by number limit 12")).rows.map((r) => r.number);
+  const rooms = (await src.query("select number from rooms where hotel_id = 1 order by number limit 12")).rows.map((r) => r.number);
   // --- بيانات تركيبية: ٢٤٠ حجز، دفعات (كاش/فيزا/تحويل)، إلغاء + رد، كافيتيريا استاف
   const tSeed = t0();
   let n = 0, paid = 0, errors = [];
@@ -77,7 +77,7 @@ try {
   await admin.query(`create database ${DST}`);
   // المشروع الجديد بيجي بـ schema الـ auth + الأدوار من Supabase؛ محليًا بنركّب الـ stub الأول ثم نرجّع النسخة فوقه
   sqlfile(DST, "supabase/tests/stub_supabase.sql"); sqlfile(DST, "supabase/schema.sql");     // الخطوة ٢ في docs/BACKUP.md
-  await (async () => { const c = new pg.Client({ connectionString: url(DST) }); await c.connect(); await c.query("truncate table public.rooms cascade"); await c.end(); })();   // خطوة ٤ في docs/BACKUP.md
+  await (async () => { const c = new pg.Client({ connectionString: url(DST) }); await c.connect(); await c.query("truncate table public.hotels, public.rooms cascade"); await c.end(); })();   // خطوة ٤ في docs/BACKUP.md
   t = t0();
   let restoreWarn = "", restoreIgnored = "";
   try { execFileSync("pg_restore", ["--data-only", "--disable-triggers", "--no-owner", "-d", url(DST), dump], { stdio: ["ignore", "pipe", "pipe"] }); }
