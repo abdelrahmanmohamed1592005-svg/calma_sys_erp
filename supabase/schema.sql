@@ -1022,19 +1022,16 @@ begin
        or (new.phone is distinct from old.phone)
        or (new.pax is distinct from old.pax)
        or (new.checkin is distinct from old.checkin)
-       or (new.price_night is distinct from old.price_night)
-       or (new.currency is distinct from old.currency)
+       -- السعر (price_night / currency / total_room) مسموح لموظف الشيفت يعدّله من الحجوزات (قرار المالك)،
+       -- ما عدا لو الحجز متحصّل بالكامل (قيد prevent_charge_edit_when_settled) أو فيه دفعة بتتعارض مع الإجمالي.
        -- total_room مسموح يتغيّر بس لو ده تمديد/تقصير حقيقي لتاريخ الخروج
        -- وبنفس سعر الليلة المتسجل (الفرق في الليالي × price_night) - يعني
        -- موظف الشيفت يقدر يمدد الإقامة والسعر يتحرك تلقائيًا، لكن مايقدرش
        -- يغيّر إجمالي الغرفة بأي قيمة تانية.
-       or (not restoring and new.total_room is distinct from old.total_room
-           and not (new.checkout is distinct from old.checkout
-                    and abs(new.total_room - reprice_total(old, new.checkout)) <= 0.011))
        -- ومفيش تمديد مجاني: لو تاريخ الخروج اتأخر، إجمالي الغرفة لازم يزيد
        -- بنفس الفرق (التقصير لوحده - "مشي بدري" - مسموح من غير تغيير إجمالي).
        or (not restoring and new.checkout > old.checkout
-           and abs(new.total_room - reprice_total(old, new.checkout)) > 0.011)
+           and new.total_room is not distinct from old.total_room and new.price_night is not distinct from old.price_night)
        -- الدخول المبكر: الموظف (اللي قدام النزيل) يقدر يسجّله مرة واحدة على حجز لسه ماتسجّلش
        -- عليه (applied من false لـ true)، لكن مايعدّلش ولا يشيل رسم اتسجّل قبل كده.
        or (new.early_checkin is distinct from old.early_checkin
@@ -3131,9 +3128,16 @@ create or replace function move_booking_room(p_booking uuid, p_room int, p_expec
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare b bookings%rowtype; clash bookings%rowtype; old_room int; today date := hotel_today(); new_from date;
 begin
-  if not is_reservations_manager() then raise exception 'نقل النزيل من صلاحية مدير الحجوزات بس'; end if;     -- موظف الشيفت والمدير العام والحسابات مابينقلوش
+  if not (is_reservations_manager() or is_staff()) then raise exception 'نقل النزيل من صلاحية موظف الشيفت ومدير الحجوزات بس'; end if;     -- المدير العام والحسابات مابينقلوش
   select * into b from bookings where id = p_booking for update;
   if not found then raise exception 'الحجز مش موجود'; end if;
+  -- موظف الشيفت: بس وشيفته مفتوح وفي فندق الحجز
+  if is_staff() then
+    declare sr shift_records := calma_my_open_shift();
+    begin
+      if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك'; end if;
+    end;
+  end if;
   if p_expected is not null and b.updated_at is distinct from p_expected then raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني'; end if;
   if b.status = 'ملغي' then raise exception 'الحجز ملغي'; end if;
   if b.checkout <= today or b.status = 'تم تسجيل الخروج' then raise exception 'الحجز خلص - مفيش نقل'; end if;

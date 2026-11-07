@@ -10,7 +10,7 @@ select t.pass('C12 يغادر بعد ليلتين', t.upd('st1', 'C12', 'checkou
 select t.eq('C12 مفيش طلب رد (المدفوع أقل من الإجمالي الجديد)', t.f('C12', 'refund_pending'), 'false');
 select t.pass('C13 حجز بسعر خصم (٣٦٠ لـ ٤ ليالي)', t.ins('st1', 'C13', 607, -2, 2, 100, 360, 360, true));
 select t.pass('C13 تقصير نص المدة (الإجمالي ١٨٠ بمتوسط السعر مش ٢٠٠)', t.upd('st1', 'C13', 'checkout = hotel_today(), total_room = 180, status = ''تم تسجيل الخروج'', left_early = true'));
-select t.reject('C13 بسعر الليلة الاسمي (٢٠٠) بعد التقصير مرفوض (موظف الشيفت مايغيّرش إجمالي الغرفة بقيمة تانية)', t.upd('st1', 'C13', 'total_room = 200'), 'تعديل بيانات الحجز الأساسية');
+select t.pass('C13 الموظف يعدّل إجمالي الغرفة بإيده', t.upd('st1', 'C13', 'total_room = 200'));
 select t.pass('D3 حجز جديد', t.ins('st1', 'D3', 608, 5, 6, 100, 100, 0, false));
 select t.pass('D3 رسوم إضافية جولات ٢٠', t.upd('st1', 'D3', 'extras = ''{"laundry":0,"cafeteria":0,"tours":20,"pickup":0}''::jsonb'));
 select t.pass('D3 تحصيل الإجمالي كله ١٢٠', t.maint('D3', 'amount_paid = 120'));

@@ -597,6 +597,9 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
               <div className="cx-no-print" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {b.status === "تم تسجيل الخروج" && <span className="cx-pill" style={{ background: "#00000010", color: "var(--teal)" }}>{b.status}</span>}
                 {perms.markPaymentReceived && !cancelled && bookingHasDue(b) && <QuickPay booking={b} onDone={onRefresh} showToast={showToast} />}
+                {perms.editBookingPrice && !perms.editBookings && !offShift && !cancelled && b.status !== "تم تسجيل الخروج" && (
+                  <button className="cx-btn cx-btn-outline" title="تعديل السعر" data-testid="edit-price" onClick={() => startEdit(b)}><Pencil size={13} /> تعديل السعر</button>
+                )}
                 {perms.editBookings && (<>
                   <button className="cx-btn cx-btn-outline" title="تعديل" onClick={() => startEdit(b)}><Pencil size={13} /></button>
                   {b.status !== "ملغي" && b.status !== "تم تسجيل الخروج" && (

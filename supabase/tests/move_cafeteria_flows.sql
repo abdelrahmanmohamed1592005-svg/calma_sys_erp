@@ -146,9 +146,9 @@ select t.pass('M6 مدير الحجوزات ينقل', t.mv('res1', 'M6', 613));
 select t.reject('M6 المحاسبة مرفوضة', t.mv('acc1', 'M6', 614), 'صلاحية');
 select t.reject('M6 حجز غير موجود', t.try('res1', $q$select move_booking_room(gen_random_uuid(), 601)$q$), 'مش موجود');
 select t.pass('M6 تجهيز: قفل شيفتات st2', t.maint_sql($q$update shift_records set closed = true where staff_username = 'st2' and closed = false$q$));
-select t.reject('M6 موظف الشيفت (st2) ممنوع ينقل', t.mv('st2', 'M6', 614), 'مدير الحجوزات');
-select t.reject('M6 حتى موظف شيفته مفتوح (st1) ممنوع ينقل', t.mv('st1', 'M6', 614), 'مدير الحجوزات');
-select t.eq('M6 لسه في 613', t.f('M6', 'room'), '613');
+select t.reject('M6 موظف الشيفت (st2) شيفته مقفول ممنوع ينقل', t.mv('st2', 'M6', 614), 'شيفتك');
+select t.pass('M6 موظف شيفته مفتوح (st1) ينقل', t.mv('st1', 'M6', 614));
+select t.eq('M6 بقى في 614', t.f('M6', 'room'), '614');
 
 -- ---------- M7: أكواد الأفراد + قيد الحجز المزدوج + تعديل مباشر
 select t.pass('M7 حجز بفردين', t.ins('st1', 'M7', 601, 210, 212, 100, 200));
@@ -157,7 +157,8 @@ select t.eqn('M7 كودين مربوطين بالغرفة 601', (select count(*)
 select t.pass('M7 نقل', t.mv('res1', 'M7', 602));
 select t.eqn('M7 الكودين بقوا على 602', (select count(*) from booking_guests where booking_id = (select id from t.ids where name = 'M7') and room = 602), 2);
 select t.eqn('M7 مفيش كود على 601', (select count(*) from booking_guests where booking_id = (select id from t.ids where name = 'M7') and room = 601), 0);
-select t.reject('M7 كود نفس الشهر مكرر لنزيل تاني مرفوض', t.upd('res1', 'M5a', 'pax = 1, guest_codes = ''["K7A"]''::jsonb'), 'مستخدم');
+select t.pass('M7 نزيل تاني في نفس يوم الدخول (نفس الشهر دايمًا)', t.ins('st1', 'M7b', 609, 210, 212, 100, 200));
+select t.reject('M7 كود نفس الشهر مكرر لنزيل تاني مرفوض', t.upd('res1', 'M7b', 'pax = 1, guest_codes = ''["K7A"]''::jsonb'), 'مستخدم');
 select t.reject('M7 الموظف مايعدّلش الغرفة مباشرة', t.upd('st1', 'M7', 'room = 603'), 'تعديل بيانات الحجز الأساسية');
 select t.reject('M7 مدير الحجوزات: الحجز المزدوج بتعديل مباشر لسه ممنوع', t.upd('res1', 'M5c', 'room = 611'), 'bookings_no_overlap');
 
