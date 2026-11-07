@@ -157,7 +157,8 @@ select t.eqn('M7 كودين مربوطين بالغرفة 601', (select count(*)
 select t.pass('M7 نقل', t.mv('res1', 'M7', 602));
 select t.eqn('M7 الكودين بقوا على 602', (select count(*) from booking_guests where booking_id = (select id from t.ids where name = 'M7') and room = 602), 2);
 select t.eqn('M7 مفيش كود على 601', (select count(*) from booking_guests where booking_id = (select id from t.ids where name = 'M7') and room = 601), 0);
-select t.reject('M7 كود نفس الشهر مكرر لنزيل تاني مرفوض', t.upd('res1', 'M5a', 'pax = 1, guest_codes = ''["K7A"]''::jsonb'), 'مستخدم');
+select t.pass('M7 نزيل تاني في نفس يوم الدخول (نفس الشهر دايمًا)', t.ins('st1', 'M7b', 609, 210, 212, 100, 200));
+select t.reject('M7 كود نفس الشهر مكرر لنزيل تاني مرفوض', t.upd('res1', 'M7b', 'pax = 1, guest_codes = ''["K7A"]''::jsonb'), 'مستخدم');
 select t.reject('M7 الموظف مايعدّلش الغرفة مباشرة', t.upd('st1', 'M7', 'room = 603'), 'تعديل بيانات الحجز الأساسية');
 select t.reject('M7 مدير الحجوزات: الحجز المزدوج بتعديل مباشر لسه ممنوع', t.upd('res1', 'M5c', 'room = 611'), 'bookings_no_overlap');
 
