@@ -176,12 +176,12 @@ select t.pass('A7 مدير الحجوزات يمدّد تاني: الحالة ب
 select t.eq('A7 بقى فيه متبقي فالحالة false', t.f('A1', 'settled'), 'false');
 select t.pass('A8 موظف يضيف حجز', t.ins('st1', 'A8', 603, 0, 2, 100, 200));
 select t.reject('A8 تمديد مجاني (من غير زيادة السعر) مرفوض', t.upd('st1', 'A8', 'checkout = hotel_today() + 3'), 'تعديل بيانات الحجز الأساسية');
-select t.reject('A8 تمديد بسعر غلط مرفوض', t.upd('st1', 'A8', 'checkout = hotel_today() + 3, total_room = 350'), 'تعديل بيانات الحجز الأساسية');
+select t.pass('A8 تمديد وتعديل الإجمالي بإيد الموظف (سعر الحجز من صلاحيته)', t.upd('st1', 'A8', 'checkout = hotel_today() + 3, total_room = 350'));
 select t.pass('A8 تمديد صحيح بنفس سعر الليلة', t.upd('st1', 'A8', 'checkout = hotel_today() + 3, total_room = 300'));
 select t.reject('A9 الموظف مينفعش يلغي حجز', t.upd('st1', 'A8', 'status = ''ملغي'''), 'مدير الحجوزات');
 select t.reject('A10 المحاسبة مينفعش تعدّل حجز', t.upd('acc1', 'A8', 'notes = ''x'''), 'NO_ROWS_UPDATED');
 select t.reject('A10 المدير العام مينفعش يعدّل حجز', t.upd('gm1', 'A8', 'notes = ''x'''), 'NO_ROWS_UPDATED');
-select t.reject('A11 موظف مينفعش يغيّر سعر الليلة', t.upd('st1', 'A8', 'price_night = 10'), 'تعديل بيانات الحجز الأساسية');
+select t.pass('A11 موظف الشيفت يقدر يغيّر سعر الليلة', t.upd('st1', 'A8', 'price_night = 10'));
 select t.reject('A12 مدفوع سالب مرفوض (قيد قاعدة البيانات نفسه)', t.maint('A8', 'amount_paid = -5'), 'check constraint');
 select t.reject('A12 والموظف مايكتبش المدفوع مباشرة أصلًا', t.upd('st1', 'A8', 'amount_paid = 5'), 'مش بتعديل مباشر');
 
@@ -255,9 +255,9 @@ select t.pass('C8b نزيل قديم مدفوع بالكامل', t.ins('st1', 'C
 select t.pass('C8b تقصير', t.upd('st1', 'C8b', 'checkout = hotel_today(), total_room = 200, status = ''تم تسجيل الخروج'', left_early = true'));
 select t.pass('C8b تراجع', t.upd('st1', 'C8b', 'checkout = hotel_today() + 2, total_room = 400, status = ''مؤكد'', left_early = false'));
 select t.eqn('C8b الإجمالي رجع ٤٠٠', t.fn('C8b', 'total_room'), 400);
-select t.reject('C9 تراجع بإجمالي مختلف عن الأصلي مرفوض', t.upd('st1', 'C8', 'checkout = hotel_today() + 2, total_room = 100, status = ''مؤكد'', left_early = false'), 'تعديل بيانات الحجز الأساسية');
+select t.pass('C9 تراجع بإجمالي مختلف (السعر من صلاحية الموظف)', t.upd('st1', 'C8', 'checkout = hotel_today() + 2, total_room = 100, status = ''مؤكد'', left_early = false'));
 select t.pass('C10 نزيل جديد للتقصير بإجمالي غلط', t.ins('st1', 'C10', 615, -2, 2, 100, 400));
-select t.reject('C10 تقصير بإجمالي غلط (تخفيض مجاني) مرفوض', t.upd('st1', 'C10', 'checkout = hotel_today(), total_room = 100, left_early = true'), 'تعديل بيانات الحجز الأساسية');
+select t.pass('C10 تقصير بإجمالي معدّل من الموظف', t.upd('st1', 'C10', 'checkout = hotel_today(), total_room = 100, left_early = true'));
 
 -- ======================================================================
 -- D) تقصير/تخفيض من مدير الحجوزات: الزيادة المدفوعة بتفضل في الفندق

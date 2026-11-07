@@ -159,7 +159,7 @@ test.describe("الموظفين مشتركين: اختيار فندق + شيفت
 });
 
 test.describe("نقل النزيل وإضافة الحجز", () => {
-  test("موظف الشيفت مفيش عنده زرار نقل نزيل، ومدير الحجوزات عنده", async ({ page, env }) => {
+  test("موظف الشيفت (في فندق شيفته) ومدير الحجوزات عندهم زرار نقل نزيل", async ({ page, env }) => {
     await users(env);
     await env.seedBooking({ room: 603, guest: "Mv Guest", start: -1, nights: 3, price: 100 });
     await env.seedShift("ahmed", { hotel: 1 });
@@ -168,16 +168,31 @@ test.describe("نقل النزيل وإضافة الحجز", () => {
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 603);
     await expect(roomCard(page)).toContainText("Mv Guest");
-    await expect(roomCard(page).getByTestId("move-open")).toHaveCount(0);
-    const direct = await env.api("ahmed", "POST", "/rest/v1/rpc/move_booking_room", { p_booking: (await env.q("select id from bookings where guest_name = 'Mv Guest'"))[0].id, p_room: 604 });
-    expect(direct.status).toBeGreaterThanOrEqual(400);
-    expect(JSON.stringify(direct.body)).toContain("مدير الحجوزات");
+    await expect(roomCard(page).getByTestId("move-open")).toBeVisible();
     const p2 = await env.newSession();
     await p2.goto("/");
     await login(p2, "rawan");
     await goTab(p2, "لوحة الغرف");
     await openRoom(p2, 603);
     await expect(roomCard(p2).getByTestId("move-open")).toBeVisible();
+  });
+
+  test("موظف الشيفت ينقل النزيل ويعدّل سعر الحجز من الحجوزات", async ({ page, env }) => {
+    await users(env);
+    await env.seedBooking({ room: 603, guest: "Pr Guest", start: 1, nights: 2, price: 100, total: 200 });
+    await env.seedShift("ahmed", { hotel: 1 });
+    await page.goto("/");
+    await login(page, "ahmed");
+    await goTab(page, "الحجوزات");
+    await page.getByTestId("edit-price").first().click();
+    const price = page.locator('input[type="number"]:not([disabled])').first();
+    await expect(price).toBeVisible();
+    const bk = (await env.q("select id from bookings where guest_name = 'Pr Guest'"))[0].id;
+    const direct = await env.api("ahmed", "PATCH", "/rest/v1/bookings?id=eq." + bk, { price_night: 150, total_room: 300 });
+    expect(direct.status).toBeLessThan(300);
+    expect((await env.q("select price_night::int p from bookings where id = '" + bk + "'"))[0].p).toBe(150);
+    const mv = await env.api("ahmed", "POST", "/rest/v1/rpc/move_booking_room", { p_booking: bk, p_room: 604 });
+    expect(mv.status).toBeLessThan(300);
   });
 
   test("موظف شيفته في Calma مايقدرش يضيف حجز في Revento حتى بطلب مباشر على الـ API", async ({ env }) => {

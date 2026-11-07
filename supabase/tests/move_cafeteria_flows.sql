@@ -146,9 +146,9 @@ select t.pass('M6 مدير الحجوزات ينقل', t.mv('res1', 'M6', 613));
 select t.reject('M6 المحاسبة مرفوضة', t.mv('acc1', 'M6', 614), 'صلاحية');
 select t.reject('M6 حجز غير موجود', t.try('res1', $q$select move_booking_room(gen_random_uuid(), 601)$q$), 'مش موجود');
 select t.pass('M6 تجهيز: قفل شيفتات st2', t.maint_sql($q$update shift_records set closed = true where staff_username = 'st2' and closed = false$q$));
-select t.reject('M6 موظف الشيفت (st2) ممنوع ينقل', t.mv('st2', 'M6', 614), 'مدير الحجوزات');
-select t.reject('M6 حتى موظف شيفته مفتوح (st1) ممنوع ينقل', t.mv('st1', 'M6', 614), 'مدير الحجوزات');
-select t.eq('M6 لسه في 613', t.f('M6', 'room'), '613');
+select t.reject('M6 موظف الشيفت (st2) شيفته مقفول ممنوع ينقل', t.mv('st2', 'M6', 614), 'شيفتك');
+select t.pass('M6 موظف شيفته مفتوح (st1) ينقل', t.mv('st1', 'M6', 614));
+select t.eq('M6 بقى في 614', t.f('M6', 'room'), '614');
 
 -- ---------- M7: أكواد الأفراد + قيد الحجز المزدوج + تعديل مباشر
 select t.pass('M7 حجز بفردين', t.ins('st1', 'M7', 601, 210, 212, 100, 200));

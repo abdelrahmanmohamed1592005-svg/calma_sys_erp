@@ -58,9 +58,10 @@ select t.pass('H13 hs2 يضيف حجز في Revento (فندقه) مسموح', t.
 select t.reject('H13 st2 (شيفته Calma) يضيف حجز في Revento مرفوض', t.ins('st2', 'H13e', 218, 610, 611, 100, 100), 'فندق مش فندق شيفتك');
 select t.pass('H13 مدير الحجوزات يضيف في أي فندق', t.ins('res1', 'H13f', 405, 600, 601, 100, 100));
 select t.reject('H14 hs1 مايعدّلش حجز Revento', t.upd('hs1', 'H13d', 'guest_name = guest_name'), 'فندق مش فندق شيفتك');
--- نقل النزيل: مدير الحجوزات بس
-select t.reject('H15 موظف شيفته مفتوح ما بيقدرش ينقل نزيل', t.try('hs2', format($q$select move_booking_room(%L, 217)$q$, (select id from t.ids where name = 'H13d'))), 'مدير الحجوزات');
-select t.pass('H15 مدير الحجوزات ينقل جوه نفس الفندق', t.try('res1', format($q$select move_booking_room(%L, 217)$q$, (select id from t.ids where name = 'H13d'))));
+-- نقل النزيل: موظف الشيفت (فندق شيفته) ومدير الحجوزات
+select t.reject('H15 موظف شيفته في فندق تاني ما بيقدرش ينقل نزيل', t.try('hs1', format($q$select move_booking_room(%L, 217)$q$, (select id from t.ids where name = 'H13d'))), 'فندق');
+select t.pass('H15 موظف شيفته مفتوح في نفس الفندق ينقل نزيل', t.try('hs2', format($q$select move_booking_room(%L, 217)$q$, (select id from t.ids where name = 'H13d'))));
+select t.pass('H15 مدير الحجوزات ينقل جوه نفس الفندق', t.try('res1', format($q$select move_booking_room(%L, 216)$q$, (select id from t.ids where name = 'H13d'))));
 
 -- أكواد الحجز لكل فندق: بادئة الفندق + رقم متسلسل لكل فندق لوحده
 select t.eq('H16 كود حجز Calma بيبدأ بـ B', (select left(code, 1) from bookings where guest_name = 'H13c'), 'B');
