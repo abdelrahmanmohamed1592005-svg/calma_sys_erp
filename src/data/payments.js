@@ -28,6 +28,10 @@ export const recordBookingPayment = ({ bookingId, amount, method, details, note,
 export const recordBookingPaymentOther = ({ bookingId, amount, currency, method, details, note, expectedUpdatedAt }) =>
   rpc("record_booking_payment_other", { p_booking: bookingId, p_amount: amount, p_currency: currency, p_method: method, p_details: details || {}, p_expected: expectedUpdatedAt || null, p_note: note || "تحصيل" });
 
+/* دفعة بعملة غير عملة الحجز بسعر صرف: rate = كام وحدة من عملة الدفعة في كل 1 من عملة الحجز */
+export const recordBookingPaymentFx = ({ bookingId, amount, currency, rate, method, details, note, expectedUpdatedAt }) =>
+  rpc("record_booking_payment_fx", { p_booking: bookingId, p_amount: amount, p_currency: currency, p_rate: rate, p_method: method, p_details: details || {}, p_expected: expectedUpdatedAt || null, p_note: note || "تحصيل" });
+
 /* نقل النزيل (الحجز كله) لغرفة تانية فاضية في نفس التواريخ */
 export const moveBookingRoom = ({ bookingId, room, expectedUpdatedAt }) =>
   rpc("move_booking_room", { p_booking: bookingId, p_room: Number(room), p_expected: expectedUpdatedAt || null });

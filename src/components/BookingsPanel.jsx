@@ -8,7 +8,7 @@ import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, ea
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
 import { getPaymentsIndex } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentOther } from "../data/payments";
+import { recordBookingPayment, recordBookingPaymentOther, recordBookingPaymentFx } from "../data/payments";
 import { guarded } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
 
@@ -25,7 +25,7 @@ function StepHead({ n, title, hint, done, optional }) {
 function emptyBooking() {
   return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, guestCodes: [""], checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", notes: "", imported: false, needsRoomReview: false,
     // دفعة مقدّمة (اختيارية) وقت إضافة الحجز - كل دفعة ليها وسيلتها وتفاصيلها (آخر ٤ أرقام الفيزا / اسم ورقم المحوِّل) وبتتسجّل في اليومية بيهم
-    payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } };
+    payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() }, payMore: [] };
 }
 
 /* تسجيل دفعة (عربون/سداد) على حجز موجود من قايمة الحجوزات - لموظف الشيفت: قبل كده التحصيل كان من لوحة الغرف بس (حجوزات اليوم وبعده بيومين)،
@@ -134,7 +134,8 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   const grandTotal = form ? roomTotalNow + (Number(form.extras.laundry) || 0) + (Number(form.extras.cafeteria) || 0) + (Number(form.extras.tours) || 0) + (Number(form.extras.pickup) || 0) + earlyFee : 0;
   // اللي اتدفع قبل كده (حجز موجود) + الدفعة المقدّمة دلوقتي (حجز جديد بس)
   const paidBefore = isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : 0;
-  const advanceNow = form && !isExistingBooking ? Math.max(0, Number(form.payNow?.amount) || 0) : 0;
+  const extraLineCovered = (l) => { const amt = Number(l.amount) || 0; if (amt <= 0) return 0; if (!form || l.currency === form.currency) return amt; const r = Number(l.rate); return r > 0 ? Math.round((amt / r) * 100) / 100 : 0; };
+  const advanceNow = form && !isExistingBooking ? Math.max(0, Number(form.payNow?.amount) || 0) + (form.payMore || []).reduce((t, l) => t + extraLineCovered(l), 0) : 0;
   const balanceDue = form ? Math.max(0, grandTotal - paidBefore - advanceNow) : 0;
   // كل الحجوزات الفعلية المتعارضة مع الغرفة/التواريخ دي، والخطة اللي هتتنفذ
   // لو تأكّد "تسكين مكرر" - بتتحسب لحظيًا عشان الموظف يشوف قبل ما يحفظ إيه اللي
@@ -218,6 +219,14 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       const detailsErr = validatePaymentDetailsFor(payNow.method, payNow.details);
       if (detailsErr) { showToast(detailsErr); return; }
     }
+    // دفعات إضافية (وسيلة أو عملة تانية): كل سطر بوسيلته وتفاصيله، والعملة التانية بسعر صرف بيتكتب مع الدفعة
+    const moreLines = !isExistingBooking && !collectionLocked && !online ? (form.payMore || []).filter((l) => Number(l.amount) > 0) : [];
+    for (const l of moreLines) {
+      if (!myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - ماينفعش تسجّل دفعة مقدّمة"); return; }
+      const e2 = validatePaymentDetailsFor(l.method, l.details);
+      if (e2) { showToast(e2); return; }
+      if (l.currency !== form.currency && !(Number(l.rate) > 0)) { showToast(`اكتب سعر الصرف لدفعة ${l.currency} (كام ${l.currency} في كل 1 ${form.currency})`); return; }
+    }
     const payMethod = advance > 0 ? payNow.method : (originalBooking?.paymentMethod || "كاش");
     // أونلاين: المنصة دفعت سعر الغرفة اللي اتحجز (onlineRoomAmount). لو الحجز كان أونلاين واتمدّد في الفندق بعد كده
     // (نفس الدخول وخروج أبعد) المبلغ اللي اتدفع أونلاين بيفضل زي ما هو والليالي الزيادة بتتحصّل في الفندق.
@@ -232,7 +241,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       pax: Math.max(1, Math.floor(Number(form.pax) || 1)), priceNight: priceNightNum, totalRoom: totalRoomNum, amountPaid: isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : 0,
       extras: clampedExtras, earlyCheckin: { ...clampedEarlyCheckin, note: sanitizeText(clampedEarlyCheckin.note, 300) }, paymentMethod: payMethod, paymentDetails: cleanPaymentDetails, needsRoomReview: false, approvalStatus: "approved",
     };
-    delete cleaned.payNow;
+    delete cleaned.payNow; delete cleaned.payMore;
     if (!cleaned.guestName) { showToast("لازم تحدد الغرفة واسم النزيل"); return; }
     cleaned.guestCodes = normalizeGuestCodes(Array.from({ length: cleaned.pax }, (_, i) => sanitizeText(form.guestCodes?.[i] ?? "", 40)), cleaned.pax);
     const monthClash = findGuestCodeConflict(bookings, cleaned.guestCodes, cleaned.checkin, cleaned.id);
@@ -246,7 +255,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: lockedRepricedTotal, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin?.applied ? originalBooking.earlyCheckin : cleaned.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails };
     }
     // الدفعة المقدّمة ماتزيدش عن اللي الفندق مطلوب يحصّله
-    if (advance > 0 && advance > bookingHotelTotal(cleaned)) { showToast(`المدفوع (${fmt(advance)}) أكبر من الإجمالي (${fmt(bookingHotelTotal(cleaned))} ${cleaned.currency})`); return; }
+    if ((advance + moreLines.reduce((t, l) => t + extraLineCovered(l), 0)) > bookingHotelTotal(cleaned) + 0.01) { showToast(`المدفوع (${fmt(advance + moreLines.reduce((t, l) => t + extraLineCovered(l), 0))}) أكبر من الإجمالي (${fmt(bookingHotelTotal(cleaned))} ${cleaned.currency})`); return; }
     // "تسكين مكرر" (الخطة اتأكدت فوق إنها سليمة): لكل حجز قديم متعارض -
     // - بدأ قبل الجديد: نقصّر تاريخ خروجه لتاريخ دخول الجديد ونعلّمه "غادر مبكرًا"
     //   (مش "ملغي"؛ بيتحاسب على الليالي اللي قعدها، وأي زيادة مدفوعة بتفضل في الفندق).
@@ -299,6 +308,15 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       if (payRes.error) { payFailed = `⚠ الحجز اتحفظ لكن الدفعة (${fmt(advance)} ${cleaned.currency} - ${payMethod}) ماتسجّلتش: ${payRes.error} - سجّلها من زرار "تسجيل دفعة" على الحجز في القايمة`; }
       else if (onRefresh) await onRefresh();
     }
+    for (const l of moreLines) {
+      const same = l.currency === cleaned.currency;
+      const det = cleanPaymentDetailsFor(l.method, l.details);
+      const r2 = same
+        ? await recordBookingPayment({ bookingId: savedId, amount: Number(l.amount), method: l.method, details: det, note: "تحصيل حجز جديد" })
+        : await recordBookingPaymentFx({ bookingId: savedId, amount: Number(l.amount), currency: l.currency, rate: Number(l.rate), method: l.method, details: det, note: "تحصيل حجز جديد" });
+      if (r2.error) { payFailed += `${payFailed ? " | " : "⚠ "}الدفعة (${fmt(Number(l.amount))} ${l.currency} - ${l.method}) ماتسجّلتش: ${r2.error}`; }
+    }
+    if (moreLines.length && onRefresh) await onRefresh();
     refundRequests.forEach((c) => { note += ` — ${c.guestName} غادر مبكرًا: اتحاسب على الليالي اللي قعدها، والـ ${fmt((Number(c.amountPaid) || 0) - bookingGrandTotal(c))} ${c.currency} الزيادة المدفوعة فضلت في الفندق`; });
     const paidAfter = Number(cleaned.amountPaid) || 0;
     if (!cleaned.paymentDetails?.onlinePaid && isExistingBooking && paidAfter > bookingGrandTotal(cleaned) && cleaned.status !== "ملغي") note += ` — المدفوع (${fmt(paidAfter)}) بقى أكبر من الإجمالي الجديد بـ ${fmt(paidAfter - bookingGrandTotal(cleaned))} ${cleaned.currency} - الزيادة بتفضل في الفندق`;
@@ -477,6 +495,21 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                     <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>طريقة الدفع</label><select className="cx-select" data-testid="advance-method" value={form.payNow?.method || "كاش"} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, method: e.target.value, details: emptyPaymentDetails() } })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
                     <div><PaymentDetailsInline compact={false} testid="advance" method={form.payNow?.method || "كاش"} details={form.payNow?.details} onChange={(d) => setForm({ ...form, payNow: { ...form.payNow, details: d } })} /></div>
                   </div>
+                  {(form.payMore || []).map((l, i) => {
+                    const upd = (patch) => setForm({ ...form, payMore: form.payMore.map((x, j) => j === i ? { ...x, ...patch } : x) });
+                    const other = l.currency !== form.currency;
+                    return (
+                      <div key={i} data-testid={"advance-extra-" + i} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, alignItems: "start", marginTop: 8, paddingTop: 8, borderTop: "1px dotted var(--hair)" }}>
+                        <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ</label><input className="cx-input" data-testid={"advance-extra-amount-" + i} type="number" min="0" value={l.amount} onChange={(e) => upd({ amount: e.target.value })} /></div>
+                        <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>العملة</label><select className="cx-select" data-testid={"advance-extra-currency-" + i} value={l.currency} onChange={(e) => upd({ currency: e.target.value, rate: "" })}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+                        {other && <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>سعر الصرف ({l.currency} لكل 1 {form.currency})</label><input className="cx-input" data-testid={"advance-extra-rate-" + i} type="number" min="0" value={l.rate} onChange={(e) => upd({ rate: e.target.value })} />{extraLineCovered(l) > 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>= {fmt(extraLineCovered(l))} {form.currency}</div>}</div>}
+                        <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>طريقة الدفع</label><select className="cx-select" data-testid={"advance-extra-method-" + i} value={l.method} onChange={(e) => upd({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
+                        <div><PaymentDetailsInline compact={false} testid={"advance-extra-" + i} method={l.method} details={l.details} onChange={(d) => upd({ details: d })} /></div>
+                        <div><button type="button" className="cx-btn cx-btn-outline" style={{ marginTop: 18 }} onClick={() => setForm({ ...form, payMore: form.payMore.filter((_, j) => j !== i) })}>شيل</button></div>
+                      </div>
+                    );
+                  })}
+                  <button type="button" className="cx-btn cx-btn-outline" data-testid="advance-add-line" style={{ marginTop: 8, fontSize: 13 }} onClick={() => setForm({ ...form, payMore: [...(form.payMore || []), { amount: "", currency: form.currency, rate: "", method: "كاش", details: emptyPaymentDetails() }] })}><Plus size={13} /> دفعة تانية بوسيلة أو عملة مختلفة</button>
                 </div>
               )}
               {collectionLocked && <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Lock size={11} /> تسجيل التحصيل (كاش / فيزا / تحويل) من صلاحية موظف الشيفت بس - إنت بتحدد سعر الحجز، وحالة الدفع بتتحدّث تلقائيًا أول ما يتحصّل.</div>}

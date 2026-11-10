@@ -347,7 +347,7 @@ select t.eq('G3 لسه مش مدفوع بالكامل (الدولار لسه)', 
 select t.pass('G3 الدولار بالدفع العادي', t.maint('G1', 'amount_paid = 120'));
 select t.eq('G3 مدفوع بالكامل لما كل العملات اتغطّت', t.f('G1', 'settled'), 'true');
 select t.reject('G3 حجز عليه مدفوع بالجنيه مايتمسحش', t.dml('res1', $q$delete from bookings where guest_name = 'G1'$q$), 'حركة فلوس');
-select t.reject('G3 دالة سعر الصرف القديمة اتقفلت', t.try('st1', $q$select record_booking_payment_fx((select id from t.ids where name = 'G1'), 10, 'EUR', 1, 'كاش')$q$), 'permission denied');
+-- G3: دفع بسعر صرف اتفتح تاني في قسم 44 (اختبارات S4)
 
 select t.pass('G4 حجز تاني في غرفة 602', t.ins('st1', 'G4', 602, 60, 63, 100, 300));
 select t.pass('G4 حجز على غرفة 603 بعد يومين', t.ins('st1', 'G4x', 603, 62, 64, 100, 200));

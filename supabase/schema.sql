@@ -3446,7 +3446,136 @@ revoke insert, delete on rooms from authenticated;
 revoke all on function can_work_in_hotel(integer) from public, anon;
 grant execute on function can_work_in_hotel(integer) to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 43 $$;
+-- --------------------------------------------------------------------------
+-- 44) نوفمبر ٢٠٢٦:
+--   (أ) شيفت مشترك: صاحب الشيفت (أو المدير العام/مدير الحجوزات) يضيف زميل/زميلين على نفس اليومية والعهدة (helpers).
+--       الزميل بيشتغل على نفس اليومية بنفس صلاحيات صاحب الشيفت (تحصيل/حجز/نقل/تعديل اليومية/قفل)، من غير ما يغيّر صاحب الشيفت.
+--   (ب) دفع حجز بعملة تانية بسعر صرف وقت إضافة الحجز (record_booking_payment_fx اتفتحت تاني - الدفع بعملة الحجز نفسها مابيحتاجش سعر).
+-- --------------------------------------------------------------------------
+alter table shift_records add column if not exists helpers text[] not null default '{}';
+
+create or replace function is_shift_member(p_staff text, p_helpers text[])
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from profiles p where p.id = auth.uid() and p.active = true
+                 and (p.username = p_staff or p.username = any(coalesce(p_helpers, '{}'))))
+$$;
+grant execute on function is_shift_member(text, text[]) to authenticated;
+
+drop policy if exists "shifts update" on shift_records;
+create policy "shifts update" on shift_records for update using (
+  (is_staff() and (is_shift_member(staff_username, helpers)
+                   or (closed = false and is_next_shift_claimant(date, shift_key, hotel_id))))
+  or (closed = true and (can_manage_financials() or is_gm_or_reservations()))
+) with check (
+  (is_staff() and (is_shift_member(staff_username, helpers)
+                   or is_next_shift_claimant(date, shift_key, hotel_id)))
+  or can_manage_financials() or is_gm_or_reservations()
+);
+
+create or replace function shift_records_claimant_guard()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare me text; skip text[] := array['closed', 'closed_by', 'closed_at', 'updated_at', 'total_expenses', 'total_collections', 'closing_cash', 'cash_collections', 'by_method_currency', 'by_category', 'method_closing'];
+        member boolean;
+begin
+  if auth.uid() is null or is_gm_or_reservations() or can_manage_financials() then return new; end if;
+  select username into me from profiles where id = auth.uid();
+  member := old.staff_username is not distinct from me or me = any(coalesce(old.helpers, '{}'));
+  if new.helpers is distinct from old.helpers and coalesce(current_setting('calma.helpers_rpc', true), '') <> '1' then
+    raise exception 'الزملاء على الشيفت بيتحدّدوا من زرار "زميل معايا" بس';
+  end if;
+  if not member then
+    if old.closed or not new.closed then
+      raise exception 'مينفعش تعدّل يومية شيفت موظف تاني - تقدر تقفل الشيفت اللي قبلك بس لما تبدأ شيفتك';
+    end if;
+    if (to_jsonb(new) - skip) is distinct from (to_jsonb(old) - skip) then
+      raise exception 'إقفال شيفت موظف تاني مايغيّرش صفوفه ولا أرصدته - الإقفال بس';
+    end if;
+  end if;
+  if new.staff_name is distinct from old.staff_name then
+    raise exception 'مينفعش تغيّر اسم صاحب الشيفت';
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function calma_my_open_shift() returns shift_records language plpgsql security definer set search_path = public as $$
+declare uname text; sr shift_records;
+begin
+  select username into uname from profiles where id = auth.uid();
+  select * into sr from shift_records where (staff_username = uname or uname = any(coalesce(helpers, '{}'))) and closed = false and date >= hotel_today() - 1
+    order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc limit 1 for update;
+  if not found then raise exception 'مفيش شيفتك مفتوح - التحصيل لازم يتسجّل في يومية شيفتك'; end if;
+  return sr;
+end;
+$$;
+revoke all on function calma_my_open_shift() from public, anon, authenticated;
+
+create or replace function bookings_set_hotel()
+returns trigger language plpgsql as $$
+declare h integer;
+begin
+  select hotel_id into h from rooms where number = new.room;
+  if h is null then return new; end if;
+  if TG_OP = 'UPDATE' and old.hotel_id is distinct from h then
+    raise exception 'مينفعش تنقل حجز لغرفة في فندق تاني - ألغي الحجز واعمل حجز جديد في الفندق التاني';
+  end if;
+  new.hotel_id := h;
+  if auth.uid() is not null and is_staff() then
+    if not exists (
+      select 1 from shift_claims c
+      where c.hotel_id = h and c.date between hotel_today() - 1 and hotel_today()
+        and c.username = (select username from profiles where id = auth.uid())
+    ) and not exists (
+      select 1 from shift_records r
+      where r.hotel_id = h and r.date between hotel_today() - 1 and hotel_today() and r.closed = false
+        and (select username from profiles where id = auth.uid()) = any(coalesce(r.helpers, '{}'))
+    ) then
+      raise exception 'مينفعش تضيف أو تعدّل حجز في فندق مش فندق شيفتك - اختار شيفتك في الفندق ده الأول';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+-- إضافة/شيل زملاء على شيفت (٣ بالكتير): صاحب الشيفت أو المدير العام أو مدير الحجوزات
+create or replace function set_shift_helpers(p_hotel integer, p_date date, p_key text, p_helpers jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare me text; sr shift_records; clean text[] := '{}'; u text;
+begin
+  select username into me from profiles where id = auth.uid() and active = true;
+  if me is null then raise exception 'لازم تكون مسجّل دخول'; end if;
+  select * into sr from shift_records where hotel_id = p_hotel and date = p_date and shift_key = p_key for update;
+  if not found then raise exception 'الشيفت ده مفيهوش يومية - صاحب الشيفت لازم يبدأه الأول'; end if;
+  if not (sr.staff_username = me or is_gm_or_reservations()) then raise exception 'إضافة زميل على الشيفت من صاحب الشيفت أو المدير العام أو مدير الحجوزات'; end if;
+  if sr.closed then raise exception 'الشيفت مقفول'; end if;
+  foreach u in array coalesce((select array_agg(x) from jsonb_array_elements_text(case when jsonb_typeof(p_helpers) = 'array' then p_helpers else '[]'::jsonb end) x), '{}') loop
+    u := lower(btrim(u));
+    if u = '' or u = sr.staff_username or u = any(clean) then continue; end if;
+    if not exists (select 1 from profiles where username = u and role = 'staff' and active = true) then raise exception 'المستخدم % مش موظف شيفت شغّال', u; end if;
+    clean := clean || u;
+  end loop;
+  if array_length(clean, 1) > 3 then raise exception 'أقصى عدد زملاء على الشيفت الواحد ٣'; end if;
+  perform set_config('calma.helpers_rpc', '1', true);
+  update shift_records set helpers = clean where hotel_id = p_hotel and date = p_date and shift_key = p_key;
+  perform set_config('calma.helpers_rpc', '', true);
+  return jsonb_build_object('helpers', to_jsonb(clean));
+end;
+$$;
+revoke all on function set_shift_helpers(integer, date, text, jsonb) from public, anon;
+grant execute on function set_shift_helpers(integer, date, text, jsonb) to authenticated;
+
+-- أسماء موظفي الشيفت الشغّالين (للاختيار كزميل) - من غير بيانات حساسة
+create or replace function list_shift_staff()
+returns jsonb language sql security definer stable set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('username', p.username, 'name', p.name) order by p.name), '[]'::jsonb)
+  from profiles p where p.role = 'staff' and p.active = true and auth.uid() is not null
+$$;
+revoke all on function list_shift_staff() from public, anon;
+grant execute on function list_shift_staff() to authenticated;
+
+grant execute on function record_booking_payment_fx(uuid, numeric, text, numeric, text, jsonb, timestamptz, text) to authenticated;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 44 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart
