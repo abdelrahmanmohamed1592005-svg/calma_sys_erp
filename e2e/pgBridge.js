@@ -63,9 +63,9 @@ export function makeBridge(pool, { log } = {}) {
     const where = []; const vals = [];
     for (const [k, v] of params.entries()) {
       if (["select", "order", "limit", "offset", "on_conflict", "columns"].includes(k)) continue;
-      const m = v.match(/^(eq|gte|lte|gt|lt|neq)\.(.*)$/);
+      const m = v.match(/^(eq|gte|lte|gt|lt|neq|cs)\.(.*)$/);
       if (!m) continue;
-      const op = { eq: "=", gte: ">=", lte: "<=", gt: ">", lt: "<", neq: "<>" }[m[1]];
+      const op = { eq: "=", gte: ">=", lte: "<=", gt: ">", lt: "<", neq: "<>", cs: "@>" }[m[1]];
       vals.push(m[2]);
       // من غير cast: Postgres بيستنتج نوع المعامل من العمود (تاريخ/وقت/رقم/uuid)
       where.push(`${ident(k)} ${op} $${startIdx + vals.length - 1}`);

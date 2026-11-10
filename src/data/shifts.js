@@ -13,7 +13,7 @@ function oneHotel(hotelId) {
 
 function shiftFromRow(r) {
   return {
-    hotelId: r.hotel_id ?? 1, date: r.date, shiftKey: r.shift_key, staffName: r.staff_name, staffUsername: r.staff_username,
+    hotelId: r.hotel_id ?? 1, date: r.date, shiftKey: r.shift_key, staffName: r.staff_name, staffUsername: r.staff_username, helpers: r.helpers || [],
     handover: r.handover || { EGP: 0, USD: 0 }, methodHandover: r.method_handover || {}, rows: r.rows || [], cafeteria: r.cafeteria || {}, hotelRows: r.hotel_rows || [], cafeteriaRows: r.cafeteria_rows || [],
     bookingCollections: r.booking_collections || [],
     shiftNotes: r.shift_notes || "", flagged: !!r.flagged, closed: !!r.closed, closedBy: r.closed_by,
@@ -210,5 +210,22 @@ export async function resolveMyShift(username, now = new Date()) {
 export async function getMyClaims(date, username) {
   const { data, error } = await supabase.from("shift_claims").select("hotel_id,shift_key").eq("date", date).eq("username", username);
   if (error || !data) return [];
-  return data.map((c) => ({ hotelId: c.hotel_id ?? 1, shiftKey: c.shift_key }));
+  const own = data.map((c) => ({ hotelId: c.hotel_id ?? 1, shiftKey: c.shift_key }));
+  // شيفت مشترك: يوميات مفتوحة أنا زميل فيها (صاحب الشيفت ضافني)
+  const { data: hs } = await supabase.from("shift_records").select("hotel_id,shift_key").eq("date", date).eq("closed", false).contains("helpers", [username]);
+  for (const r of hs || []) if (!own.some((c) => c.hotelId === (r.hotel_id ?? 1) && c.shiftKey === r.shift_key)) own.push({ hotelId: r.hotel_id ?? 1, shiftKey: r.shift_key, helper: true });
+  return own;
+}
+
+
+/* زملاء الشيفت المشترك: صاحب الشيفت (أو المدير العام/مدير الحجوزات) يحدد لحد ٣ موظفين يشتغلوا معاه على نفس اليومية */
+export async function setShiftHelpers(hotelId, date, shiftKey, helpers) {
+  const { data, error } = await supabase.rpc("set_shift_helpers", { p_hotel: hotelId, p_date: date, p_key: shiftKey, p_helpers: helpers });
+  if (error) return { error: error.message };
+  return { data };
+}
+export async function listShiftStaff() {
+  const { data, error } = await supabase.rpc("list_shift_staff");
+  if (error || !data) return [];
+  return Array.isArray(data) ? data : [data];
 }

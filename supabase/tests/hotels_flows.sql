@@ -128,3 +128,23 @@ select t.reject('H23 مدير الحجوزات مايضيفش غرفة مباش�
 select t.reject('H23 مدير الحجوزات مايمسحش غرفة', t.try('res1', $q$delete from rooms where number = 9001$q$), 'permission denied');
 select t.pass('H23 تعديل اسم غرفة لسه شغال لمدير الحجوزات', t.try('res1', $q$update rooms set name = 'اسم جديد' where number = 602$q$));
 select t.eq('H23 الاسم اتغيّر', (select name from rooms where number = 602), 'اسم جديد');
+
+-- ======================================================================
+-- S) شيفت مشترك (زميل على نفس اليومية) + دفع بعملة تانية بسعر صرف
+-- hs1 صاحب شيفت المساء في Calma؛ hs3 هيبقى زميله.
+-- ======================================================================
+insert into auth.users(id, email) select gen_random_uuid(), u || '@calma.internal' from unnest(array['hs3']) u;
+insert into profiles(id, username, name, role)
+select (select id from auth.users where email = u || '@calma.internal'), u, u, 'staff' from unnest(array['hs3']) u;
+select t.reject('S1 موظف من غير شيفت ما يقدرش يحصّل', t.pay('hs3', 'H3c', 10), 'مفيش شيفتك');
+select t.reject('S1 موظف مش صاحب الشيفت ما يضيفش زميل', t.try('hs3', format($q$select set_shift_helpers(1, %L, 'evening', '["hs3"]'::jsonb)$q$, hotel_today())), 'صاحب الشيفت');
+select t.reject('S1 زميل مش موظف شيفت مرفوض', t.try('hs1', format($q$select set_shift_helpers(1, %L, 'evening', '["gm1"]'::jsonb)$q$, hotel_today())), 'مش موظف');
+select t.reject('S1 أكتر من ٣ زملاء مرفوض', t.try('hs1', format($q$select set_shift_helpers(1, %L, 'evening', '["hs2","hs3","st1","st2"]'::jsonb)$q$, hotel_today())), 'أقصى');
+select t.pass('S2 صاحب الشيفت يضيف زميل', t.try('hs1', format($q$select set_shift_helpers(1, %L, 'evening', '["hs3"]'::jsonb)$q$, hotel_today())));
+select t.pass('S2 الزميل يحصّل على يومية الشيفت المشترك', t.pay('hs3', 'H3c', 10));
+select t.eqn('S2 التحصيل اتسجّل في يومية صاحب الشيفت (Calma مساء)', (select count(*) from shift_records, jsonb_array_elements(rows) r where hotel_id = 1 and date = hotel_today() and shift_key = 'evening' and staff_username = 'hs1' and (r ->> 'collectionAmt')::numeric > 0), 1);
+select t.reject('S2 الزميل ما يغيّرش قايمة الزملاء مباشرة', t.dml('hs3', format($q$update shift_records set helpers = '{}' where hotel_id = 1 and date = %L and shift_key = 'evening'$q$, hotel_today())), 'زميل معايا');
+select t.reject('S2 الزميل ما يغيّرش صاحب الشيفت', t.dml('hs3', format($q$update shift_records set staff_name = 'x' where hotel_id = 1 and date = %L and shift_key = 'evening'$q$, hotel_today())), 'اسم صاحب الشيفت');
+select t.reject('S3 موظف تاني مش زميل ما يحصّلش على اليومية دي', t.pay('hs2', 'H3c', 10), 'شيفتك');
+select t.pass('S4 دفع بعملة تانية بسعر صرف (٥٠ جنيه = ١ دولار)', t.try('hs1', format($q$select record_booking_payment_fx(%L, 50, 'EGP', 50, 'كاش')$q$, (select id from t.ids where name = 'H3c'))));
+select t.reject('S4 الدفع بنفس عملة الحجز بسعر صرف مرفوض', t.try('hs1', format($q$select record_booking_payment_fx(%L, 5, (select currency from bookings where id = %L), 1, 'كاش')$q$, (select id from t.ids where name = 'H3c'), (select id from t.ids where name = 'H3c'))), 'نفس عملة');

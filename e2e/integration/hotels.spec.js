@@ -1,7 +1,7 @@
 // الفنادق المتعددة (Calma + Revento + Park Plaza + The Location): كل فندق بروفايل مستقل - غرفه، حجوزاته، يوميته، تحصيله، تقاريره.
 // الموظفين مشتركين (بيختاروا فندق + شيفت كل يوم) والمدير العام بيشوف فندق فندق + تقرير مجمّع للجروب H&S.
 import { test, expect } from "../fixtures";
-import { login, goTab, toast, boardTile, roomCard, openRoom, payOnBoard, addBooking, claimShift, showAllRooms, waitLedgerSaved, cairoDate, myShiftKey, shiftDay, SHIFT_LABEL, digits } from "../ui";
+import { field, login, goTab, toast, boardTile, roomCard, openRoom, payOnBoard, addBooking, claimShift, showAllRooms, waitLedgerSaved, cairoDate, myShiftKey, shiftDay, SHIFT_LABEL, digits } from "../ui";
 
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
@@ -193,6 +193,55 @@ test.describe("نقل النزيل وإضافة الحجز", () => {
     expect((await env.q("select price_night::int p from bookings where id = '" + bk + "'"))[0].p).toBe(150);
     const mv = await env.api("ahmed", "POST", "/rest/v1/rpc/move_booking_room", { p_booking: bk, p_room: 604 });
     expect(mv.status).toBeLessThan(300);
+  });
+
+  test("حجز جديد بدفعة مقسّمة: ٦٠ دولار كاش + ١٥٠٠ جنيه بسعر صرف ٥٠ = ٩٠ دولار، وكل دفعة بتتسجّل في اليومية بعملتها", async ({ page, env }) => {
+    await users(env);
+    await env.seedShift("ahmed", { hotel: 1 });
+    await page.goto("/");
+    await login(page, "ahmed");
+    await goTab(page, "الحجوزات");
+    await page.getByRole("button", { name: /حجز جديد/ }).click();
+    const form = page.locator(".cx-card[data-calma-editing]");
+    await form.locator("select.cx-select").first().selectOption("603");
+    await field(page, "اسم النزيل").fill("Split Pay");
+    await field(page, "تاريخ الدخول").fill(cairoDate(0));
+    await field(page, "تاريخ الخروج").fill(cairoDate(1));
+    await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']").fill("100");
+    await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//select").selectOption("USD");
+    await page.getByTestId("advance-amount").fill("60");
+    await page.getByTestId("advance-add-line").click();
+    await page.getByTestId("advance-extra-amount-0").fill("1500");
+    await page.getByTestId("advance-extra-currency-0").selectOption("EGP");
+    await page.getByTestId("advance-extra-rate-0").fill("50");
+    await page.locator(".cx-card[data-calma-editing]").getByRole("button", { name: /حفظ الحجز/ }).click();
+    await expect(toast(page)).toContainText("تم الحفظ");
+    const b = (await env.q("select amount_paid::float p from bookings where guest_name = 'Split Pay'"))[0];
+    expect(b.p).toBe(90);
+    const rows = await env.q("select r->>'collectionCurrency' cur, calma_num(r->>'collectionAmt')::float amt from shift_records s, jsonb_array_elements(s.rows) r where s.staff_username = 'ahmed' and calma_num(r->>'collectionAmt') > 0 order by 1");
+    expect(rows.map((r) => [r.cur, r.amt])).toEqual([["EGP", 1500], ["USD", 60]]);
+  });
+
+  test("شيفت مشترك: صاحب الشيفت يضيف زميل، والزميل يحصّل على نفس اليومية", async ({ page, env }) => {
+    await users(env);
+    await env.seedBooking({ room: 603, guest: "Team Guest", start: -1, nights: 3, price: 100, total: 300 });
+    await env.seedShift("ahmed", { hotel: 1 });
+    await page.goto("/");
+    await login(page, "ahmed");
+    await goTab(page, "اليومية");
+    await page.getByTestId("add-helper").selectOption("sara");
+    
+    await expect(page.getByTestId("shift-team").locator(".cx-pill")).toContainText("سارة");
+    const p2 = await env.newSession();
+    await p2.goto("/");
+    await login(p2, "sara");
+    await goTab(p2, "لوحة الغرف");
+    await openRoom(p2, 603);
+    await payOnBoard(p2, { amount: 50 });
+   
+    const rows = await env.q("select count(*)::int n from shift_records s, jsonb_array_elements(s.rows) r where s.staff_username = 'ahmed' and calma_num(r->>'collectionAmt') = 50");
+    expect(rows[0].n).toBe(1);
+    expect((await env.q("select helpers from shift_records where staff_username = 'ahmed'"))[0].helpers).toEqual(["sara"]);
   });
 
   test("موظف شيفته في Calma مايقدرش يضيف حجز في Revento حتى بطلب مباشر على الـ API", async ({ env }) => {

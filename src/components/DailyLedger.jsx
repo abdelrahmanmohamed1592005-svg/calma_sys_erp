@@ -9,7 +9,7 @@ import { SHIFTS } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
 import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims } from "../data/shifts";
+import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -243,6 +243,15 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   const [prevMethodClosing, setPrevMethodClosing] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [staffOptions, setStaffOptions] = useState([]);
+  useEffect(() => { let c = false; listShiftStaff().then((l) => { if (!c) setStaffOptions(l); }); return () => { c = true; }; }, []);
+  async function saveHelpers(list) {
+    const r = await setShiftHelpers(record.hotelId, record.date, record.shiftKey, list);
+    if (r.error) { showToast(r.error); return; }
+    const fresh = await getShiftRecord(record.date, record.shiftKey, record.hotelId);
+    setRecord((cur) => (fresh ? fresh : cur ? { ...cur, helpers: r.data.helpers } : cur));
+    onLog(`زملاء الشيفت اتحدّثوا: ${list.join("، ") || "لوحده"}`);
+  }
   const [liveDay, setLiveDay] = useState(shiftDayNow());
   const today = liveDay;
   const [histDate, setHistDate] = useState(shiftDayNow());
@@ -276,6 +285,12 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
         const r = await resolveMyShift(profile.username);
         if (r.key === "night" && r.date !== day && r.hotelId === hotelId) { day = r.date; c = r.claims; mine = ["night", r.claims.night]; }
       }
+      // زميل على شيفت مشترك (صاحب الشيفت ضافه): بيشتغل على نفس اليومية
+      let asHelper = false;
+      if (!mine) {
+        const hm = (await getMyClaims(day, profile.username)).find((x) => x.helper && x.hotelId === hotelId);
+        if (hm) { mine = [hm.shiftKey, null]; asHelper = true; }
+      }
       if (cancelled) return;
       setLiveDay(day);
       setClaims(c);
@@ -290,6 +305,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
           return;
         }
         let rec = cur.data;
+        if (!rec && asHelper) { showToast("صاحب الشيفت لسه ما بدأش اليومية - استنّاه يفتحها"); setLoading(false); return; }
         if (!rec) {
           const fresh = freshShiftRecord(day, sk, profile.name, profile.username, rooms, prev.data?.cash || undefined, prev.data?.method || undefined);
           const created = await createShiftRecord(fresh);
@@ -587,6 +603,17 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
               <div><label style={{ fontSize: 12.5, color: "var(--muted)", display: "block" }}>التاريخ</label><div style={{ fontWeight: 700, fontSize: 14, padding: "6px 2px" }}>{arabicWeekday(today)} · <bdi dir="ltr" className="cx-rn">{today}</bdi></div></div>
               <div><label style={{ fontSize: 12.5, color: "var(--muted)", display: "block" }}>شيفتك</label><div style={{ fontWeight: 700, fontSize: 14, padding: "6px 2px" }}>{SHIFTS.find((s) => s.key === myShiftKey)?.label} ({SHIFTS.find((s) => s.key === myShiftKey)?.time})</div></div>
               <div><label style={{ fontSize: 12.5, color: "var(--muted)", display: "block" }}>الاسم</label><div style={{ fontSize: 14, padding: "6px 2px" }}>{record.staffName}</div></div>
+              <div data-testid="shift-team"><label style={{ fontSize: 12.5, color: "var(--muted)", display: "block" }}>معاه على الشيفت</label>
+                <div style={{ fontSize: 14, padding: "6px 2px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  {(record.helpers || []).length === 0 && <span style={{ color: "var(--muted)" }}>لوحده</span>}
+                  {(record.helpers || []).map((u) => <span key={u} className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}>{staffOptions.find((x) => x.username === u)?.name || u}{record.staffUsername === profile.username && !record.closed && <button type="button" aria-label={"شيل " + u} style={{ border: 0, background: "none", cursor: "pointer", marginInlineStart: 4 }} onClick={() => saveHelpers((record.helpers || []).filter((x) => x !== u))}>×</button>}</span>)}
+                  {record.staffUsername === profile.username && !record.closed && (record.helpers || []).length < 3 && (
+                    <select className="cx-select" data-testid="add-helper" aria-label="زميل معايا على الشيفت" style={{ width: 150 }} value="" onChange={(e) => e.target.value && saveHelpers([...(record.helpers || []), e.target.value])}>
+                      <option value="">+ زميل معايا</option>
+                      {staffOptions.filter((x) => x.username !== profile.username && !(record.helpers || []).includes(x.username)).map((x) => <option key={x.username} value={x.username}>{x.name}</option>)}
+                    </select>
+                  )}
+                </div></div>
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
             <LedgerBar sections={LEDGER_SECTIONS} totals={totals} record={record} canClose={!record.closed && perms.closeShift} onClose={closeShift} />
