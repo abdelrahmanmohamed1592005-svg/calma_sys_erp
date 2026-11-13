@@ -114,7 +114,7 @@ export async function installFakeSupabase(page, opts = {}) {
       if (fn[1] === "create-user") {
         const caller = userByToken(req);
         if (!caller || caller.profile.role !== "gm") return json(route, 403, { error: "الصلاحية دي للمدير العام بس" });
-        if (store.users.some((x) => x.profile.username === body.username)) return json(route, 409, { error: "اسم المستخدم ده موجود بالفعل" });
+        if (store.users.some((x) => x.profile.username === body.username)) return json(route, 409, { error: "اسم المستخدم ده شغّال حاليًا لموظف تاني" });
         const nu = makeUser(body.username, body.password, body.role, body.name);
         store.users.push(nu); store.profiles.push(nu.profile);
         return json(route, 200, { success: true, data: { id: nu.profile.id, username: nu.profile.username, name: nu.profile.name, role: nu.profile.role, active: true } });

@@ -69,28 +69,59 @@ Deno.serve(async (req) => {
     if (!pwCheck.ok) return json({ error: pwCheck.message }, 400, corsHeaders);
 
     const adminClient = createClient(supabaseUrl, serviceKey);
+    const email = `${cleanUsername}@${EMAIL_DOMAIN}`;
+    const ok = (id: string, reused: boolean) =>
+      json({ success: true, reused, data: { id, username: cleanUsername, name: cleanName, role, active: true } }, 200, corsHeaders);
+    const weakPassword = (e: { code?: string; message?: string }) => {
+      const m = (e.message || "").toLowerCase();
+      return e.code === "weak_password" || m.includes("weak password") || m.includes("password should");
+    };
+    const WEAK_MSG = "كلمة المرور ضعيفة حسب إعدادات الأمان - اختار كلمة أقوى (حروف كبيرة وصغيرة وأرقام ورمز)";
 
-    // 1) إنشاء حساب الدخول - email_confirm:true عشان يقدر يدخل على طول
-    const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
-      email: `${cleanUsername}@${EMAIL_DOMAIN}`,
-      password,
-      email_confirm: true,
-    });
-    if (createErr) {
-      const msg = (createErr.message || "").toLowerCase();
-      // سياسة كلمات المرور في إعدادات Supabase Auth رفضت الكلمة (كانت بتطلع غلط كأن اسم المستخدم موجود)
-      if ((createErr as { code?: string }).code === "weak_password" || msg.includes("weak password") || msg.includes("password should")) {
-        return json({ error: "كلمة المرور ضعيفة حسب إعدادات الأمان - اختار كلمة أقوى (حروف كبيرة وصغيرة وأرقام ورمز)" }, 400, corsHeaders);
+    // 0) الاسم متسجّل في جدول الموظفين قبل كده؟
+    //    - موظف شغّال بنفس الاسم: ده تكرار حقيقي، مانكتبش فوق حساب حد شغّال.
+    //    - موظف قديم متعطّل: بنرجّع نفس الحساب بالاسم/الدور/كلمة المرور الجداد (سجله القديم بيفضل مربوط بيه).
+    const { data: existing, error: existingErr } = await adminClient
+      .from("profiles").select("id, name, active").eq("username", cleanUsername).maybeSingle();
+    if (existingErr) return json({ error: safeServerError("create-user:lookupProfile", existingErr) }, 500, corsHeaders);
+    if (existing) {
+      if (existing.active) {
+        return json({ error: `اسم المستخدم ده شغّال حاليًا للموظف "${existing.name}" - اختار اسم مستخدم تاني، أو عطّله الأول لو عايز تستبدله` }, 409, corsHeaders);
       }
-      if (msg.includes("already registered") || msg.includes("already exists") || msg.includes("already been registered")
-          || (createErr as { code?: string }).code === "email_exists" || (createErr as { status?: number }).status === 422) {
-        return json({ error: "اسم المستخدم ده موجود بالفعل" }, 409, corsHeaders);
+      const { error: authErr } = await adminClient.auth.admin.updateUserById(existing.id, { email, password, email_confirm: true });
+      if (authErr) {
+        if (weakPassword(authErr)) return json({ error: WEAK_MSG }, 400, corsHeaders);
+        return json({ error: safeServerError("create-user:reuseAuth", authErr) }, 500, corsHeaders);
       }
-      return json({ error: safeServerError("create-user:createUser", createErr) }, 500, corsHeaders);
+      const { error: upErr } = await adminClient.from("profiles").update({ name: cleanName, role, active: true }).eq("id", existing.id);
+      if (upErr) return json({ error: safeServerError("create-user:reuseProfile", upErr) }, 500, corsHeaders);
+      return ok(existing.id, true);
     }
 
-    const userId = created.user?.id;
-    if (!userId) return json({ error: "تعذر إنشاء الحساب، حاول تاني" }, 500, corsHeaders);
+    // 1) إنشاء حساب الدخول - email_confirm:true عشان يقدر يدخل على طول
+    let userId = "";
+    let createdNow = false;
+    const { data: created, error: createErr } = await adminClient.auth.admin.createUser({ email, password, email_confirm: true });
+    if (createErr) {
+      if (weakPassword(createErr)) return json({ error: WEAK_MSG }, 400, corsHeaders);
+      // حساب دخول قديم بنفس الاسم من غير ملف موظف (محاولة قديمة ماكملتش، أو موظف اتمسح ملفه): بنستخدمه بدل ما نرفض
+      const orphan = await findAuthUserByEmail(adminClient, email);
+      if (!orphan) return json({ error: safeServerError("create-user:createUser", createErr) }, 500, corsHeaders);
+      const { data: owner } = await adminClient.from("profiles").select("username, name").eq("id", orphan).maybeSingle();
+      if (owner) {
+        return json({ error: `حساب الدخول ده مربوط بالموظف "${owner.name}" (@${owner.username}) - اختار اسم مستخدم تاني` }, 409, corsHeaders);
+      }
+      const { error: authErr } = await adminClient.auth.admin.updateUserById(orphan, { password, email_confirm: true });
+      if (authErr) {
+        if (weakPassword(authErr)) return json({ error: WEAK_MSG }, 400, corsHeaders);
+        return json({ error: safeServerError("create-user:adoptAuth", authErr) }, 500, corsHeaders);
+      }
+      userId = orphan;
+    } else {
+      userId = created.user?.id || "";
+      createdNow = true;
+    }
+    if (!userId) return json({ error: safeServerError("create-user:noUserId", "createUser returned no id") }, 500, corsHeaders);
 
     // 2) إنشاء صف الـ profile - service_role هنا مش محتاج RLS، بس تحققنا
     //    من صلاحية المدير العام فوق قبل ما نوصل للسطر ده أصلاً
@@ -99,20 +130,33 @@ Deno.serve(async (req) => {
       .insert({ id: userId, username: cleanUsername, name: cleanName, role, active: true });
 
     if (insertErr) {
-      // نظافة: لو فشل حفظ الـ profile، امسحي حساب الدخول اليتيم بدل ما يفضل معلّق
-      await adminClient.auth.admin.deleteUser(userId);
-      // اسم المستخدم متسجّل في جدول الموظفين بالفعل (مثلاً موظف قديم متعطّل بنفس الاسم)
+      // نظافة: حساب دخول اتعمل دلوقتي ومالوش profile مايفضلش معلّق (الحساب القديم اللي استخدمناه مابنمسحوش)
+      if (createdNow) await adminClient.auth.admin.deleteUser(userId);
+      // اتنين ضافوا نفس الاسم في نفس اللحظة
       if ((insertErr as { code?: string }).code === "23505") {
-        return json({ error: "اسم المستخدم ده متسجّل لموظف قبل كده (ممكن يكون متعطّل) - اختار اسم مستخدم تاني أو فعّل القديم" }, 409, corsHeaders);
+        return json({ error: "اسم المستخدم ده اتسجّل حالًا من جهاز تاني - حدّث الصفحة وراجع قايمة الموظفين" }, 409, corsHeaders);
       }
       return json({ error: safeServerError("create-user:insertProfile", insertErr) }, 500, corsHeaders);
     }
 
-    return json({ success: true, data: { id: userId, username: cleanUsername, name: cleanName, role, active: true } }, 200, corsHeaders);
+    return ok(userId, !createdNow);
   } catch (e) {
     return json({ error: safeServerError("create-user:unhandled", e) }, 500, corsHeaders);
   }
 });
+
+// بيدوّر على حساب دخول بالإيميل الداخلي (مفيش بحث مباشر بالإيميل في الـ admin API) - عدد الحسابات صغير
+// deno-lint-ignore no-explicit-any
+async function findAuthUserByEmail(adminClient: any, email: string): Promise<string | null> {
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
+    if (error || !data?.users?.length) return null;
+    const hit = data.users.find((u: { id: string; email?: string }) => (u.email || "").toLowerCase() === email);
+    if (hit) return hit.id;
+    if (data.users.length < 200) return null;
+  }
+  return null;
+}
 
 function json(body: unknown, status: number, corsHeaders: Record<string, string>) {
   return new Response(JSON.stringify(body), {

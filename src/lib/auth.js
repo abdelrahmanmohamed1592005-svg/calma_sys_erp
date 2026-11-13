@@ -132,7 +132,8 @@ export async function adminCreateUser({ username, password, name, role }) {
   });
   if (error) return { error: await extractFunctionError(error) };
   if (data?.error) return { error: data.error };
-  return { data: data?.data };
+  // reused: الحساب كان موجود قبل كده (موظف قديم متعطّل أو حساب دخول من غير ملف) واترجّع بالبيانات الجديدة
+  return { data: data?.data, reused: !!data?.reused };
 }
 
 /*

@@ -54,11 +54,13 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
     const pCheck = validatePasswordStrength(form.pw);
     if (!pCheck.ok) { showToast(pCheck.message); return; }
     const uname = form.username.trim().toLowerCase();
-    if (users.some((u) => u.username === uname)) { showToast("اسم المستخدم موجود بالفعل"); return; }
+    // موظف شغّال بنفس الاسم = تكرار. موظف قديم متعطّل بنفس الاسم = بيرجع بنفس الحساب بالبيانات وكلمة المرور الجداد.
+    const taken = users.find((u) => u.username === uname && u.active);
+    if (taken) { showToast(`اسم المستخدم ده شغّال حاليًا للموظف "${taken.name}" - اختار اسم تاني أو عطّله الأول`); return; }
     const res = await adminCreateUser({ username: uname, password: form.pw, name, role: form.role });
     if (res.error) { showToast(res.error); return; }
     onRefresh(); onLog(`إضافة مستخدم جديد: ${uname} (${ROLES.find((r) => r.key === form.role)?.label})`);
-    setForm(null); showToast("تم إنشاء الحساب");
+    setForm(null); showToast(res.reused ? "الحساب القديم بنفس الاسم اترجّع بالبيانات وكلمة المرور الجديدة" : "تم إنشاء الحساب");
   }
   async function toggleActive(u) { return guarded(() => toggleActiveInner(u)); }
   async function toggleActiveInner(u) {
