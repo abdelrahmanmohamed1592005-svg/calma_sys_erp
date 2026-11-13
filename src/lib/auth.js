@@ -159,6 +159,9 @@ function mapAuthError(error) {
   const msg = (error.message || "").toLowerCase();
   if (error.code === "same_password" || msg.includes("different from the old")) return "كلمة المرور الجديدة لازم تكون مختلفة عن القديمة";
   if (msg.includes("invalid login credentials")) return "بيانات الدخول غير صحيحة";
+  // الطلب ماوصلش للسيرفر أصلاً (نت واقع/بطيء قوي/انقطع في النص) - مش خطأ في البيانات
+  if (error.name === "AuthRetryableFetchError" || error.status === 0 || /failed to fetch|networkerror|network request failed|load failed|timeout|timed out|aborted/.test(msg)) return "مفيش اتصال بالسيرفر - اتأكد من النت وجرّب تاني";
+  if (error.status === 429 || msg.includes("rate limit")) return "محاولات كتير في وقت قصير - استنى دقيقة وجرّب تاني";
   if (msg.includes("already registered") || msg.includes("already exists")) return "اسم المستخدم ده موجود بالفعل";
   if (msg.includes("password")) return "كلمة المرور 8 حروف على الأقل، وفيها حرف ورقم";
   if (msg.includes("email not confirmed")) return "لازم توقف خاصية Confirm Email من إعدادات Supabase Auth (README)";

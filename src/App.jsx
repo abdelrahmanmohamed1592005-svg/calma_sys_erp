@@ -27,6 +27,7 @@ import { todayStr, isSameDay, uid, shiftDayNow } from "./domain/dates";
 export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [currentProfile, setCurrentProfile] = useState(null);
+  const [loginNotice, setLoginNotice] = useState(null);   // سبب رفض الدخول (حساب معطّل/من غير بيانات) - بيتعرض في شاشة الدخول
   const [allProfiles, setAllProfiles] = useState([]);
   const [setupNeeded, setSetupNeeded] = useState(false);
   const [tab, setTab] = useState("board");
@@ -157,6 +158,7 @@ export default function App() {
         return;
       }
       if (!profile || !profile.active) {
+        setLoginNotice({ text: profile ? "الحساب ده معطّل - كلّم المدير العام يفعّله" : "الحساب ده بياناته ناقصة (من غير ملف موظف) - كلّم المدير العام", at: Date.now() });
         await signOut();
         const needSetup = await checkSetupNeeded();
         setCurrentProfile(null); setSetupNeeded(needSetup); setAuthChecked(true);
@@ -249,6 +251,7 @@ export default function App() {
     return {};
   }
   async function handleLogin({ username, password }) {
+    setLoginNotice(null);
     const res = await signIn({ username, password });
     if (res.error) return { error: res.error };
     setSessionExported(false);
@@ -272,7 +275,7 @@ export default function App() {
 
   if (!authChecked) return <div className="calma-app" dir="rtl"><GlobalStyle />{!supabaseConfigured && <ConfigWarningBanner />}<LoadingScreen /></div>;
   if (!currentProfile && setupNeeded) return <><SetupScreen onCreate={handleSetup} />{!supabaseConfigured && <ConfigWarningBanner />}</>;
-  if (!currentProfile) return <><LoginScreen onLogin={handleLogin} />{!supabaseConfigured && <ConfigWarningBanner />}</>;
+  if (!currentProfile) return <><LoginScreen onLogin={handleLogin} notice={loginNotice} />{!supabaseConfigured && <ConfigWarningBanner />}</>;
 
   const perms = PERMISSIONS[currentProfile.role];
   // الفندق المختار لو مش موجود في القايمة (اتشال/قديم) نرجع لأول فندق
