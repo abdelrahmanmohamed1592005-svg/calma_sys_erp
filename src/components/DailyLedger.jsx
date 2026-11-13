@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX } from "lucide-react";
+import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send } from "lucide-react";
 import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel } from "./shared";
 import { guarded } from "../lib/busy";
 import { CafeteriaSection } from "./CafeteriaPanel";
+import { OwnerReport } from "./OwnerReport";
 import { listStaffCafeteria } from "../data/staffCafeteria";
 import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
@@ -258,6 +259,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   const [histShift, setHistShift] = useState(defaultShiftForNow());
   const [histRecord, setHistRecord] = useState(null);
   const [staffEntries, setStaffEntries] = useState(null);
+  const [ownerReportDate, setOwnerReportDate] = useState(null);   // تقرير الأونر مفتوح على اليوم ده (null = مقفول)
 
   // حل مشكلة "العداد بيهيس وأنا بكتب": كل كتابة كانت بتبعت save فوري
   // للسيرفر، والـ realtime كان بيسمع صدى الحفظة دي ويعيد تحميل السجل من
@@ -562,6 +564,13 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // الموظف يقدر يكمل في شيفت اتفتح تاني بس لو الشيفت لسه في وقته (أو في هامش الأوفر تايم)؛ غير كده بيتقفل تلقائيًا عند فتح اليومية
   function staffCanContinue(date, shiftKey) { return date === shiftDayNow() && isShiftActiveNow(shiftKey); }
 
+  // تقرير الأونر (كشف الغرف + ورقة كل شيفت في اليوم): أي كتابة معلّقة بتتحفظ الأول عشان التقرير يطلع بآخر أرقام
+  async function openOwnerReport() {
+    if (mode === "live" && record) await flushNow();
+    setOwnerReportDate(mode === "live" ? today : histDate);
+  }
+  const staffNames = Object.fromEntries(staffOptions.map((x) => [x.username, x.name]));
+
   // سجل الشيفت اللي هيظهر فعليًا في ترويسة الطباعة - شيفتي النهارده في وضع
   // "live"، أو الشيفت المحدد في وضع "history".
   const printRecord = mode === "live" ? record : histRecord;
@@ -572,7 +581,9 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
         {perms.editLedger && <button className={"cx-btn " + (mode === "live" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("live")}>شيفتي النهارده</button>}
         <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> استعراض شيفتات سابقة (قراءة فقط)</button>
         {printRecord && <button className="cx-btn cx-btn-outline" onClick={() => window.print()}><Printer size={13} /> طباعة اليومية</button>}
+        {(mode === "history" || record) && <button className="cx-btn cx-btn-gold" data-testid="owner-report-btn" style={{ marginInlineStart: "auto" }} onClick={openOwnerReport}><Send size={14} /> إرسال اليومية للأونر</button>}
       </div>
+      {ownerReportDate && <OwnerReport date={ownerReportDate} rooms={rooms} bookings={bookings} staffNames={staffNames} onClose={() => setOwnerReportDate(null)} onLog={onLog} showToast={showToast} />}
 
       {/* ترويسة الطباعة - بتظهر بس في الورقة المطبوعة، بنفس شكل تقرير
           التقارير بالظبط (الشعار واسم الفندق وتفاصيل الشيفت ومين طبعها). */}

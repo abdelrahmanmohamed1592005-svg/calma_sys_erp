@@ -316,6 +316,42 @@ export function GlobalStyle() {
       .cx-auth-form{ display:flex; align-items:center; justify-content:center; padding:24px 16px; }
       .cx-auth-form .cx-card{ box-shadow:var(--sh-l); }
       ::placeholder{ color:#B3AA97; }
+      /* ---------- تقرير الأونر (كشف الغرف + ورقة الشيفت) ---------- */
+      .cx-or{ position:fixed; inset:0; z-index:90; background:#EFEBE1; display:flex; flex-direction:column; }
+      .cx-or-bar{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px 14px; background:#fff; border-bottom:1px solid var(--hair); box-shadow:var(--sh); }
+      .cx-or-bar-t{ display:flex; flex-direction:column; line-height:1.4; } .cx-or-bar-t b{ font-size:16px; color:var(--ink); } .cx-or-bar-t span{ font-size:12.5px; color:var(--muted); }
+      .cx-or-bar-b{ display:flex; gap:8px; flex-wrap:wrap; }
+      .cx-or-body{ flex:1; overflow:auto; padding:14px; display:flex; flex-direction:column; gap:14px; align-items:center; }
+      .cx-or-msg{ padding:14px; color:var(--muted); font-size:14px; text-align:center; }
+      .cx-or-sheet{ width:min(1000px,100%); background:#fff; color:#161D27; border:1px solid #CFC8B8; border-radius:8px; padding:16px; }
+      .cx-or-top{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+      .cx-or-top h3{ margin:0; font-size:19px; font-weight:700; } .cx-or-hotel{ color:#5F6672; font-weight:600; font-size:13.5px; }
+      .cx-or-head{ display:flex; gap:6px 22px; flex-wrap:wrap; margin:8px 0 10px; font-size:13.5px; color:#5F6672; } .cx-or-head b{ color:#161D27; font-size:14.5px; }
+      .cx-or-scroll{ overflow-x:auto; }
+      .cx-or-table{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:12.5px; }
+      .cx-or-sheet[data-testid="owner-sheet-rooms"] .cx-or-table{ min-width:860px; }
+      .cx-or-table th, .cx-or-table td{ border:1px solid #8D8676; padding:5px 4px; text-align:center; vertical-align:middle; overflow-wrap:anywhere; line-height:1.45; }
+      .cx-or-table th{ background:#EDE7D6; font-weight:700; }
+      .cx-or-table td{ height:36px; } .cx-or-table td.c-room{ font-weight:700; }
+      .cx-or-table td.c-due{ font-weight:700; color:#1E6B4E; } .cx-or-table tr.t-due td.c-due{ color:#B3261E; }
+      .cx-or-table tr.t-section td{ background:#F6F2E6; }
+      .cx-or-sum{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:12px 0 0; }
+      .cx-or-sum > div{ border:1px solid #C9C1AE; background:#FBF9F3; border-radius:6px; padding:6px 8px; text-align:center; }
+      .cx-or-sum dt{ font-size:12px; color:#5F6672; } .cx-or-sum dd{ margin:2px 0 0; font-weight:700; font-size:14.5px; overflow-wrap:anywhere; }
+      .cx-or-note{ margin:10px 0 0; font-size:13px; }
+      @media screen and (max-width:640px){ .cx-or-sum{ grid-template-columns:repeat(2,1fr); } .cx-or-bar-b .cx-btn{ flex:1 1 auto; } }
+      body.cx-or-open{ overflow:hidden; }
+      @media print{
+        body.cx-or-open{ overflow:visible; }
+        body.cx-or-open .cx-page > *:not(.cx-or){ display:none !important; }
+        .cx-or{ position:static; background:#fff; display:block; }
+        .cx-or-body{ overflow:visible; padding:0; display:block; }
+        .cx-or-sheet{ width:100%; border:none; border-radius:0; padding:0; break-after:page; page-break-after:always; }
+        .cx-or-sheet:last-child{ break-after:auto; page-break-after:auto; }
+        .cx-or-scroll{ overflow:visible; } .cx-or-sheet[data-testid="owner-sheet-rooms"] .cx-or-table{ min-width:0; }
+        .cx-or-table{ font-size:9.5px; } .cx-or-table td{ height:30px; } .cx-or-table th, .cx-or-table td{ padding:4px 2px; } .cx-or-table td.c-source{ font-size:8.5px; } .cx-or-sheet:not([data-testid="owner-sheet-rooms"]) .cx-or-table{ font-size:11.5px; }
+        .cx-or-table th, .cx-or-sum > div, .cx-or-table tr.t-section td{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      }
       .cx-print-only{ display:none; }
       ${PRINT_FIT_CSS}
 
