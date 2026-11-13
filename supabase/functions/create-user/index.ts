@@ -78,6 +78,10 @@ Deno.serve(async (req) => {
     });
     if (createErr) {
       const msg = (createErr.message || "").toLowerCase();
+      // سياسة كلمات المرور في إعدادات Supabase Auth رفضت الكلمة (كانت بتطلع غلط كأن اسم المستخدم موجود)
+      if ((createErr as { code?: string }).code === "weak_password" || msg.includes("weak password") || msg.includes("password should")) {
+        return json({ error: "كلمة المرور ضعيفة حسب إعدادات الأمان - اختار كلمة أقوى (حروف كبيرة وصغيرة وأرقام ورمز)" }, 400, corsHeaders);
+      }
       if (msg.includes("already registered") || msg.includes("already exists") || msg.includes("already been registered")
           || (createErr as { code?: string }).code === "email_exists" || (createErr as { status?: number }).status === 422) {
         return json({ error: "اسم المستخدم ده موجود بالفعل" }, 409, corsHeaders);
@@ -97,6 +101,10 @@ Deno.serve(async (req) => {
     if (insertErr) {
       // نظافة: لو فشل حفظ الـ profile، امسحي حساب الدخول اليتيم بدل ما يفضل معلّق
       await adminClient.auth.admin.deleteUser(userId);
+      // اسم المستخدم متسجّل في جدول الموظفين بالفعل (مثلاً موظف قديم متعطّل بنفس الاسم)
+      if ((insertErr as { code?: string }).code === "23505") {
+        return json({ error: "اسم المستخدم ده متسجّل لموظف قبل كده (ممكن يكون متعطّل) - اختار اسم مستخدم تاني أو فعّل القديم" }, 409, corsHeaders);
+      }
       return json({ error: safeServerError("create-user:insertProfile", insertErr) }, 500, corsHeaders);
     }
 
