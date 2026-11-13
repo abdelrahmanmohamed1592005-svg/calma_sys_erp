@@ -11,14 +11,14 @@ async function seedDay(env) {
   const b610 = await env.seedBooking({ room: 610, guest: "Guest 610", start: 0, nights: 4, price: 1600, paid: 3200, currency: "EGP", method: "فيزا", source: "Booking.com", anchor: "shift" });
   const b611 = await env.seedBooking({ room: 611, guest: "Guest 611", start: 0, nights: 1, price: 1600, paid: 1600, currency: "EGP", source: "مباشر", anchor: "shift" });
   await env.seedBooking({ room: 602, guest: "Guest 602", start: -1, nights: 3, price: 19, paid: 0, currency: "USD", source: "Booking.com", payment_details: { senderName: "", senderNumber: "", ref: "", onlinePaid: true }, anchor: "shift" });
-  await env.seedBooking({ room: 605, guest: "Guest 605", start: -1, nights: 2, price: 1700, paid: 0, currency: "EGP", extras: { laundry: 200, cafeteria: 0, tours: 0, pickup: 0 }, anchor: "shift" });
+  const b605 = await env.seedBooking({ room: 605, guest: "Guest 605", start: -1, nights: 2, price: 1700, paid: 200, currency: "EGP", extras: { laundry: 200, cafeteria: 0, tours: 0, pickup: 0 }, anchor: "shift" });
   await env.qRaw("update bookings set guest_codes = '[\"84\"]'::jsonb where id = $1", [b610]);
   await env.seedShift("ahmed", {
     handover: { EGP: 500 }, notes: "تم تسليم العهدة",
-    collections: [{ room: 610, amount: 3200, method: "فيزا", currency: "EGP", bookingId: b610 }, { room: 611, amount: 1600, currency: "EGP", bookingId: b611 }],
+    collections: [{ room: 610, amount: 3200, method: "فيزا", currency: "EGP", bookingId: b610 }, { room: 611, amount: 1600, currency: "EGP", bookingId: b611 }, { room: 605, amount: 200, currency: "EGP", bookingId: b605 }],   // 605: دفع خدمة الغسيل = تحصيل على غرفته
     rowsPatch: { 610: { paymentDetails: { senderName: "", senderNumber: "1234", ref: "", onlinePaid: false } } },
   });
-  await env.qRaw(`update shift_records set hotel_rows = $1::jsonb`, [JSON.stringify([{ room: "فندق", expenseDesc: "مكوى", expenseAmt: 70, expenseCategory: "نظافة", expenseCurrency: "EGP", collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP", paymentDetails: {}, notes: "" }])]);
+  await env.qRaw(`update shift_records set hotel_rows = $1::jsonb`, [JSON.stringify([{ room: "فندق", expenseDesc: "فاتورة كهرباء", expenseAmt: 70, expenseCategory: "كهرباء ومياه", expenseCurrency: "EGP", collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP", paymentDetails: {}, notes: "" }])]);
 }
 const text = async (loc) => (await loc.innerText()).replace(/[⁦-⁩]/g, "");
 
@@ -51,7 +51,8 @@ test("موظف الشيفت: زرار إرسال اليومية للأونر ب�
   const r605 = await row(605);
   expect(r605).toContain("غسيل 200 EGP");
   expect(r605).toContain("0 من 2");
-  expect(r605).toContain("3,600 EGP");             // متبقي = غرفة 3,400 + غسيل 200
+  expect(r605).toContain("كاش 200");               // خدمة الغرفة اتدفعت = تحصيل على الغرفة
+  expect(r605).toContain("3,400 EGP");             // متبقي = 3,400 + غسيل 200 - المدفوع 200
   expect(rooms).toContain("4 من 16");              // غرف مشغولة
 
   const sheets = page.locator("[data-testid^='owner-sheet-shift-']");
@@ -60,12 +61,13 @@ test("موظف الشيفت: زرار إرسال اليومية للأونر ب�
   expect(shift).toContain("أحمد");
   expect(shift).toContain("فيزا 3,200 EGP ****1234");
   expect(shift).toContain("كاش 1,600 EGP");
-  expect(shift).toContain("مكوى 70 EGP");
+  expect(shift).toContain("فاتورة كهرباء 70 EGP");
+  expect(await text(sheets.first().locator("tbody tr", { hasText: "605" }).first())).toContain("كاش 200 EGP");
   const box = async (label) => text(sheets.first().locator(".cx-or-sum > div", { hasText: label }).first().locator("dd"));
   expect(await box("العهدة")).toBe("500 EGP");
-  expect(await box("إجمالي التحصيل")).toBe("4,800 EGP");
+  expect(await box("إجمالي التحصيل")).toBe("5,000 EGP");
   expect(await box("إجمالي المصاريف")).toBe("70 EGP");
-  expect(await box("رصيد الخزينة")).toBe("2,030 EGP");   // 500 + 1,600 كاش - 70
+  expect(await box("رصيد الخزينة")).toBe("2,230 EGP");   // 500 + 1,800 كاش - 70
   expect(await box("الفيزا")).toBe("3,200 EGP");
   expect(shift).toContain("تم تسليم العهدة");
 
