@@ -24,6 +24,9 @@ import { HotelContext } from "./lib/hotelContext";
 import { PERMISSIONS, ROOMS_DEFAULT, hotelAccent } from "./domain/constants";
 import { todayStr, isSameDay, uid, shiftDayNow } from "./domain/dates";
 
+// موظف الشيفت ومدير الشيفت: الاتنين بياخدوا شيفت في فندق ومقيّدين بفنادقهم
+const isShiftRole = (role) => role === "staff" || role === "shift_manager";
+
 export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [currentProfile, setCurrentProfile] = useState(null);
@@ -70,12 +73,12 @@ export default function App() {
     const n = Number(id);
     if (!n || n === hotelId) return;
     // موظف الشيفت مابنحفظش اختياره على الجهاز (الجهاز ممكن يكون مشترك): كل مرة بيبدأ من فندق شيفته أو أول فندق مسموح
-    if (currentProfile?.role !== "staff") { try { localStorage.setItem("calma_hotel", String(n)); } catch { /* التخزين المحلي اختياري */ } }
+    if (!isShiftRole(currentProfile?.role)) { try { localStorage.setItem("calma_hotel", String(n)); } catch { /* التخزين المحلي اختياري */ } }
     setActiveHotelId(n); setHotelId(n); setPendingEditBookingId(null); setJump(null); setDataVersion((v) => v + 1);
   }
   // موظف الشيفت اللي اختار شيفته النهارده في فندق معين: نفتحله فندقه تلقائيًا أول ما يدخل
   useEffect(() => {
-    if (!currentProfile || currentProfile.role !== "staff") return;
+    if (!currentProfile || !isShiftRole(currentProfile.role)) return;
     let cancelled = false;
     getMyClaims(shiftDayNow(), currentProfile.username).then((c) => {
       if (cancelled) return;
@@ -280,7 +283,7 @@ export default function App() {
   const perms = PERMISSIONS[currentProfile.role];
   // الفندق المختار لو مش موجود في القايمة (اتشال/قديم) نرجع لأول فندق
   // الموظف المقيّد بفنادق معيّنة بيشوف فنادقه بس (لحد ما قايمة الفنادق تتحمّل بنفضل على الكل عشان الشاشة ماتقعش)
-  const allowedList = (currentProfile.role === "staff" && currentProfile.allowed_hotels?.length) ? hotels.filter((h) => currentProfile.allowed_hotels.includes(h.id)) : [];
+  const allowedList = (isShiftRole(currentProfile.role) && currentProfile.allowed_hotels?.length) ? hotels.filter((h) => currentProfile.allowed_hotels.includes(h.id)) : [];
   const visibleHotels = allowedList.length ? allowedList : hotels;
   const hotel = visibleHotels.find((h) => h.id === hotelId && h.active !== false) || visibleHotels.find((h) => h.active !== false) || visibleHotels[0];
   const hotelRooms = rooms.filter((r) => (r.hotelId ?? 1) === hotel.id);
@@ -303,17 +306,17 @@ export default function App() {
       <Header user={currentProfile} onLogout={requestLogout} onChangePassword={changeOwnPasswordHandler} onOpenSearch={() => setPaletteOpen(true)} />
       <TabBar tabs={perms.tabs} active={activeTab} onChange={setTab} badges={{}} />
       <main className="cx-main" id="hotel-panel">
-      {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm"} />}
+      {schemaState.ok === false && <SchemaOutdatedBanner version={schemaState.version} required={REQUIRED_SCHEMA_VERSION} isAdmin={currentProfile.role === "gm" || currentProfile.role === "dev"} />}
       <HotelBar hotels={visibleHotels} hotelId={hotel.id} onChange={switchHotel} roomCounts={roomCounts} />
       <PageHead tab={activeTab} />
       {loadingData ? <LoadingScreen /> : (
         <React.Fragment key={hotel.id}>
           {activeTab === "board" && <RoomBoard jumpRoom={jump?.room != null ? jump : null} onJumpDone={() => setJump(null)} rooms={hotelRooms} overrides={overrides} bookings={hotelBookings} perms={perms} profile={currentProfile} onSaveOverride={handleSaveOverride} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onEditBooking={requestEditBooking} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "ledger" && <DailyLedger rooms={hotelRooms} bookings={hotelBookings} profiles={allProfiles} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
-          {activeTab === "bookings" && <BookingsPanel jumpQuery={jump?.query != null ? jump : null} onJumpDone={() => setJump(null)} rooms={hotelRooms} bookings={hotelBookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
+          {activeTab === "bookings" && <BookingsPanel jumpQuery={jump?.query != null ? jump : null} onJumpDone={() => setJump(null)} rooms={hotelRooms} bookings={hotelBookings} perms={perms} role={currentProfile.role === "dev" ? "reservations" : currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={hotelRooms} bookings={hotelBookings} allRooms={rooms} allBookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
           {activeTab === "activity" && <ActivityPanel activity={hotelActivity} />}
-          {activeTab === "users" && <UsersPanel allRooms={rooms} onHotelsChanged={() => setDataVersion((v) => v + 1)} users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
+          {activeTab === "users" && <UsersPanel allRooms={rooms} onHotelsChanged={() => setDataVersion((v) => v + 1)} users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} canManageClaims={!!perms.manageClaims} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
         </React.Fragment>
       )}
       </main>

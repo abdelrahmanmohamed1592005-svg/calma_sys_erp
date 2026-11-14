@@ -70,11 +70,40 @@ describe("تقرير الأونر - ورقة الشيفت", () => {
     expect(rows[1].collection).toBe("كاش 50 EUR");
     expect(rows[3]).toMatchObject({ room: "مصاريف الفندق", expenses: "مكوى 70 EGP" });
     expect(Object.fromEntries(sheet.summary.map(([l, v]) => [l, stripMarks(v)]))).toEqual({
-      "العهدة": "500 EGP", "إجمالي التحصيل": "4,461 EGP + 50 EUR", "إجمالي المصاريف": "70 EGP", "رصيد الخزينة": "1,691 EGP + 50 EUR",
+      "العهدة": "500 EGP", "تحصيل الغرف": "4,461 EGP + 50 EUR", "كافيتيريا النزلاء": "0", "كافيتيريا الاستاف": "0", "إجمالي التحصيل": "4,461 EGP + 50 EUR", "إجمالي المصاريف": "70 EGP", "رصيد الخزينة": "1,691 EGP + 50 EUR",
       "الفيزا": "3,200 EGP", "انستاباي / تحويل": "0", "فودافون كاش": "0", "عملة": "50 EUR",
     });
     expect(Object.fromEntries(sheet.head)).toMatchObject({ "الاسم": "أحمد + سارة", "معاد الشيفت": "8ص - 4م", "الحالة": "لسه مفتوح" });
     expect(sheet.notes).toEqual(["ملاحظات: تمام"]);
+  });
+
+  it("الكافيتيريا مفصولة: خدمات النزلاء حاجة وكافيتيريا الاستاف حاجة، والاتنين مفصولين عن تحصيل الغرف", () => {
+    const rec = freshShiftRecord(DAY, "morning", "أحمد", "ahmed", rooms, { EGP: 0 });
+    rec.rows[0] = { ...rec.rows[0], collectionAmt: 1000 };
+    rec.cafeteriaRows = [
+      { ...emptyLedgerRow("كافيتيريا"), kind: "guest", who: "علي", bookingId: "b610", collectionAmt: 120 },
+      { ...emptyLedgerRow("كافيتيريا"), kind: "staff", who: "سارة", consumerKey: "sara", collectionAmt: 40, collectionMethod: "فيزا", paymentDetails: { senderNumber: "9999" } },
+    ];
+    rec.cafeteria = { ...emptyLedgerRow("كافيتيريا"), collectionAmt: 15 };
+    const sheet = buildShiftSheet({ record: rec, rooms });
+    const sum = Object.fromEntries(sheet.summary.map(([l, v]) => [l, stripMarks(v)]));
+    expect(sum).toMatchObject({ "تحصيل الغرف": "1,000 EGP", "كافيتيريا النزلاء": "120 EGP", "كافيتيريا الاستاف": "40 EGP", "كافيتيريا مبيعات مباشرة": "15 EGP", "إجمالي التحصيل": "1,175 EGP" });
+    const labels = clean(sheet).map((r) => r.room);
+    expect(labels.slice(-3)).toEqual(["كافيتيريا النزلاء", "كافيتيريا الاستاف", "كافيتيريا مباشر"]);
+    expect(clean(sheet).at(-2).collection).toBe("فيزا 40 EGP ****9999 (سارة)");
+  });
+
+  it("الفيزا بعهدة: بيظهر عهدتها وتحصيل الشيفت والإجمالي بالعهدة (اللي بيطابق الجهاز)", () => {
+    const rec = freshShiftRecord(DAY, "evening", "سارة", "sara", rooms, { EGP: 0 }, { "فيزا": { EGP: 6245 } });
+    rec.rows[0] = { ...rec.rows[0], collectionAmt: 1000, collectionMethod: "فيزا", paymentDetails: { senderNumber: "1234" } };
+    const sum = Object.fromEntries(buildShiftSheet({ record: rec, rooms }).summary.map(([l, v]) => [l, stripMarks(v)]));
+    expect(sum).toMatchObject({ "الفيزا - عهدة": "6,245 EGP", "الفيزا - تحصيل الشيفت": "1,000 EGP", "الفيزا - الإجمالي بالعهدة": "7,245 EGP", "فودافون كاش": "0" });
+    expect(sum["الفيزا"]).toBeUndefined();
+  });
+
+  it("مدفوع قبل السيستم بيظهر في خانة المدفوع", () => {
+    const b = booking({ room: 610, guestName: "قديم", checkin: DAY, checkout: "2026-11-15", priceNight: 500, totalRoom: 1000, amountPaid: 700, paymentDetails: { priorPaid: 700 } });
+    expect(clean(buildRoomsSheet({ rooms, bookings: [b], date: DAY }))[0].paid).toBe("700 EGP | قبل السيستم 700 EGP");
   });
 
   it("التقرير الكامل: كشف الغرف + ورقة لكل شيفت اتفتح بالترتيب (اللي لسه ماجاش مابيطلعش)", () => {

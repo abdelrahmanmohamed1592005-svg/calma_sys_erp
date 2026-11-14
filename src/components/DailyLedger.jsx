@@ -1,16 +1,16 @@
 import { useState, useEffect, useRef } from "react";
-import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send } from "lucide-react";
+import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send, PencilLine, Check, X } from "lucide-react";
 import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel } from "./shared";
 import { guarded } from "../lib/busy";
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { OwnerReport } from "./OwnerReport";
 import { listStaffCafeteria } from "../data/staffCafeteria";
-import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails } from "../domain/money";
+import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, cascadeHandover } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
-import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
+import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff } from "../data/shifts";
+import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, correctShiftRecord, getShiftRecordsInRange } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -140,6 +140,10 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
               {prevClosing && prevClosing[cur] != null && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>مقترح: {money(prevClosing, cur)}</div>}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13.5 }}>
+              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>تحصيل الغرف</div><div style={{ fontWeight: 700 }} data-testid={"sum-rooms-" + cur}>{money(totals.roomCollections, cur)}</div></div>
+              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>كافيتيريا النزلاء</div><div style={{ fontWeight: 700 }} data-testid={"sum-cafe-" + cur}>{money(totals.cafeteriaGuest, cur)}</div></div>
+              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>كافيتيريا الاستاف</div><div style={{ fontWeight: 700 }} data-testid={"sum-cafe-staff-" + cur}>{money(totals.cafeteriaStaff, cur)}</div></div>
+              {(Number(totals.cafeteriaDirect?.[cur]) || 0) !== 0 && <div><div style={{ color: "var(--muted)", fontSize: 12 }}>كافيتيريا مبيعات مباشرة</div><div style={{ fontWeight: 700 }}>{money(totals.cafeteriaDirect, cur)}</div></div>}
               <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي التحصيل</div><div style={{ fontWeight: 700 }}>{money(totals.totalCollections, cur)}</div></div>
               <div><div style={{ color: "var(--muted)", fontSize: 12 }}>نقدًا منها</div><div style={{ fontWeight: 700 }}>{money(totals.cashCollections, cur)}</div></div>
               <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي المصاريف</div><div style={{ fontWeight: 700 }}>{money(totals.totalExpenses, cur)}</div></div>
@@ -259,7 +263,10 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   const [histShift, setHistShift] = useState(defaultShiftForNow());
   const [histRecord, setHistRecord] = useState(null);
   const [staffEntries, setStaffEntries] = useState(null);
-  const [ownerReportDate, setOwnerReportDate] = useState(null);   // تقرير الأونر مفتوح على اليوم ده (null = مقفول)
+  const [ownerReportDate, setOwnerReportDate] = useState(null);
+  // تصحيح يومية من "استعراض شيفتات سابقة": نسخة بيتعدّل فيها لحد ما يضغط حفظ (المطوّر: أي يوم - مدير الشيفت: شيفتات اليوم)
+  const [corr, setCorr] = useState(null);
+  useEffect(() => { setCorr(null); }, [mode, histDate, histShift, hotelId]);   // تقرير الأونر مفتوح على اليوم ده (null = مقفول)
 
   // حل مشكلة "العداد بيهيس وأنا بكتب": كل كتابة كانت بتبعت save فوري
   // للسيرفر، والـ realtime كان بيسمع صدى الحفظة دي ويعيد تحميل السجل من
@@ -564,6 +571,38 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // الموظف يقدر يكمل في شيفت اتفتح تاني بس لو الشيفت لسه في وقته (أو في هامش الأوفر تايم)؛ غير كده بيتقفل تلقائيًا عند فتح اليومية
   function staffCanContinue(date, shiftKey) { return date === shiftDayNow() && isShiftActiveNow(shiftKey); }
 
+  const canCorrect = (rec) => !!rec && (perms.correctLedger === "any" || (perms.correctLedger === "today" && rec.date >= addDays(todayStr(), -1)));
+  function corrUpdateRow(idx, patch) {
+    setCorr((c) => ({ ...c, rows: c.rows.map((r, i) => {
+      if (i !== idx) return r;
+      const next = { ...r, ...patch };
+      // دفعة بسعر صرف: المقابل بعملة الحجز بيتحسب من المبلغ الجديد بنفس السعر
+      if ("collectionAmt" in patch && Number(r.fxRate) > 0 && r.fxBookingCurrency) next.fxCovered = Math.round(((Number(patch.collectionAmt) || 0) / Number(r.fxRate)) * 100) / 100;
+      return next;
+    }) }));
+  }
+  const corrHotelRows = (c) => hotelRowsOf(c);
+  async function saveCorrection() { return guarded("ledger-saveCorrection", () => saveCorrectionInner()); }
+  async function saveCorrectionInner() {
+    if (!corr || !histRecord) return;
+    const oldT = computeShiftTotals(histRecord), newT = computeShiftTotals(corr);
+    const res = await correctShiftRecord({ ...corr, ...(corr.closed ? newT : {}) }, histRecord.updatedAt);
+    if (res.conflict) { showToast("⚠ اليومية اتغيّرت من مكان تاني - اتحدّثت، راجعها وصحّح تاني"); setCorr(null); setHistRecord(await getShiftRecord(histDate, histShift)); return; }
+    if (res.error) { showToast(res.error); return; }
+    // الشيفتات اللي بعده اللي عهدتها كانت منقولة تلقائي من الرصيد القديم: العهدة الجديدة بتتنقل لها لحد أول عهدة مكتوبة بالإيد
+    let moved = 0;
+    const later = await getShiftRecordsInRange(corr.date, addDays(corr.date, 370), hotelId);
+    const order = { morning: 0, evening: 1, night: 2 };
+    const following = (later || []).filter((r) => r.date > corr.date || (r.date === corr.date && order[r.shiftKey] > order[corr.shiftKey]));
+    for (const rec of cascadeHandover(following, oldT, newT)) {
+      const r = await correctShiftRecord({ ...rec, ...(rec.closed ? computeShiftTotals(rec) : {}) }, rec.updatedAt);
+      if (!r.data) { showToast("⚠ التصحيح اتحفظ، لكن نقل العهدة للشيفتات اللي بعده وقف عند " + rec.date + " - راجع عهدتها"); break; }
+      moved += 1;
+    }
+    setHistRecord(res.data); setCorr(null);
+    showToast("تم حفظ التصحيح" + (moved ? ` - والعهدة اتحدّثت في ${moved} شيفت بعده` : ""));
+  }
+
   // تقرير الأونر (كشف الغرف + ورقة كل شيفت في اليوم): أي كتابة معلّقة بتتحفظ الأول عشان التقرير يطلع بآخر أرقام
   async function openOwnerReport() {
     if (mode === "live" && record) await flushNow();
@@ -579,7 +618,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
     <div className="cx-page">
       <div className="cx-no-print" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         {perms.editLedger && <button className={"cx-btn " + (mode === "live" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("live")}>شيفتي النهارده</button>}
-        <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> استعراض شيفتات سابقة (قراءة فقط)</button>
+        <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> {perms.correctLedger ? "استعراض وتصحيح شيفتات سابقة" : "استعراض شيفتات سابقة (قراءة فقط)"}</button>
         {printRecord && <button className="cx-btn cx-btn-outline" onClick={() => window.print()}><Printer size={13} /> طباعة اليومية</button>}
         {(mode === "history" || record) && <button className="cx-btn cx-btn-gold" data-testid="owner-report-btn" style={{ marginInlineStart: "auto" }} onClick={openOwnerReport}><Send size={14} /> إرسال اليومية للأونر</button>}
       </div>
@@ -669,10 +708,35 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
                   )}
                 </div>
               )}
-              <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} />
+              {canCorrect(histRecord) && (
+                <div className="cx-card cx-no-print" data-testid="correction-bar" style={{ padding: 10, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", ...(corr ? { background: "var(--warn-bg)", borderColor: "#E9D49A" } : {}) }}>
+                  {!corr ? (
+                    <>
+                      <button className="cx-btn cx-btn-outline" data-testid="correction-start" style={{ fontSize: 13 }} onClick={() => setCorr(JSON.parse(JSON.stringify({ ...histRecord, hotelRows: hotelRowsOf(histRecord) })))}><PencilLine size={13} /> تصحيح اليومية</button>
+                      <span style={{ fontSize: 12.5, color: "var(--muted)" }}>لتصحيح رقم اتكتب غلط بعد مراجعة الورق - المدفوع على الحجز والعهدة والتقارير بيتحدّثوا لوحدهم.</span>
+                    </>
+                  ) : (
+                    <>
+                      <b style={{ fontSize: 13.5 }}>وضع التصحيح:</b>
+                      <span style={{ fontSize: 12.5 }}>عدّل الأرقام تحت (تحصيل الغرف، مصاريف الفندق، العهدة) وبعدين احفظ. التصحيح بيتسجّل باسمك في سجل الحركة.</span>
+                      <button className="cx-btn cx-btn-gold" data-testid="correction-save" style={{ fontSize: 13, marginInlineStart: "auto" }} onClick={saveCorrection}><Check size={13} /> حفظ التصحيح</button>
+                      <button className="cx-btn cx-btn-outline" data-testid="correction-cancel" style={{ fontSize: 13 }} onClick={() => setCorr(null)}><X size={13} /> إلغاء</button>
+                    </>
+                  )}
+                </div>
+              )}
+              <LedgerTable record={corr || histRecord} rooms={rooms} locked={!corr} onUpdateRow={corrUpdateRow} />
               <CafeteriaSection record={histRecord} rooms={rooms} bookings={bookings} onUpdateCafeteria={() => {}} locked={true} readOnly={true} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={async () => {}} reloadRecord={async () => {}} onLog={onLog} showToast={showToast} />
-              {(histRecord.hotelRows || []).some((r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || r.expenseDesc || r.collectionDesc) && <HotelRowsTable record={histRecord} locked={true} onUpdateRow={() => {}} onAddRow={() => {}} onRemoveRow={() => {}} />}
-              <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
+              {corr
+                ? <HotelRowsTable record={corr} locked={false} onUpdateRow={(idx, patch) => setCorr((c) => ({ ...c, hotelRows: corrHotelRows(c).map((r, i) => (i === idx ? { ...r, ...patch } : r)) }))} onAddRow={() => setCorr((c) => ({ ...c, hotelRows: [...corrHotelRows(c), emptyLedgerRow(HOTEL_ROW_LABEL)] }))} onRemoveRow={(idx) => setCorr((c) => ({ ...c, hotelRows: corrHotelRows(c).filter((_, i) => i !== idx) }))} />
+                : (histRecord.hotelRows || []).some((r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || r.expenseDesc || r.collectionDesc) && <HotelRowsTable record={histRecord} locked={true} onUpdateRow={() => {}} onAddRow={() => {}} onRemoveRow={() => {}} />}
+              <ShiftSummaryFooter record={corr || histRecord} totals={computeShiftTotals(corr || histRecord)} locked={!corr}
+                onChangeHandover={(cur, val) => setCorr((c) => ({ ...c, handover: { ...c.handover, [cur]: Number(val) || 0 } }))}
+                onAddCurrency={(cur) => setCorr((c) => (cur && c.handover?.[cur] == null ? { ...c, handover: { ...c.handover, [cur]: 0 } } : c))}
+                prevClosing={null}
+                onChangeMethodHandover={(m, cur, val) => setCorr((c) => ({ ...c, methodHandover: { ...c.methodHandover, [m]: { ...(c.methodHandover?.[m] || {}), [cur]: Number(val) || 0 } } }))}
+                onAddMethodTracking={(m, cur) => setCorr((c) => (m && cur && c.methodHandover?.[m]?.[cur] == null ? { ...c, methodHandover: { ...c.methodHandover, [m]: { ...(c.methodHandover?.[m] || {}), [cur]: 0 } } } : c))}
+                prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 13.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
               <LedgerPrintFooter />
             </>
@@ -708,7 +772,7 @@ function LedgerBar({ sections, totals, record, canClose, onClose }) {
         ))}
       </nav>
       <div className="cx-ledbar-end">
-        <div className="cx-ledbar-cash"><span>رصيد الخزينة</span><b>{cash}</b></div>
+        <div className="cx-ledbar-cash"><span>رصيد الخزينة</span><b><bdi dir="ltr">{cash}</bdi></b></div>
         {canClose && <button className="cx-btn cx-btn-gold" onClick={onClose}><Lock size={15} /> إقفال الشيفت</button>}
         {record.closed && <span className="cx-pill" style={{ background: "#EFEEEC", color: "#6E685D" }}><Lock size={12} aria-hidden="true" /> الشيفت مقفول</span>}
       </div>

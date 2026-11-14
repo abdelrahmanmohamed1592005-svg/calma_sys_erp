@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble } from "lucide-react";
 import { DateRange, Logo, RoomName } from "./shared";
-import { emptyMoney, computeShiftTotals, methodTransactions, bookingDueLines, formatMoneyLines, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
+import { emptyMoney, computeShiftTotals, trackBalances, methodTransactions, bookingDueLines, formatMoneyLines, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, GROUP_NAME } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
 import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
@@ -16,47 +16,12 @@ function addMoneyInto(target, source) {
   currencyKeysOf(source).forEach((c) => { target[c] = (target[c] || 0) + (source[c] || 0); });
 }
 
-// أول عهدة متسجلة لوسيلة دفع (غير الكاش) في أول شيفت ليه قراءة مسجّلة ضمن
-// الفترة المختارة - دي "كانت قبل كام" بالنسبة لتقرير المتابعة (مثلاً عهدة
-// جهاز الفيزا في بداية الفترة).
-function firstMethodHandover(records) {
-  for (const r of records) {
-    if (r.methodHandover && Object.keys(r.methodHandover).length > 0) return r.methodHandover;
-  }
-  return {};
-}
-
-// نفس المنطق بالظبط بس لعهدة الكاش (الدرج) - عهدة أول شيفت في الفترة بكل
-// عملاتها، عشان جدول متابعة العملات في التقرير يبقى شامل الكاش كمان مش بس
-// وسائل الدفع الأخرى.
-function firstCashHandover(records) {
-  for (const r of records) {
-    if (r.handover && Object.keys(r.handover).length > 0) return r.handover;
-  }
-  return {};
-}
-
-/* عهدة أول شيفت في الفترة لكل فندق (كل فندق ليه درج وعهدة مستقلة) ومجموعها: في تقرير فندق واحد = عهدة أول شيفت زي ما كانت */
-function openingsAcrossHotels(records, pick) {
-  const byHotel = new Map();
-  records.forEach((r) => { const k = r.hotelId ?? 1; if (!byHotel.has(k)) byHotel.set(k, []); byHotel.get(k).push(r); });
-  const out = {};
-  byHotel.forEach((recs) => {
-    const one = pick(recs);
-    Object.entries(one).forEach(([key, val]) => {
-      if (val && typeof val === "object") { out[key] = out[key] || {}; Object.entries(val).forEach(([c, n]) => { out[key][c] = (out[key][c] || 0) + (Number(n) || 0); }); }
-      else out[key] = (out[key] || 0) + (Number(val) || 0);
-    });
-  });
-  return out;
-}
-
 function aggregateShifts(records) {
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
   const byMethodCurrency = {}, byCategory = {};
   const flaggedShifts = [];
   records.forEach((r) => {
-    const t = r.closed ? { totalExpenses: r.totalExpenses, totalCollections: r.totalCollections, cashCollections: r.cashCollections, byMethodCurrency: r.byMethodCurrency, byCategory: r.byCategory } : computeShiftTotals(r);
+    const t = r.closed && r.totalCollections && r.byMethodCurrency ? { totalExpenses: r.totalExpenses, totalCollections: r.totalCollections, cashCollections: r.cashCollections, byMethodCurrency: r.byMethodCurrency, byCategory: r.byCategory } : computeShiftTotals(r);
     addMoneyInto(totalExpenses, t.totalExpenses || {});
     addMoneyInto(totalCollections, t.totalCollections || {});
     addMoneyInto(cashCollections, t.cashCollections || {});
@@ -66,30 +31,10 @@ function aggregateShifts(records) {
   });
   const netCash = emptyMoney();
   currencyKeysOf(totalCollections, totalExpenses).forEach((c) => { netCash[c] = (totalCollections[c] || 0) - (totalExpenses[c] || 0); });
-  // متابعة عهدة وسائل الدفع الأخرى (فيزا، إلخ) عبر الفترة: كانت قبل + حصلت
-  // في الفترة = الإجمالي دلوقتي. مبني على عهدة اليومية وتحصيلها فقط (مش
-  // متضمن تحصيل الحجوزات المباشر) عشان الحساب يفضل متطابق مع قراءة الجهاز
-  // الفعلية خطوة بخطوة شيفت بشيفت.
-  const hotelIds = new Set(records.map((r) => r.hotelId ?? 1));
-  const methodOpening = hotelIds.size > 1 ? openingsAcrossHotels(records, firstMethodHandover) : firstMethodHandover(records);
-  const methodClosingNow = {};
-  new Set([...Object.keys(methodOpening), ...Object.keys(byMethodCurrency)]).forEach((m) => {
-    if (m === "كاش") return;
-    methodClosingNow[m] = emptyMoney();
-    currencyKeysOf(methodOpening[m], byMethodCurrency[m]).forEach((cur) => {
-      methodClosingNow[m][cur] = (methodOpening[m]?.[cur] || 0) + (byMethodCurrency[m]?.[cur] || 0);
-    });
-  });
-  // نفس فكرة "متابعة العهدة" بس للكاش نفسه: عهدة أول شيفت في الفترة + كل
-  // التحصيل النقدي - كل المصاريف (المصاريف دايمًا بتُدفع من الكاش) = رصيد
-  // الدرج دلوقتي بكل عملة. ده غير netCash اللي فوق (تحصيل كل الوسائل مجمّعة
-  // ناقص المصاريف) - cashClosingNow هنا مطابق لرصيد الدرج الفعلي.
-  const cashOpening = hotelIds.size > 1 ? openingsAcrossHotels(records, firstCashHandover) : firstCashHandover(records);
-  const cashClosingNow = emptyMoney();
-  currencyKeysOf(cashOpening, cashCollections, totalExpenses).forEach((cur) => {
-    cashClosingNow[cur] = (cashOpening[cur] || 0) + (cashCollections[cur] || 0) - (totalExpenses[cur] || 0);
-  });
-  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, flaggedShifts, netCash, methodOpening, methodClosingNow, cashOpening, cashClosingNow };
+  // متابعة العهدة لكل وسيلة وعملة: عهدة أول شيفت + تحصيل الفترة - المصاريف + فرق أي عهدة اتكتبت بالإيد في شيفت لاحق
+  // = رصيد آخر شيفت فعلاً (قبل كده عهدة الفيزا اللي موظف كتبها في شيفت بعده ماكانتش بتدخل في الإجمالي).
+  const balances = trackBalances(records);
+  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, flaggedShifts, netCash, balances };
 }
 
 function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
@@ -139,7 +84,7 @@ function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
 export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsProp, allRooms, allBookings, dataVersion, profile }) {
   const { hotels, hotel } = useHotel();
   // المدير العام بس يقدر يشوف تقرير مجمّع لكل فنادق الجروب؛ الباقي بيشوفوا الفندق المفتوح بس
-  const canGroup = profile?.role === "gm" && hotels.filter((h) => h.active).length > 1;
+  const canGroup = (profile?.role === "gm" || profile?.role === "dev") && hotels.filter((h) => h.active).length > 1;
   const [scope, setScope] = useState("hotel");
   const group = canGroup && scope === "all";
   const hotelScope = group ? "all" : hotel.id;
@@ -264,7 +209,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
   const allMethods = useMemo(() => {
     const set = new Set(PAYMENT_METHODS);
     Object.keys(combinedByMethodCurrency || {}).forEach((m) => set.add(m));
-    Object.keys(agg.methodOpening || {}).forEach((m) => set.add(m));
+    Object.keys(agg.balances || {}).forEach((m) => set.add(m));
     Object.keys(agg.byMethodCurrency || {}).forEach((m) => set.add(m));
     return Array.from(set);
   }, [combinedByMethodCurrency, agg]);
@@ -367,28 +312,28 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
             <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{allMethods.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
           </div>
 
-          {allMethods.some((m) => currencyKeysOf(m === "كاش" ? agg.cashOpening : agg.methodOpening?.[m], m === "كاش" ? agg.cashCollections : agg.byMethodCurrency?.[m]).length > 0) && (
-            <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
+          {allMethods.some((m) => currencyKeysOf(agg.balances?.[m]?.opening, agg.balances?.[m]?.closing, m === "كاش" ? agg.cashCollections : agg.byMethodCurrency?.[m]).length > 0) && (
+            <div className="cx-card" data-testid="balances-table" style={{ padding: 12, marginBottom: 14 }}>
               <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 2, color: "var(--ink)" }}>متابعة العهدة والتحصيل حسب وسيلة الدفع والعملة</div>
-              <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>العهدة + التحصيل - المصاريف لكل وسيلة دفع (مطابقة لرصيد الدرج).</div>
+              <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>العهدة + التحصيل - المصاريف + فرق أي عهدة اتكتبت بالإيد = رصيد آخر شيفت (مطابق للدرج وجهاز الفيزا).</div>
               <div style={{ overflowX: "auto" }}>
                 <table className="cx-table" style={{ fontSize: 13 }}>
-                  <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">مصاريف الفترة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
+                  <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">مصاريف الفترة</th><th className="cx-th">فرق عهدة مكتوبة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
                   <tbody>
                     {allMethods.flatMap((m) => {
                       const isCash = m === "كاش";
-                      const opening = isCash ? agg.cashOpening : agg.methodOpening?.[m];
+                      const bal = agg.balances?.[m] || { opening: {}, closing: {}, adjust: {} };
                       const collected = isCash ? agg.cashCollections : agg.byMethodCurrency?.[m];
-                      const closingNow = isCash ? agg.cashClosingNow : agg.methodClosingNow?.[m];
-                      const curs = currencyKeysOf(opening, collected);
+                      const curs = currencyKeysOf(bal.opening, bal.closing, collected);
                       return curs.map((cur) => (
                         <tr key={m + cur}>
                           <td>{m}</td>
                           <td>{cur}</td>
-                          <td>{money(opening, cur)}</td>
+                          <td>{money(bal.opening, cur)}</td>
                           <td>{money(collected, cur)}</td>
                           <td>{isCash ? money(agg.totalExpenses, cur) : "—"}</td>
-                          <td style={{ fontWeight: 800, color: "var(--teal)" }}>{money(closingNow, cur)}</td>
+                          <td style={{ color: Math.abs(bal.adjust[cur] || 0) > 0.004 ? "var(--rust)" : "var(--muted)" }}><bdi dir="ltr">{Math.abs(bal.adjust[cur] || 0) > 0.004 ? (bal.adjust[cur] > 0 ? "+" : "") + fmt(bal.adjust[cur]) : "—"}</bdi></td>
+                          <td style={{ fontWeight: 800, color: "var(--teal)" }}>{money(bal.closing, cur)}</td>
                         </tr>
                       ));
                     })}

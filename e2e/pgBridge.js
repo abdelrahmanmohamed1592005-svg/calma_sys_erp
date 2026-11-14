@@ -109,20 +109,21 @@ export function makeBridge(pool, { log } = {}) {
       calls.functions.push({ name: fn[1], body });
       const sub = subOf(headers);
       const caller = sub ? (await adminQ("select role, active from profiles where id = $1", [sub])).rows[0] : null;
-      if (!caller || caller.role !== "gm" || !caller.active) return json(403, { error: "الصلاحية دي للمدير العام بس" });
+      if (!caller || !["gm", "dev"].includes(caller.role) || !caller.active) return json(403, { error: "الصلاحية دي للمدير العام بس" });
       const pwOk = (p) => typeof p === "string" && p.length >= 8 && p.length <= 128 && /[A-Za-z]/.test(p) && /[0-9]/.test(p);
       if (fn[1] === "create-user") {
         const username = String(body.username || "").trim().toLowerCase();
         const name = String(body.name || "").trim().slice(0, 80);
         if (!/^[a-z0-9_]{3,30}$/.test(username)) return json(400, { error: "اسم المستخدم غير صالح" });
         if (!name) return json(400, { error: "الاسم مطلوب" });
-        if (!["staff", "reservations", "accounts", "gm"].includes(body.role)) return json(400, { error: "دور غير معروف" });
+        if (!["staff", "shift_manager", "reservations", "accounts", "gm"].includes(body.role)) return json(400, { error: "دور غير معروف" });
         if (!pwOk(body.password)) return json(400, { error: "كلمة المرور 8 حروف على الأقل" });
         // نفس منطق الفنكشن الحقيقية: موظف شغّال = تكرار، موظف متعطّل = بيرجع بنفس الحساب، حساب دخول من غير ملف = بيتستخدم
         const email = `${username}@calma.internal`;
         const done = (id, reused) => json(200, { success: true, reused, data: { id, username, name, role: body.role, active: true } });
-        const prof = (await adminQ("select id, name, active from profiles where username = $1", [username])).rows[0];
+        const prof = (await adminQ("select id, name, active, role from profiles where username = $1", [username])).rows[0];
         if (prof) {
+          if (prof.role === "dev") return json(409, { error: "اسم المستخدم ده مش متاح - اختار اسم تاني" });
           if (prof.active) return json(409, { error: `اسم المستخدم ده شغّال حاليًا للموظف "${prof.name}" - اختار اسم مستخدم تاني، أو عطّله الأول لو عايز تستبدله` });
           await adminQ("update auth.users set email = $2, password = $3 where id = $1", [prof.id, email, body.password]);
           await adminQ("update profiles set name = $2, role = $3, active = true where id = $1", [prof.id, name, body.role]);
@@ -144,8 +145,8 @@ export function makeBridge(pool, { log } = {}) {
       if (fn[1] === "reset-password") {
         const username = String(body.username || "").trim().toLowerCase();
         if (!pwOk(body.newPassword)) return json(400, { error: "كلمة المرور 8 حروف على الأقل" });
-        const t = (await adminQ("select id from profiles where username = $1", [username])).rows[0];
-        if (!t) return json(404, { error: "المستخدم مش موجود" });
+        const t = (await adminQ("select id, role from profiles where username = $1", [username])).rows[0];
+        if (!t || (t.role === "dev" && caller.role !== "dev")) return json(404, { error: "المستخدم مش موجود" });
         await adminQ("update auth.users set password = $2 where id = $1", [t.id, body.newPassword]);
         return json(200, { success: true });
       }

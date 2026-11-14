@@ -15,7 +15,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { buildCorsHeaders, isRateLimited, validatePasswordStrength, safeServerError, bearerToken, readJsonBody } from "../_shared/security.ts";
 
 const EMAIL_DOMAIN = "calma.internal";
-const VALID_ROLES = ["staff", "reservations", "accounts", "gm"];
+// حساب المطوّر (dev) مابيتعملش من هنا: بيتعمل مرة واحدة من محرر SQL (انظر HANDOVER.md)
+const VALID_ROLES = ["staff", "shift_manager", "reservations", "accounts", "gm"];
 
 Deno.serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req);
@@ -48,7 +49,7 @@ Deno.serve(async (req) => {
       .select("role, active")
       .eq("id", callerData.user.id)
       .maybeSingle();
-    if (profileErr || !callerProfile || callerProfile.role !== "gm" || !callerProfile.active) {
+    if (profileErr || !callerProfile || !["gm", "dev"].includes(callerProfile.role) || !callerProfile.active) {
       return json({ error: "الصلاحية دي للمدير العام بس" }, 403, corsHeaders);
     }
 
@@ -82,9 +83,11 @@ Deno.serve(async (req) => {
     //    - موظف شغّال بنفس الاسم: ده تكرار حقيقي، مانكتبش فوق حساب حد شغّال.
     //    - موظف قديم متعطّل: بنرجّع نفس الحساب بالاسم/الدور/كلمة المرور الجداد (سجله القديم بيفضل مربوط بيه).
     const { data: existing, error: existingErr } = await adminClient
-      .from("profiles").select("id, name, active").eq("username", cleanUsername).maybeSingle();
+      .from("profiles").select("id, name, active, role").eq("username", cleanUsername).maybeSingle();
     if (existingErr) return json({ error: safeServerError("create-user:lookupProfile", existingErr) }, 500, corsHeaders);
     if (existing) {
+      // حساب المطوّر محمي: الاسم ده مش متاح (من غير ما نكشف إنه موجود)
+      if (existing.role === "dev") return json({ error: "اسم المستخدم ده مش متاح - اختار اسم تاني" }, 409, corsHeaders);
       if (existing.active) {
         return json({ error: `اسم المستخدم ده شغّال حاليًا للموظف "${existing.name}" - اختار اسم مستخدم تاني، أو عطّله الأول لو عايز تستبدله` }, 409, corsHeaders);
       }

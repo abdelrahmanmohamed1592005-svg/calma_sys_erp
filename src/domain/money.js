@@ -252,7 +252,13 @@ export function computeShiftTotals(record) {
   const allRows = [...record.rows, { ...record.cafeteria, room: "كافيتيريا" }, ...(record.cafeteriaRows || []), ...(record.hotelRows || [])];
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
   const byMethodCurrency = {}, byCategory = {};
-  allRows.forEach((r) => {
+  // فلوس الكافيتيريا مفصولة عن فلوس الغرف في الإجماليات (نفس الخزينة، بس كل واحدة برقمها)
+  const cafeteriaCollections = emptyMoney(), roomCollections = emptyMoney();
+  // والكافيتيريا نفسها 3 حاجات مختلفة: خدمات كافيتيريا النزلاء (على الغرف)، كافيتيريا الاستاف (سداد الموظفين)، ومبيعات مباشرة
+  const cafeteriaGuest = emptyMoney(), cafeteriaStaff = emptyMoney(), cafeteriaDirect = emptyMoney();
+  const cafeSet = new Set([record.cafeteria, ...(record.cafeteriaRows || [])]);
+  allRows.forEach((r, i) => {
+    const isCafe = i === record.rows.length || cafeSet.has(r);
     const exp = Number(r.expenseAmt) || 0;
     if (exp > 0) {
       const cur = r.expenseCurrency || "EGP";
@@ -269,6 +275,12 @@ export function computeShiftTotals(record) {
     if (col !== 0) {
       const cur = r.collectionCurrency || "EGP";
       totalCollections[cur] = (totalCollections[cur] || 0) + col;
+      const bucket = isCafe ? cafeteriaCollections : roomCollections;
+      bucket[cur] = (bucket[cur] || 0) + col;
+      if (isCafe) {
+        const kind = i === record.rows.length ? cafeteriaDirect : r.kind === "staff" ? cafeteriaStaff : cafeteriaGuest;
+        kind[cur] = (kind[cur] || 0) + col;
+      }
       byMethodCurrency[r.collectionMethod] = byMethodCurrency[r.collectionMethod] || emptyMoney();
       byMethodCurrency[r.collectionMethod][cur] = (byMethodCurrency[r.collectionMethod][cur] || 0) + col;
       if (r.collectionMethod === "كاش") cashCollections[cur] = (cashCollections[cur] || 0) + col;
@@ -294,8 +306,70 @@ export function computeShiftTotals(record) {
   });
   // تقريب كل المبالغ لقرشين: مجموع أعداد عشرية بيطلّع بقايا زي 75.02999999999999 كانت بتتخزّن وتتنقل كعهدة للشيفت اللي بعده
   const rnd = (o) => { Object.keys(o).forEach((k) => { if (typeof o[k] === "number") o[k] = Math.round(o[k] * 100) / 100; else if (o[k] && typeof o[k] === "object") rnd(o[k]); }); return o; };
-  [totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodClosing].forEach(rnd);
-  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodHandover, methodClosing };
+  [totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodClosing, cafeteriaCollections, roomCollections, cafeteriaGuest, cafeteriaStaff, cafeteriaDirect].forEach(rnd);
+  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodHandover, methodClosing, roomCollections, cafeteriaCollections, cafeteriaGuest, cafeteriaStaff, cafeteriaDirect };
+}
+
+/* متابعة رصيد كل وسيلة دفع وعملة عبر شيفتات فترة (مرتّبة زمنيًا)، لكل فندق لوحده وبعدين المجموع:
+   - opening: العهدة في أول شيفت في الفترة.
+   - closing: رصيد آخر شيفت = العهدة اللي مكتوبة فيه + تحصيله - مصاريفه (الكاش بس بيتخصم منه مصاريف).
+   - adjust: فرق العهدة - أي شيفت كتب عهدة مختلفة عن رصيد الشيفت اللي قبله (مثلاً عهدة فيزا اتكتبت بالإيد) الفرق بيتحسب هنا،
+     فالرصيد النهائي بيطلع باللي الموظف كتبه فعلاً مش بالتحصيل المسجّل بس.
+   النتيجة: { "كاش": { opening, closing, adjust }, "فيزا": {...} } وكل واحدة { EGP: n, ... } */
+export function trackBalances(records) {
+  const byHotel = new Map();
+  (records || []).forEach((r) => { const k = r.hotelId ?? 1; if (!byHotel.has(k)) byHotel.set(k, []); byHotel.get(k).push(r); });
+  const out = {};
+  const r2 = (n) => Math.round(n * 100) / 100;
+  byHotel.forEach((recs) => {
+    const st = new Map();
+    const touch = (m, hand, col, exp) => currencyKeysOf(hand, col, exp).forEach((cur) => {
+      const k = m + "|" + cur;
+      const s = st.get(k) || { m, cur, bal: 0, opening: null, adjust: 0 };
+      if (hand && hand[cur] != null) {
+        const h = Number(hand[cur]) || 0;
+        if (s.opening === null) s.opening = h; else s.adjust += h - s.bal;
+        s.bal = h;
+      } else if (s.opening === null) s.opening = 0;
+      s.bal += (Number(col?.[cur]) || 0) - (Number(exp?.[cur]) || 0);
+      st.set(k, s);
+    });
+    recs.forEach((r) => {
+      const t = computeShiftTotals(r);
+      const handover = r.handover && typeof r.handover === "object" ? r.handover : { EGP: Number(r.handover) || 0 };
+      touch("كاش", handover, t.cashCollections, t.totalExpenses);
+      new Set([...Object.keys(r.methodHandover || {}), ...Object.keys(t.byMethodCurrency || {})]).forEach((m) => { if (m !== "كاش") touch(m, r.methodHandover?.[m], t.byMethodCurrency?.[m], null); });
+    });
+    st.forEach((s) => {
+      const o = (out[s.m] = out[s.m] || { opening: {}, closing: {}, adjust: {} });
+      o.opening[s.cur] = r2((o.opening[s.cur] || 0) + (s.opening || 0));
+      o.closing[s.cur] = r2((o.closing[s.cur] || 0) + s.bal);
+      o.adjust[s.cur] = r2((o.adjust[s.cur] || 0) + s.adjust);
+    });
+  });
+  return out;
+}
+
+/* لما يومية قديمة تتصحّح ورصيد إقفالها يتغيّر: الشيفتات اللي بعدها اللي عهدتها كانت منقولة تلقائي من الرصيد القديم
+   (يعني = رصيد إقفال اللي قبلها بالظبط) بتتنقل لها العهدة الجديدة، وهكذا لحد أول شيفت الموظف كتب عهدته بإيده (بيقف عنده).
+   following: الشيفتات اللي بعد المصحّح مرتّبة زمنيًا. بترجّع السجلات اللي اتغيّرت بس (بعهدتها الجديدة). */
+export function cascadeHandover(following, oldTotals, newTotals) {
+  const same = (a, b) => currencyKeysOf(a, b).every((c) => Math.abs((Number(a?.[c]) || 0) - (Number(b?.[c]) || 0)) < 0.005);
+  const methodsOf = (...os) => new Set(os.flatMap((o) => Object.keys(o || {})));
+  const sameMethods = (a, b) => [...methodsOf(a, b)].every((m) => same(a?.[m], b?.[m]));
+  const changed = [];
+  let prevOld = oldTotals, prevNew = newTotals;
+  for (const rec of following || []) {
+    const cashDiff = !same(prevOld.closingCash, prevNew.closingCash), methDiff = !sameMethods(prevOld.methodClosing, prevNew.methodClosing);
+    if (!cashDiff && !methDiff) break;
+    const takeCash = cashDiff && same(rec.handover, prevOld.closingCash);
+    const takeMeth = methDiff && sameMethods(rec.methodHandover, prevOld.methodClosing);
+    if (!takeCash && !takeMeth) break;
+    const next = { ...rec, ...(takeCash ? { handover: { ...prevNew.closingCash } } : {}), ...(takeMeth ? { methodHandover: JSON.parse(JSON.stringify(prevNew.methodClosing || {})) } : {}) };
+    changed.push(next);
+    prevOld = computeShiftTotals(rec); prevNew = computeShiftTotals(next);
+  }
+  return changed;
 }
 
 /* تحصيل الحجوزات اللي اتدفعت مباشر (مش أونلاين) حسب طريقة الدفع والعملة.
