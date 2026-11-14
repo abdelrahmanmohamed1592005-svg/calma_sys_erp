@@ -8,7 +8,8 @@ import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, ea
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
 import { getPaymentsIndex } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentOther, recordBookingPaymentFx, setBookingPriorPaid } from "../data/payments";
+import { recordBookingPayment, recordBookingPaymentOther, recordBookingPaymentFx, setBookingPriorPaid, devDeleteBooking } from "../data/payments";
+import { purgeBookingFromLedgers } from "../data/shifts";
 import { guarded } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
 
@@ -69,30 +70,45 @@ function QuickPay({ booking, onDone, showToast }) {
   );
 }
 
-/* مدفوع قبل استلام السيستم: نزيل دفع (كله أو جزء) قبل ما السيستم يشتغل. المبلغ بيتحسب في المدفوع والمتبقي،
-   ومابيدخلش يومية ولا خزينة أي شيفت. لحساب المطوّر بس (تصحيح بيانات). */
+/* مدفوع قبل استلام السيستم: نزيل دفع (كله أو جزء) قبل ما السيستم يشتغل، أو في يوم تاني برّه السيستم.
+   المبلغ بيتكتب على الحجز وبيتحسب في المدفوع والمتبقي، لكن **مابيدخلش يومية ولا خزينة أي شيفت**. */
 function PriorPaid({ booking, onDone, showToast }) {
   const current = Number(booking.paymentDetails?.priorPaid) || 0;
   const [open, setOpen] = useState(false);
   const [val, setVal] = useState("");
+  const [note, setNote] = useState("");
   const save = () => guarded("booking-priorPaid", async () => {
-    const amt = Number(val);
+    const amt = Number(val || 0);
     if (!Number.isFinite(amt) || amt < 0) { showToast("اكتب مبلغ صحيح (صفر أو أكتر)"); return; }
-    const res = await setBookingPriorPaid({ bookingId: booking.id, amount: amt, expectedUpdatedAt: booking.updatedAt });
+    const res = await setBookingPriorPaid({ bookingId: booking.id, amount: amt, note, expectedUpdatedAt: booking.updatedAt });
     if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
     setOpen(false);
-    showToast(amt > 0 ? `تم تسجيل ${fmt(amt)} ${booking.currency} مدفوع قبل السيستم على ${booking.guestName} (من غير ما يدخل أي يومية)` : "اتشال المدفوع قبل السيستم من الحجز");
+    showToast(amt > 0 ? `تم تسجيل ${fmt(amt)} ${booking.currency} مدفوع قبل السيستم على ${booking.guestName} (من غير ما يدخل الخزينة)` : "اتشال المدفوع قبل السيستم من الحجز");
     if (onDone) await onDone();
   });
-  if (!open) return <button className="cx-btn cx-btn-outline" data-testid="prior-paid-open" style={{ fontSize: 12.5 }} onClick={() => { setVal(current ? String(current) : ""); setOpen(true); }}>مدفوع قبل السيستم{current ? `: ${fmt(current)} ${booking.currency}` : ""}</button>;
+  if (!open) return <button className="cx-btn cx-btn-outline" data-testid="prior-paid-open" style={{ fontSize: 12.5 }} onClick={() => { setVal(current ? String(current) : ""); setNote(booking.paymentDetails?.priorPaidNote || ""); setOpen(true); }}>مدفوع قبل السيستم{current ? <>: <bdi dir="ltr">{fmt(current)} {booking.currency}</bdi></> : ""}</button>;
   return (
-    <div data-testid="prior-paid" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-      <span style={{ fontSize: 12.5, color: "var(--muted)" }}>مدفوع قبل السيستم ({booking.currency}):</span>
-      <input className="cx-input" data-testid="prior-paid-amount" type="number" min="0" style={{ width: 120 }} value={val} onChange={(e) => setVal(e.target.value)} />
+    <div data-testid="prior-paid" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", background: "var(--paper2)", borderRadius: 8, padding: 8 }}>
+      <span style={{ fontSize: 12.5, color: "var(--muted)" }}>مدفوع قبل السيستم ({booking.currency}) - مش هيدخل الخزينة:</span>
+      <input className="cx-input" data-testid="prior-paid-amount" type="number" min="0" placeholder="المبلغ" style={{ width: 110 }} value={val} onChange={(e) => setVal(e.target.value)} />
+      <AutoText className="cx-input" data-testid="prior-paid-note" placeholder="ملاحظة (اتدفع إمتى / إزاي)" style={{ width: 200 }} value={note} onChange={(e) => setNote(e.target.value)} />
       <button className="cx-btn cx-btn-gold" data-testid="prior-paid-save" style={{ fontSize: 12.5 }} onClick={save}>حفظ</button>
       <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5 }} onClick={() => setOpen(false)}>إلغاء</button>
     </div>
   );
+}
+
+/* المطوّر: مسح نهائي لحجز اتضاف بالغلط - تحصيله بيتشال من كل اليوميات (والعهدة بتتظبط) وبعدين الحجز نفسه بيتمسح كأنه ماكانش */
+function DevDeleteBooking({ booking, onDone, showToast }) {
+  const run = () => guarded("booking-devDelete", async () => {
+    const p = await purgeBookingFromLedgers(booking);
+    if (p.error) { showToast(p.error); return; }
+    const res = await devDeleteBooking(booking.id);
+    if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
+    showToast(`تم مسح حجز ${booking.guestName} نهائيًا${p.touched ? ` - واتشال تحصيله من ${p.touched} يومية` : ""}`);
+    if (onDone) await onDone();
+  });
+  return <TwoStepButton label="مسح نهائي" confirmLabel="مسح الحجز وكل تحصيله نهائيًا؟" onConfirm={run} />;
 }
 
 export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onRefresh, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
@@ -128,7 +144,9 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   }, [dataVersion, bookings.length, JSON.stringify(bookings.map((b) => b.amountPaid))]);
 
   function startNew() { setForm(emptyBooking()); }
-  function formFromBooking(b) { return { ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: b.extras || { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: b.earlyCheckin || { applied: false, fee: "", note: "" }, paymentDetails: b.paymentDetails || emptyPaymentDetails(), payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } }; }
+  // الخانات الرقمية اللي قيمتها صفر بتتعرض فاضية (مش "0" لازم يتمسح بالإيد قبل الكتابة)
+  const blankZeros = (o, keys) => { const out = { ...o }; keys.forEach((k) => { if ((Number(out[k]) || 0) === 0) out[k] = ""; }); return out; };
+  function formFromBooking(b) { return { ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: blankZeros(b.extras || {}, ["laundry", "cafeteria", "tours", "pickup"]), earlyCheckin: blankZeros(b.earlyCheckin || { applied: false, fee: "", note: "" }, ["fee"]), paymentDetails: b.paymentDetails || emptyPaymentDetails(), payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } }; }
   function startEdit(b) { const f = formFromBooking(b); formBaseRef.current = f; setForm(f); }
 
   const isExistingBooking = form ? bookings.some((b) => b.id === form.id) : false;
@@ -517,7 +535,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                 <div data-testid="advance-payment" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>المدفوع حتى الآن (اختياري) - بيتسجّل في اليومية بوسيلته وتفاصيله</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8, alignItems: "start" }}>
-                    <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ المدفوع ({form.currency})</label><input className="cx-input" data-testid="advance-amount" type="number" min="0" value={form.payNow?.amount ?? ""} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, amount: e.target.value } })} /></div>
+                    <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ المدفوع / ديبوزيت ({form.currency})</label><input className="cx-input" data-testid="advance-amount" type="number" min="0" value={form.payNow?.amount ?? ""} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, amount: e.target.value } })} /></div>
                     <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>طريقة الدفع</label><select className="cx-select" data-testid="advance-method" value={form.payNow?.method || "كاش"} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, method: e.target.value, details: emptyPaymentDetails() } })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
                     <div><PaymentDetailsInline compact={false} testid="advance" method={form.payNow?.method || "كاش"} details={form.payNow?.details} onChange={(d) => setForm({ ...form, payNow: { ...form.payNow, details: d } })} /></div>
                   </div>
@@ -657,6 +675,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                 {b.status === "تم تسجيل الخروج" && <span className="cx-pill" style={{ background: "#00000010", color: "var(--teal)" }}>{b.status}</span>}
                 {perms.markPaymentReceived && !cancelled && bookingHasDue(b) && <QuickPay booking={b} onDone={onRefresh} showToast={showToast} />}
                 {perms.priorPaid && !cancelled && <PriorPaid booking={b} onDone={onRefresh} showToast={showToast} />}
+                {perms.devTools && <span data-testid="dev-delete-booking"><DevDeleteBooking booking={b} onDone={onRefresh} showToast={showToast} /></span>}
                 {perms.editBookingPrice && !perms.editBookings && !offShift && !cancelled && b.status !== "تم تسجيل الخروج" && (
                   <button className="cx-btn cx-btn-outline" title="تعديل السعر" data-testid="edit-price" onClick={() => startEdit(b)}><Pencil size={13} /> تعديل السعر</button>
                 )}

@@ -254,8 +254,8 @@ export function computeShiftTotals(record) {
   const byMethodCurrency = {}, byCategory = {};
   // فلوس الكافيتيريا مفصولة عن فلوس الغرف في الإجماليات (نفس الخزينة، بس كل واحدة برقمها)
   const cafeteriaCollections = emptyMoney(), roomCollections = emptyMoney();
-  // والكافيتيريا نفسها 3 حاجات مختلفة: خدمات كافيتيريا النزلاء (على الغرف)، كافيتيريا الاستاف (سداد الموظفين)، ومبيعات مباشرة
-  const cafeteriaGuest = emptyMoney(), cafeteriaStaff = emptyMoney(), cafeteriaDirect = emptyMoney();
+  // والكافيتيريا نفسها حاجتين: خدمات كافيتيريا النزلاء (على الغرف) وكافيتيريا الاستاف (سداد الموظفين)
+  const cafeteriaGuest = emptyMoney(), cafeteriaStaff = emptyMoney();
   const cafeSet = new Set([record.cafeteria, ...(record.cafeteriaRows || [])]);
   allRows.forEach((r, i) => {
     const isCafe = i === record.rows.length || cafeSet.has(r);
@@ -278,7 +278,7 @@ export function computeShiftTotals(record) {
       const bucket = isCafe ? cafeteriaCollections : roomCollections;
       bucket[cur] = (bucket[cur] || 0) + col;
       if (isCafe) {
-        const kind = i === record.rows.length ? cafeteriaDirect : r.kind === "staff" ? cafeteriaStaff : cafeteriaGuest;
+        const kind = r.kind === "staff" ? cafeteriaStaff : cafeteriaGuest;
         kind[cur] = (kind[cur] || 0) + col;
       }
       byMethodCurrency[r.collectionMethod] = byMethodCurrency[r.collectionMethod] || emptyMoney();
@@ -306,8 +306,8 @@ export function computeShiftTotals(record) {
   });
   // تقريب كل المبالغ لقرشين: مجموع أعداد عشرية بيطلّع بقايا زي 75.02999999999999 كانت بتتخزّن وتتنقل كعهدة للشيفت اللي بعده
   const rnd = (o) => { Object.keys(o).forEach((k) => { if (typeof o[k] === "number") o[k] = Math.round(o[k] * 100) / 100; else if (o[k] && typeof o[k] === "object") rnd(o[k]); }); return o; };
-  [totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodClosing, cafeteriaCollections, roomCollections, cafeteriaGuest, cafeteriaStaff, cafeteriaDirect].forEach(rnd);
-  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodHandover, methodClosing, roomCollections, cafeteriaCollections, cafeteriaGuest, cafeteriaStaff, cafeteriaDirect };
+  [totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodClosing, cafeteriaCollections, roomCollections, cafeteriaGuest, cafeteriaStaff].forEach(rnd);
+  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodHandover, methodClosing, roomCollections, cafeteriaCollections, cafeteriaGuest, cafeteriaStaff };
 }
 
 /* متابعة رصيد كل وسيلة دفع وعملة عبر شيفتات فترة (مرتّبة زمنيًا)، لكل فندق لوحده وبعدين المجموع:
@@ -348,6 +348,25 @@ export function trackBalances(records) {
     });
   });
   return out;
+}
+
+/* نسخة من اليومية من غير أي أثر لحجز معيّن (تحصيله في الغرف والكافيتيريا) - للمسح النهائي لحجز اتضاف بالغلط.
+   صف الغرفة الأساسي بيرجع فاضي (مايتشالش) عشان الغرفة تفضل موجودة في الجدول. */
+export function stripBookingFromRecord(rec, bookingId) {
+  const seen = new Set();
+  const rows = (rec.rows || []).map((r) => (r.bookingId === bookingId ? emptyLedgerRow(r.room) : r)).filter((r) => {
+    const blank = !r.bookingId && (Number(r.collectionAmt) || 0) === 0 && (Number(r.expenseAmt) || 0) === 0 && !r.collectionDesc && !r.expenseDesc && !r.notes;
+    if (blank && seen.has(r.room)) return false;
+    seen.add(r.room);
+    return true;
+  });
+  return { ...rec, rows, cafeteriaRows: (rec.cafeteriaRows || []).filter((r) => r.bookingId !== bookingId), bookingCollections: (rec.bookingCollections || []).filter((e) => e.bookingId !== bookingId) };
+}
+export const recordMentionsBooking = (rec, bookingId) => [...(rec.rows || []), ...(rec.cafeteriaRows || []), ...(rec.bookingCollections || [])].some((r) => r.bookingId === bookingId);
+/* يومية فاضية تمامًا (قبل مسحها نهائيًا): كل تحصيل ومصروف بيتشال فالمدفوع على الحجوزات والعهدة بيتظبطوا */
+export function blankShiftRecord(rec) {
+  const rooms = [...new Set((rec.rows || []).map((r) => r.room))];
+  return { ...rec, rows: rooms.map((n) => emptyLedgerRow(n)), cafeteria: emptyLedgerRow("كافيتيريا"), cafeteriaRows: [], hotelRows: [emptyLedgerRow(HOTEL_ROW_LABEL)], bookingCollections: [] };
 }
 
 /* لما يومية قديمة تتصحّح ورصيد إقفالها يتغيّر: الشيفتات اللي بعدها اللي عهدتها كانت منقولة تلقائي من الرصيد القديم

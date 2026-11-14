@@ -138,7 +138,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         currencyKeysOf(t.totalCollections).forEach((c) => { rev[c] = (rev[c] || 0) + t.totalCollections[c]; });
         currencyKeysOf(t.totalExpenses).forEach((c) => { exp[c] = (exp[c] || 0) + t.totalExpenses[c]; });
         Object.entries(t.byMethodCurrency || {}).forEach(([m, v]) => { byMethod[m] = byMethod[m] || emptyMoney(); add(byMethod[m], v); });
-        add(cafe, t.cafeteriaGuest); add(cafe, t.cafeteriaDirect); add(cafeStaff, t.cafeteriaStaff); add(roomsRev, t.roomCollections);
+        add(cafe, t.cafeteriaGuest); add(cafeStaff, t.cafeteriaStaff); add(roomsRev, t.roomCollections);
         if (r.flagged) flagged += 1;
       }
       if (!cancelled) setKpis({ rev, exp, flagged, byMethod, cafe, cafeStaff, roomsRev });

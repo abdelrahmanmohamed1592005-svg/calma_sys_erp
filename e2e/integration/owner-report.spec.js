@@ -69,16 +69,15 @@ test("موظف الشيفت: زرار إرسال اليومية للأونر ب�
   expect(shift).toContain("فاتورة كهرباء 70 EGP");
   expect(await text(sheets.first().locator("tbody tr", { hasText: "605" }).first())).toContain("كاش 200 EGP");
   const box = async (label) => text(sheets.first().locator(".cx-or-sum > div", { hasText: label }).first().locator("dd"));
+  // المربعات زي الورق: الأربعة الأولى كاش (عهدة + تحصيل - مصاريف = رصيد)، والفيزا بإجماليها بالعهدة
+  await expect(sheets.first().locator(".cx-or-sum > div")).toHaveCount(9);
   expect(await box("العهدة")).toBe("500 EGP");
-  expect(await box("تحصيل الغرف")).toBe("5,000 EGP");
-  expect(await box("كافيتيريا النزلاء")).toBe("120 EGP");
-  expect(await box("كافيتيريا الاستاف")).toBe("40 EGP");
-  expect(await box("إجمالي التحصيل")).toBe("5,160 EGP");
+  expect(await box("إجمالي التحصيل")).toBe("1,960 EGP");   // كاش: 1,600 + 200 + كافيتيريا 160
   expect(await box("إجمالي المصاريف")).toBe("70 EGP");
-  expect(await box("رصيد الخزينة")).toBe("2,390 EGP");   // 500 + 1,960 كاش - 70
-  expect(await box("الفيزا - عهدة")).toBe("6,245 EGP");
-  expect(await box("الفيزا - تحصيل الشيفت")).toBe("3,200 EGP");
-  expect(await box("الفيزا - الإجمالي بالعهدة")).toBe("9,445 EGP");
+  expect(await box("رصيد الخزينة")).toBe("2,390 EGP");     // 500 + 1,960 - 70
+  expect(await box("الفيزا")).toBe("9,445 EGP");           // عهدة 6,245 + تحصيل الشيفت 3,200
+  expect(await box("انستاباي")).toBe("0");
+  expect(await box("إجمالي الكافيتيريا")).toBe("160 EGP");
   expect(shift).toContain("تم تسليم العهدة");
 
   const send = page.getByTestId("owner-report-send");
@@ -88,7 +87,7 @@ test("موظف الشيفت: زرار إرسال اليومية للأونر ب�
   const shared = await page.evaluate(() => window.__shared);
   expect(shared.files).toHaveLength(2);
   for (const f of shared.files) { expect(f.type).toBe("image/png"); expect(f.size).toBeGreaterThan(20000); }
-  expect((await env.q("select count(*)::int n from activity_log where action like '%تقرير اليومية للأونر%'"))[0].n).toBe(1);
+  await expect.poll(async () => (await env.q("select count(*)::int n from activity_log where action like '%تقرير اليومية للأونر%'"))[0].n).toBe(1);   // التسجيل بيتكتب بعد المشاركة مباشرة
 
   if (OUT) {
     mkdirSync(OUT, { recursive: true });

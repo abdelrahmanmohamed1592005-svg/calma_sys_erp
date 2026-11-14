@@ -3805,7 +3805,7 @@ create or replace function correct_shift_record(p_hotel integer, p_date date, p_
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   sr shift_records; b bookings%rowtype; d record; main boolean; v_extras jsonb; v_oc jsonb; c jsonb; cp numeric; n_rows jsonb; n_caf jsonb;
-  f text; allowed text[] := array['rows', 'hotel_rows', 'cafeteria', 'cafeteria_rows', 'handover', 'method_handover', 'shift_notes', 'flagged',
+  f text; allowed text[] := array['rows', 'hotel_rows', 'cafeteria', 'cafeteria_rows', 'booking_collections', 'handover', 'method_handover', 'shift_notes', 'flagged',
     'total_expenses', 'total_collections', 'closing_cash', 'cash_collections', 'by_method_currency', 'by_category', 'method_closing'];
   patch jsonb := '{}'::jsonb; label text;
 begin
@@ -3860,6 +3860,7 @@ begin
   update shift_records set
     rows = n_rows, cafeteria_rows = coalesce(n_caf, '[]'::jsonb),
     hotel_rows = coalesce(patch -> 'hotel_rows', hotel_rows), cafeteria = coalesce(patch -> 'cafeteria', cafeteria),
+    booking_collections = coalesce(patch -> 'booking_collections', booking_collections),
     handover = coalesce(patch -> 'handover', handover), method_handover = coalesce(patch -> 'method_handover', method_handover),
     shift_notes = case when patch ? 'shift_notes' then coalesce(patch ->> 'shift_notes', '') else shift_notes end,
     flagged = case when patch ? 'flagged' then coalesce((patch ->> 'flagged')::boolean, false) else flagged end,
@@ -3890,43 +3891,53 @@ grant execute on function correct_shift_record(integer, date, text, timestamptz,
 
 -- (د) مدفوع قبل استلام السيستم: نزيل دفع قبل ما السيستم يشتغل (في الورق). المبلغ بيتحسب في مدفوع الحجز والمتبقي،
 --     ومابيدخلش أي يومية ولا خزينة (الفلوس اتحصّلت واتورّدت قبل كده). متسجّل في payment_details.priorPaid و reconcile.sql بيحسبه.
-create or replace function set_booking_prior_paid(p_booking uuid, p_amount numeric, p_expected timestamptz default null)
+drop function if exists set_booking_prior_paid(uuid, numeric, timestamptz);
+create or replace function set_booking_prior_paid(p_booking uuid, p_amount numeric, p_note text default null, p_expected timestamptz default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare b bookings%rowtype; amt numeric := round(coalesce(p_amount, 0), 2); old_prior numeric; new_paid numeric;
+declare b bookings%rowtype; amt numeric := round(coalesce(p_amount, 0), 2); old_prior numeric; new_paid numeric; pd jsonb;
+        note text := left(regexp_replace(coalesce(p_note, ''), '[[:cntrl:]]', ' ', 'g'), 200);
 begin
-  if not is_dev() then raise exception 'تسجيل مدفوع قبل السيستم من صلاحية حساب المطوّر بس'; end if;
+  -- اللي قدام النزيل هو اللي عارف: موظف الشيفت ومدير الشيفت، والمطوّر للتصحيح
+  if not (is_staff() or is_dev()) then raise exception 'تسجيل مدفوع قبل السيستم من صلاحية موظف الشيفت بس'; end if;
   if amt < 0 then raise exception 'المبلغ لازم يكون صفر أو أكتر'; end if;
   select * into b from bookings where id = p_booking for update;
   if not found then raise exception 'الحجز مش موجود'; end if;
   if p_expected is not null and b.updated_at is distinct from p_expected then raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني'; end if;
   old_prior := calma_num(b.payment_details ->> 'priorPaid');
-  new_paid := coalesce(b.amount_paid, 0) - old_prior + amt;
-  if new_paid < 0 then new_paid := 0; end if;
+  new_paid := greatest(0, coalesce(b.amount_paid, 0) - old_prior + amt);
   if new_paid > booking_hotel_total(b) + 0.005 then
     raise exception 'المبلغ أكبر من المطلوب على الحجز (المتبقي من غيره %)', trim_scale(greatest(0, booking_hotel_total(b) - (coalesce(b.amount_paid, 0) - old_prior)));
   end if;
+  pd := coalesce(b.payment_details, '{}'::jsonb) - 'priorPaid' - 'priorPaidNote';
+  if amt > 0 then
+    pd := pd || jsonb_build_object('priorPaid', amt);
+    if btrim(note) <> '' then pd := pd || jsonb_build_object('priorPaidNote', btrim(note)); end if;
+  end if;
   perform set_config('calma.pay_rpc', '1', true);
   perform set_config('calma.refund_rpc', '1', true);
-  update bookings set amount_paid = new_paid,
-    payment_details = case when amt > 0 then jsonb_set(coalesce(payment_details, '{}'::jsonb), '{priorPaid}', to_jsonb(amt)) else coalesce(payment_details, '{}'::jsonb) - 'priorPaid' end
-    where id = p_booking;
+  perform set_config('calma.correct_rpc', '1', true);
+  perform set_config('calma.currency_rpc', '1', true);      -- موظف الشيفت مابيعدّلش بيانات الحجز الأساسية غير من الدوال (العملة نفسها مابتتغيّرش هنا)
+  update bookings set amount_paid = new_paid, payment_details = pd where id = p_booking;
+  perform set_config('calma.currency_rpc', '', true);
   perform set_config('calma.pay_rpc', '', true);
   perform set_config('calma.refund_rpc', '', true);
-  insert into activity_log(action, hotel_id) values ('مدفوع قبل السيستم على حجز ' || coalesce(b.guest_name, '') || ' (غرفة ' || b.room || '): ' || trim_scale(amt) || ' ' || b.currency, b.hotel_id);
+  perform set_config('calma.correct_rpc', '', true);
+  insert into activity_log(action, hotel_id) values ('مدفوع قبل السيستم على حجز ' || coalesce(b.guest_name, '') || ' (غرفة ' || b.room || '): ' || trim_scale(amt) || ' ' || b.currency
+    || case when btrim(note) <> '' then ' - ' || btrim(note) else '' end, b.hotel_id);
   return jsonb_build_object('priorPaid', amt, 'amountPaid', new_paid);
 end;
 $$;
+
 -- priorPaid بيتغيّر من الدالة دي بس: تعديل الحجز من الشاشة (اللي بيكتب payment_details من جديد) مايمسحوش ولا يغيّره
 create or replace function keep_prior_paid()
 returns trigger language plpgsql as $$
 begin
   if auth.uid() is null or coalesce(current_setting('calma.pay_rpc', true), '') = '1' then return new; end if;
   if TG_OP = 'INSERT' then
-    new.payment_details := coalesce(new.payment_details, '{}'::jsonb) - 'priorPaid';
-  elsif (new.payment_details -> 'priorPaid') is distinct from (old.payment_details -> 'priorPaid') then
-    new.payment_details := case when old.payment_details ? 'priorPaid'
-      then jsonb_set(coalesce(new.payment_details, '{}'::jsonb), '{priorPaid}', old.payment_details -> 'priorPaid')
-      else coalesce(new.payment_details, '{}'::jsonb) - 'priorPaid' end;
+    new.payment_details := coalesce(new.payment_details, '{}'::jsonb) - 'priorPaid' - 'priorPaidNote';
+  else
+    new.payment_details := (coalesce(new.payment_details, '{}'::jsonb) - 'priorPaid' - 'priorPaidNote')
+      || coalesce((select jsonb_object_agg(k, v) from jsonb_each(coalesce(old.payment_details, '{}'::jsonb)) e(k, v) where k in ('priorPaid', 'priorPaidNote')), '{}'::jsonb);
   end if;
   return new;
 end;
@@ -3935,8 +3946,86 @@ drop trigger if exists bookings_keep_prior_paid on bookings;
 create trigger bookings_keep_prior_paid before insert or update on bookings
   for each row execute function keep_prior_paid();
 
-revoke all on function set_booking_prior_paid(uuid, numeric, timestamptz) from public, anon;
-grant execute on function set_booking_prior_paid(uuid, numeric, timestamptz) to authenticated;
+revoke all on function set_booking_prior_paid(uuid, numeric, text, timestamptz) from public, anon;
+grant execute on function set_booking_prior_paid(uuid, numeric, text, timestamptz) to authenticated;
+
+-- (هـ) المطوّر يمسح غلطة نهائيًا "كأنها ماكانتش": حجز اتضاف بالغلط (حتى لو عليه فلوس) أو يومية شيفت اتفتحت بالغلط.
+--     الواجهة بتشيل تحصيل الحجز من اليوميات الأول (correct_shift_record - فالخزينة والعهدة بيتظبطوا) وبعدين بتنادي الدالة دي.
+--     المسح بيتسجّل في سجل الحركة وسجل التدقيق.
+create or replace function prevent_delete_booking_with_money()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(current_setting('calma.dev_delete', true), '') = '1' then return old; end if;
+  if coalesce(old.amount_paid, 0) > 0 or coalesce(old.refund_pending, false) or coalesce(old.refunded_amount, 0) > 0
+     or coalesce((old.payment_details ->> 'onlinePaid')::boolean, false) then
+    raise exception 'الحجز ده عليه حركة فلوس (مدفوع أو رد أو مدفوع أونلاين) - استخدم حالة "ملغي" بدل الحذف';
+  end if;
+  return old;
+end;
+$$;
+create or replace function bookings_no_delete_other_paid()
+returns trigger language plpgsql as $$
+begin
+  if coalesce(current_setting('calma.dev_delete', true), '') = '1' then return old; end if;
+  if exists (select 1 from jsonb_each(coalesce(old.other_paid, '{}'::jsonb)) e where (e.value #>> '{}')::numeric > 0) then
+    raise exception 'الحجز ده عليه حركة فلوس (مدفوع) - استخدم حالة "ملغي" بدل الحذف';
+  end if;
+  return old;
+end;
+$$;
+create or replace function prevent_past_shift_unclaim()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(current_setting('calma.dev_delete', true), '') = '1' then return old; end if;
+  if auth.uid() is not null and now() >= calma_shift_end(old.date, old.shift_key) then
+    raise exception 'معاد الشيفت ده خلص - مينفعش يتلغي اختياره ولا تتمسح يوميته';
+  end if;
+  return old;
+end;
+$$;
+
+create or replace function dev_delete_booking(p_booking uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare b bookings%rowtype;
+begin
+  if not is_dev() then raise exception 'المسح النهائي من صلاحية حساب المطوّر بس'; end if;
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if exists (select 1 from shift_records s, lateral (select jsonb_array_elements(coalesce(s.rows, '[]'::jsonb)) union all select jsonb_array_elements(coalesce(s.cafeteria_rows, '[]'::jsonb))) e(x)
+             where x ->> 'bookingId' = p_booking::text and calma_num(x ->> 'collectionAmt') <> 0) then
+    raise exception 'الحجز لسه ليه تحصيل في اليوميات - لازم يتشال منها الأول (الواجهة بتعمل ده تلقائيًا)';
+  end if;
+  perform set_config('calma.dev_delete', '1', true);
+  delete from bookings where id = p_booking;
+  perform set_config('calma.dev_delete', '', true);
+  insert into activity_log(action, hotel_id) values ('مسح نهائي لحجز ' || coalesce(b.guest_name, '') || ' (غرفة ' || b.room || '، ' || b.checkin || ' → ' || b.checkout || '، كود ' || coalesce(b.code, '—') || ')', b.hotel_id);
+  return jsonb_build_object('deleted', true);
+end;
+$$;
+create or replace function dev_delete_shift(p_hotel integer, p_date date, p_key text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare sr shift_records;
+begin
+  if not is_dev() then raise exception 'المسح النهائي من صلاحية حساب المطوّر بس'; end if;
+  select * into sr from shift_records where hotel_id = p_hotel and date = p_date and shift_key = p_key for update;
+  if found and exists (select 1 from (select jsonb_array_elements(coalesce(sr.rows, '[]'::jsonb)) union all select jsonb_array_elements(coalesce(sr.cafeteria_rows, '[]'::jsonb))
+                                      union all select jsonb_array_elements(coalesce(sr.hotel_rows, '[]'::jsonb))) e(x)
+                       where calma_num(x ->> 'collectionAmt') <> 0 or calma_num(x ->> 'expenseAmt') <> 0) then
+    raise exception 'اليومية لسه فيها تحصيل أو مصاريف - صفّرها بالتصحيح الأول (الواجهة بتعمل ده تلقائيًا)';
+  end if;
+  perform set_config('calma.dev_delete', '1', true);
+  delete from shift_records where hotel_id = p_hotel and date = p_date and shift_key = p_key;
+  delete from shift_claims where hotel_id = p_hotel and date = p_date and shift_key = p_key;
+  perform set_config('calma.dev_delete', '', true);
+  insert into activity_log(action, hotel_id) values ('مسح نهائي ليومية ' || case p_key when 'morning' then 'الشيفت الصباحي' when 'evening' then 'الشيفت المسائي' else 'الشيفت الليلي' end
+    || ' ليوم ' || p_date || coalesce(' (صاحب الشيفت: ' || sr.staff_name || ')', ''), p_hotel);
+  return jsonb_build_object('deleted', true);
+end;
+$$;
+revoke all on function dev_delete_booking(uuid) from public, anon;
+grant execute on function dev_delete_booking(uuid) to authenticated;
+revoke all on function dev_delete_shift(integer, date, text) from public, anon;
+grant execute on function dev_delete_shift(integer, date, text) to authenticated;
 
 create or replace function calma_schema_version() returns int language sql immutable as $$ select 45 $$;
 revoke all on function calma_schema_version() from public, anon;

@@ -577,7 +577,7 @@ export function MoneyBox({ b }) {
   const cells = [["الإجمالي", fmt(total), null]];
   if (online) cells.push(["مدفوع أونلاين (سعر الغرفة)", fmt(onlineRoomCovered(b)), "var(--sage)"]);
   if (!online || paid > 0 || due > 0) cells.push([online ? "المتحصّل في الفندق" : "المدفوع", fmt(paid), null]);
-  if (Number(b.paymentDetails?.priorPaid) > 0) cells.push(["منها قبل السيستم", fmt(b.paymentDetails.priorPaid), "var(--muted)"]);
+  if (Number(b.paymentDetails?.priorPaid) > 0) cells.push([b.paymentDetails.priorPaidNote ? `منها قبل السيستم (${b.paymentDetails.priorPaidNote})` : "منها قبل السيستم", fmt(b.paymentDetails.priorPaid), "var(--muted)"]);
   if (b.status !== "ملغي" && (due > 0 || !online)) cells.push([online ? "المتبقي في الفندق (خدمات/دخول مبكر/تمديد)" : "المتبقي", fmt(due), due > 0 ? "var(--rust)" : "var(--sage)"]);
   // خدمات بعملات تانية (كل عملة لوحدها من غير تحويل)
   const oT = otherTotals(b), oP = otherPaidOf(b), oD = otherDue(b);

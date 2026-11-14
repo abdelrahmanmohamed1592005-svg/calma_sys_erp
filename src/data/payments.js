@@ -47,5 +47,9 @@ export const settleStaffCafeteria = ({ name, username, currency, amount, method,
   rpc("settle_staff_cafeteria", { p_name: name, p_username: username || null, p_currency: currency, p_amount: amount, p_method: method, p_details: details || {} });
 
 /* مبلغ اتدفع قبل استلام السيستم: بيتحسب في مدفوع الحجز والمتبقي من غير ما يدخل أي يومية/خزينة */
-export const setBookingPriorPaid = ({ bookingId, amount, expectedUpdatedAt }) =>
-  rpc("set_booking_prior_paid", { p_booking: bookingId, p_amount: Number(amount) || 0, p_expected: expectedUpdatedAt || null });
+export const setBookingPriorPaid = ({ bookingId, amount, note, expectedUpdatedAt }) =>
+  rpc("set_booking_prior_paid", { p_booking: bookingId, p_amount: Number(amount) || 0, p_note: note || null, p_expected: expectedUpdatedAt || null });
+
+/* المطوّر: مسح نهائي لحجز أو يومية اتعملوا بالغلط (بعد ما تحصيلهم اتشال من اليوميات) */
+export const devDeleteBooking = (bookingId) => rpc("dev_delete_booking", { p_booking: bookingId });
+export const devDeleteShift = ({ hotelId, date, shiftKey }) => rpc("dev_delete_shift", { p_hotel: hotelId, p_date: date, p_key: shiftKey });

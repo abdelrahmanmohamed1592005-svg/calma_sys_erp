@@ -1,16 +1,17 @@
 import { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send, PencilLine, Check, X } from "lucide-react";
-import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel } from "./shared";
+import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel, TwoStepButton } from "./shared";
 import { guarded } from "../lib/busy";
+import { devDeleteShift } from "../data/payments";
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { OwnerReport } from "./OwnerReport";
 import { listStaffCafeteria } from "../data/staffCafeteria";
-import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, cascadeHandover } from "../domain/money";
+import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, blankShiftRecord } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
 import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, correctShiftRecord, getShiftRecordsInRange } from "../data/shifts";
+import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -20,6 +21,13 @@ function CurrencyPicker({ value, onChange, disabled, width }) {
       {COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
     </select>
   );
+}
+
+/* خانة رقم: الصفر بيتعرض فاضي (placeholder 0) فمفيش "0" لازم يتمسح قبل الكتابة، والكتابة مابتتقطعش (كسور عشرية / مسح كامل) */
+function NumField({ value, onChange, ...rest }) {
+  const [txt, setTxt] = useState(null);
+  const shown = txt !== null ? txt : (Number(value) || 0) === 0 ? "" : String(value);
+  return <input className="cx-input" type="number" placeholder="0" {...rest} value={shown} onFocus={() => setTxt(shown)} onBlur={() => setTxt(null)} onChange={(e) => { setTxt(e.target.value); onChange(e.target.value); }} />;
 }
 
 // صف الغرفة "فيه بيانات" = فيه مبلغ أو بيان أو ملاحظة أو مربوط بحجز. باقي الغرف الفاضية مخفية
@@ -136,14 +144,13 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
             <div style={{ fontWeight: 800, marginBottom: 8 }}>{CURRENCY_LABEL[cur] || cur} ({cur})</div>
             <div style={{ marginBottom: 6 }}>
               <label style={{ fontSize: 12.5, color: "var(--muted)" }}>العهدة</label>
-              <input className="cx-input" type="number" disabled={locked} value={record.handover?.[cur] ?? 0} onChange={(e) => onChangeHandover(cur, e.target.value)} />
+              <NumField disabled={locked} value={record.handover?.[cur] ?? 0} onChange={(v) => onChangeHandover(cur, v)} />
               {prevClosing && prevClosing[cur] != null && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>مقترح: {money(prevClosing, cur)}</div>}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13.5 }}>
               <div><div style={{ color: "var(--muted)", fontSize: 12 }}>تحصيل الغرف</div><div style={{ fontWeight: 700 }} data-testid={"sum-rooms-" + cur}>{money(totals.roomCollections, cur)}</div></div>
               <div><div style={{ color: "var(--muted)", fontSize: 12 }}>كافيتيريا النزلاء</div><div style={{ fontWeight: 700 }} data-testid={"sum-cafe-" + cur}>{money(totals.cafeteriaGuest, cur)}</div></div>
               <div><div style={{ color: "var(--muted)", fontSize: 12 }}>كافيتيريا الاستاف</div><div style={{ fontWeight: 700 }} data-testid={"sum-cafe-staff-" + cur}>{money(totals.cafeteriaStaff, cur)}</div></div>
-              {(Number(totals.cafeteriaDirect?.[cur]) || 0) !== 0 && <div><div style={{ color: "var(--muted)", fontSize: 12 }}>كافيتيريا مبيعات مباشرة</div><div style={{ fontWeight: 700 }}>{money(totals.cafeteriaDirect, cur)}</div></div>}
               <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي التحصيل</div><div style={{ fontWeight: 700 }}>{money(totals.totalCollections, cur)}</div></div>
               <div><div style={{ color: "var(--muted)", fontSize: 12 }}>نقدًا منها</div><div style={{ fontWeight: 700 }}>{money(totals.cashCollections, cur)}</div></div>
               <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي المصاريف</div><div style={{ fontWeight: 700 }}>{money(totals.totalExpenses, cur)}</div></div>
@@ -178,7 +185,7 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
                     <div style={{ fontWeight: 800, marginBottom: 8 }}>{m} ({cur})</div>
                     <div style={{ marginBottom: 6 }}>
                       <label style={{ fontSize: 12.5, color: "var(--muted)" }}>العهدة (قراءة الجهاز في بداية الشيفت)</label>
-                      <input className="cx-input" type="number" disabled={locked} value={record.methodHandover?.[m]?.[cur] ?? 0} onChange={(e) => onChangeMethodHandover(m, cur, e.target.value)} />
+                      <NumField disabled={locked} value={record.methodHandover?.[m]?.[cur] ?? 0} onChange={(v) => onChangeMethodHandover(m, cur, v)} />
                       {prevMethodClosing?.[m]?.[cur] != null && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>مقترح: {money(prevMethodClosing[m], cur)}</div>}
                     </div>
                     {(() => { const tx = methodTransactions(record, m).filter((t) => t.currency === cur); return tx.length > 0 && (
@@ -585,22 +592,24 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   async function saveCorrection() { return guarded("ledger-saveCorrection", () => saveCorrectionInner()); }
   async function saveCorrectionInner() {
     if (!corr || !histRecord) return;
-    const oldT = computeShiftTotals(histRecord), newT = computeShiftTotals(corr);
-    const res = await correctShiftRecord({ ...corr, ...(corr.closed ? newT : {}) }, histRecord.updatedAt);
+    const res = await applyCorrection(histRecord, corr);
     if (res.conflict) { showToast("⚠ اليومية اتغيّرت من مكان تاني - اتحدّثت، راجعها وصحّح تاني"); setCorr(null); setHistRecord(await getShiftRecord(histDate, histShift)); return; }
     if (res.error) { showToast(res.error); return; }
-    // الشيفتات اللي بعده اللي عهدتها كانت منقولة تلقائي من الرصيد القديم: العهدة الجديدة بتتنقل لها لحد أول عهدة مكتوبة بالإيد
-    let moved = 0;
-    const later = await getShiftRecordsInRange(corr.date, addDays(corr.date, 370), hotelId);
-    const order = { morning: 0, evening: 1, night: 2 };
-    const following = (later || []).filter((r) => r.date > corr.date || (r.date === corr.date && order[r.shiftKey] > order[corr.shiftKey]));
-    for (const rec of cascadeHandover(following, oldT, newT)) {
-      const r = await correctShiftRecord({ ...rec, ...(rec.closed ? computeShiftTotals(rec) : {}) }, rec.updatedAt);
-      if (!r.data) { showToast("⚠ التصحيح اتحفظ، لكن نقل العهدة للشيفتات اللي بعده وقف عند " + rec.date + " - راجع عهدتها"); break; }
-      moved += 1;
-    }
     setHistRecord(res.data); setCorr(null);
-    showToast("تم حفظ التصحيح" + (moved ? ` - والعهدة اتحدّثت في ${moved} شيفت بعده` : ""));
+    if (res.stoppedAt) showToast("⚠ التصحيح اتحفظ، لكن نقل العهدة للشيفتات اللي بعده وقف عند " + res.stoppedAt + " - راجع عهدتها");
+    else showToast("تم حفظ التصحيح" + (res.moved ? ` - والعهدة اتحدّثت في ${res.moved} شيفت بعده` : ""));
+  }
+  // المطوّر: مسح يومية اتفتحت بالغلط نهائيًا - بتتفضّى الأول (فالمدفوع على الحجوزات والعهدة بيتظبطوا) وبعدين بتتمسح هي واختيار الشيفت
+  async function devDeleteHistoryShift() { return guarded("ledger-devDelete", () => devDeleteHistoryShiftInner()); }
+  async function devDeleteHistoryShiftInner() {
+    if (!histRecord) return;
+    if ((histRecord.cafeteriaRows || []).some((r) => r.kind === "staff" && (Number(r.collectionAmt) || 0) !== 0)) { showToast("اليومية دي فيها سداد كافيتيريا استاف - ماينفعش تتمسح (السداد متسجّل على حساب الموظف). صحّح أرقامها بدل المسح"); return; }
+    const res = await applyCorrection(histRecord, blankShiftRecord(histRecord));
+    if (!res.data) { showToast(res.error || "اليومية اتغيّرت من مكان تاني - جرّب تاني"); setHistRecord(await getShiftRecord(histDate, histShift)); return; }
+    const del = await devDeleteShift({ hotelId: histRecord.hotelId, date: histRecord.date, shiftKey: histRecord.shiftKey });
+    if (del.error) { showToast(del.error); setHistRecord(await getShiftRecord(histDate, histShift)); return; }
+    setCorr(null); setHistRecord(null);
+    showToast("تم مسح اليومية واختيار الشيفت نهائيًا" + (res.moved ? ` - والعهدة اتحدّثت في ${res.moved} شيفت بعده` : ""));
   }
 
   // تقرير الأونر (كشف الغرف + ورقة كل شيفت في اليوم): أي كتابة معلّقة بتتحفظ الأول عشان التقرير يطلع بآخر أرقام
@@ -714,6 +723,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
                     <>
                       <button className="cx-btn cx-btn-outline" data-testid="correction-start" style={{ fontSize: 13 }} onClick={() => setCorr(JSON.parse(JSON.stringify({ ...histRecord, hotelRows: hotelRowsOf(histRecord) })))}><PencilLine size={13} /> تصحيح اليومية</button>
                       <span style={{ fontSize: 12.5, color: "var(--muted)" }}>لتصحيح رقم اتكتب غلط بعد مراجعة الورق - المدفوع على الحجز والعهدة والتقارير بيتحدّثوا لوحدهم.</span>
+                      {perms.devTools && <span data-testid="dev-delete-shift" style={{ marginInlineStart: "auto" }}><TwoStepButton label="مسح اليومية نهائيًا" confirmLabel="مسح اليومية واختيار الشيفت وكل تحصيلها؟" onConfirm={devDeleteHistoryShift} /></span>}
                     </>
                   ) : (
                     <>

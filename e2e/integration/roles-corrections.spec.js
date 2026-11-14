@@ -115,16 +115,18 @@ test("مدفوع قبل السيستم: بيتحسب في المدفوع وال�
   await users(env);
   const b = await env.seedBooking({ room: 603, guest: "Paper Guest", start: -1, nights: 3, price: 400, paid: 0, currency: "EGP" });
   await page.goto("/");
-  await login(page, "devo");
+  await login(page, "ahmed");                                      // موظف الشيفت هو اللي بيحدده
   await goTab(page, "الحجوزات");
   const card = page.locator("div", { has: page.getByTestId("prior-paid-open") }).filter({ hasText: "Paper Guest" }).last();
   await card.getByTestId("prior-paid-open").click();
   await page.getByTestId("prior-paid-amount").fill("700");
+  await page.getByTestId("prior-paid-note").fill("دفع كاش يوم 10/11");
   await page.getByTestId("prior-paid-save").click();
   await expect(toast(page)).toContainText("مدفوع قبل السيستم");
   const row = await booking(env, b);
   expect(Number(row.amount_paid)).toBe(700);
   expect(Number(row.payment_details.priorPaid)).toBe(700);
+  expect(row.payment_details.priorPaidNote).toBe("دفع كاش يوم 10/11");
   expect((await env.q("select count(*)::int n from shift_records"))[0].n).toBe(0);
   await expect(page.getByText("منها قبل السيستم").first()).toBeVisible();
   // تعديل الحجز من الـ API مايمسحش المبلغ ده
@@ -132,10 +134,10 @@ test("مدفوع قبل السيستم: بيتحسب في المدفوع وال�
   await env.api("rawan", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { payment_details: { senderName: "", senderNumber: "", ref: "", onlinePaid: false }, notes: "x" });
   expect(Number((await booking(env, b)).payment_details.priorPaid)).toBe(700);
   // أكتر من المطلوب بيترفض
-  const over = await env.api("devo", "POST", "/rest/v1/rpc/set_booking_prior_paid", { p_booking: b, p_amount: 5000, p_expected: null });
+  const over = await env.api("devo", "POST", "/rest/v1/rpc/set_booking_prior_paid", { p_booking: b, p_amount: 5000, p_note: null, p_expected: null });
   expect(over.status).toBeGreaterThanOrEqual(400);
-  // والمدير العام/مدير الحجوزات مايقدروش يسجّلوه (حساب المطوّر بس)
-  expect((await env.api("boss", "POST", "/rest/v1/rpc/set_booking_prior_paid", { p_booking: b, p_amount: 100, p_expected: null })).status).toBeGreaterThanOrEqual(400);
+  // المدير العام (عرض فقط) مايسجّلوش
+  expect((await env.api("boss", "POST", "/rest/v1/rpc/set_booking_prior_paid", { p_booking: b, p_amount: 100, p_note: null, p_expected: null })).status).toBeGreaterThanOrEqual(400);
   // فحص التطابق: مفيش "خطأ" بسبب المبلغ ده
   const res = await env.pool.query(readFileSync(new URL("../../supabase/ops/reconcile.sql", import.meta.url), "utf8"));
   const rows = (Array.isArray(res) ? res : [res]).flatMap((r) => r.rows || []);
@@ -166,5 +168,63 @@ test("التقرير بيحسب عهدة الفيزا المكتوبة بالإ�
   const visa = page.getByTestId("balances-table").locator("tbody tr", { hasText: "فيزا" }).first();
   await expect(visa).toBeVisible();
   const cells = (await visa.locator("td").allInnerTexts()).map((t) => t.trim());
-  expect(cells).toEqual(["فيزا", "EGP", "0", "1,200", "—", "+500", "1,700"]);
+  expect(cells).toEqual(["فيزا", "EGP", "0", "1,200", "—", "1,700"]);       // الإجمالي = رصيد آخر شيفت بالعهدة اللي اتكتبت
+});
+
+test("المطوّر يمسح حجز اتضاف بالغلط نهائيًا: تحصيله بيتشال من اليومية المقفولة والعهدة بتتظبط، والحجز بيختفي", async ({ page, env }) => {
+  await users(env);
+  const d2 = cairoDate(-2), d1 = cairoDate(-1);
+  const b = await env.seedBooking({ room: 601, guest: "Wrong Booking", start: -2, nights: 3, price: 500, paid: 800, currency: "EGP" });
+  const keep = await env.seedBooking({ room: 602, guest: "Real Guest", start: -2, nights: 3, price: 500, paid: 300, currency: "EGP" });
+  await env.seedShift("ahmed", { day: d2, key: "morning", closed: true, handover: { EGP: 100 }, closingCash: { EGP: 1200 },
+    collections: [{ room: 601, amount: 800, currency: "EGP", bookingId: b }, { room: 602, amount: 300, currency: "EGP", bookingId: keep }] });
+  await env.seedShift("ahmed", { day: d1, key: "morning", closed: true, handover: { EGP: 1200 }, closingCash: { EGP: 1200 } });
+  await page.goto("/");
+  await login(page, "devo");
+  await goTab(page, "الحجوزات");
+  const del = page.locator("div", { has: page.getByTestId("dev-delete-booking") }).filter({ hasText: "Wrong Booking" }).last().getByTestId("dev-delete-booking").getByRole("button");
+  await del.click();
+  await del.first().click();                                           // تأكيد
+  await expect(toast(page)).toContainText("نهائيًا");
+  expect(await env.q("select id from bookings where id = $1", [b])).toHaveLength(0);
+  const first = await rec(env, d2, "morning");
+  expect(first.rows.filter((r) => r.room === 601)).toHaveLength(1);
+  expect(Number(first.rows.find((r) => r.room === 601).collectionAmt) || 0).toBe(0);
+  expect(Number(first.rows.find((r) => r.room === 602).collectionAmt)).toBe(300);       // تحصيل الحجز التاني زي ما هو
+  expect(first.closing_cash).toEqual({ EGP: 400 });
+  expect((await rec(env, d1, "morning")).handover).toEqual({ EGP: 400 });
+  expect(Number((await booking(env, keep)).amount_paid)).toBe(300);
+  expect((await env.q("select count(*)::int n from activity_log where action like 'مسح نهائي لحجز%' and username = 'devo'"))[0].n).toBe(1);
+  // غير المطوّر مايقدرش
+  expect((await env.api("boss", "POST", "/rest/v1/rpc/dev_delete_booking", { p_booking: keep })).status).toBeGreaterThanOrEqual(400);
+  expect(await env.q("select id from bookings where id = $1", [keep])).toHaveLength(1);
+});
+
+test("المطوّر يمسح يومية اتفتحت بالغلط، ويرجّع حجز اتلغى أو اتغادر مبكرًا بالغلط", async ({ page, env }) => {
+  await users(env);
+  const d1 = cairoDate(-1);
+  const b = await env.seedBooking({ room: 603, guest: "Shift Guest", start: -1, nights: 3, price: 400, paid: 400, currency: "EGP" });
+  await env.seedShift("sara", { day: d1, key: "evening", closed: true, handover: { EGP: 0 }, closingCash: { EGP: 400 }, collections: [{ room: 603, amount: 400, currency: "EGP", bookingId: b }] });
+  await page.goto("/");
+  await login(page, "devo");
+  await openHistory(page, d1, "evening");
+  const del = page.getByTestId("dev-delete-shift").getByRole("button");
+  await del.click();
+  await del.first().click();
+  await expect(toast(page)).toContainText("تم مسح اليومية");
+  expect(await env.q("select 1 from shift_records where date = $1", [d1])).toHaveLength(0);
+  expect(await env.q("select 1 from shift_claims where date = $1", [d1])).toHaveLength(0);
+  expect(Number((await booking(env, b)).amount_paid)).toBe(0);                     // تحصيل اليومية الممسوحة اتشال من الحجز
+
+  // إلغاء بالغلط: المطوّر يرجّع الحجز
+  await env.qRaw("update bookings set status = 'ملغي' where id = $1", [b]);
+  const un = await env.api("devo", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { status: "مؤكد" });
+  expect(un.status, JSON.stringify(un.body)).toBeLessThan(300);
+  expect((await env.q("select status from bookings where id = $1", [b]))[0].status).toBe("مؤكد");
+  // مغادرة مبكرة بالغلط: يرجّع تاريخ الخروج والحالة
+  const out = cairoDate(2);
+  await env.qRaw("update bookings set left_early = true, status = 'تم تسجيل الخروج', checkout = $2, total_room = 400 where id = $1", [b, cairoDate(0)]);
+  const back = await env.api("devo", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { left_early: false, status: "تم تسجيل الدخول", checkout: out, total_room: 1200 });
+  expect(back.status, JSON.stringify(back.body)).toBeLessThan(300);
+  expect((await env.q("select left_early, status, checkout::text, total_room from bookings where id = $1", [b]))[0]).toMatchObject({ left_early: false, status: "تم تسجيل الدخول", checkout: out });
 });

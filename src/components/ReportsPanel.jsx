@@ -315,10 +315,10 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
           {allMethods.some((m) => currencyKeysOf(agg.balances?.[m]?.opening, agg.balances?.[m]?.closing, m === "كاش" ? agg.cashCollections : agg.byMethodCurrency?.[m]).length > 0) && (
             <div className="cx-card" data-testid="balances-table" style={{ padding: 12, marginBottom: 14 }}>
               <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 2, color: "var(--ink)" }}>متابعة العهدة والتحصيل حسب وسيلة الدفع والعملة</div>
-              <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>العهدة + التحصيل - المصاريف + فرق أي عهدة اتكتبت بالإيد = رصيد آخر شيفت (مطابق للدرج وجهاز الفيزا).</div>
+              <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>"الإجمالي دلوقتي" = رصيد آخر شيفت في الفترة (بالعهدة اللي فاتح الشيفت كتبها).</div>
               <div style={{ overflowX: "auto" }}>
                 <table className="cx-table" style={{ fontSize: 13 }}>
-                  <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">مصاريف الفترة</th><th className="cx-th">فرق عهدة مكتوبة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
+                  <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">مصاريف الفترة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
                   <tbody>
                     {allMethods.flatMap((m) => {
                       const isCash = m === "كاش";
@@ -332,7 +332,6 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
                           <td>{money(bal.opening, cur)}</td>
                           <td>{money(collected, cur)}</td>
                           <td>{isCash ? money(agg.totalExpenses, cur) : "—"}</td>
-                          <td style={{ color: Math.abs(bal.adjust[cur] || 0) > 0.004 ? "var(--rust)" : "var(--muted)" }}><bdi dir="ltr">{Math.abs(bal.adjust[cur] || 0) > 0.004 ? (bal.adjust[cur] > 0 ? "+" : "") + fmt(bal.adjust[cur]) : "—"}</bdi></td>
                           <td style={{ fontWeight: 800, color: "var(--teal)" }}>{money(bal.closing, cur)}</td>
                         </tr>
                       ));

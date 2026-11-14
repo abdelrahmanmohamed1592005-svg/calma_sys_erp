@@ -2,6 +2,7 @@ import { supabase } from "../lib/supabaseClient";
 import { fetchAll } from "./page";
 import { friendlyDbError } from "./schemaCheck";
 import { shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
+import { computeShiftTotals, cascadeHandover, stripBookingFromRecord, recordMentionsBooking } from "../domain/money";
 import { getActiveHotelId, resolveHotelScope } from "./hotels";
 
 /* القراءات/الكتابات على سجل واحد لازم تكون على فندق واحد: نطاق "all" هنا غلط برمجي فنرميه بدل ما نقع على الفندق الشغال بصمت */
@@ -82,6 +83,41 @@ export async function correctShiftRecord(record, expectedUpdatedAt) {
   if (error) return { error: friendlyDbError(error) };
   if (!data || data.conflict) return { conflict: true };
   return { data: shiftFromRow(data) };
+}
+
+/* تصحيح يومية + نقل العهدة الجديدة للشيفتات اللي بعدها اللي عهدتها كانت منقولة تلقائي (لحد أول عهدة مكتوبة بالإيد).
+   بترجّع { data, moved, stoppedAt } أو { conflict } أو { error }. */
+export async function applyCorrection(oldRec, newRec) {
+  const oldT = computeShiftTotals(oldRec), newT = computeShiftTotals(newRec);
+  const res = await correctShiftRecord({ ...newRec, ...(newRec.closed ? newT : {}) }, oldRec.updatedAt);
+  if (!res.data) return res;
+  const hotelId = newRec.hotelId ?? getActiveHotelId();
+  const later = await getShiftRecordsInRange(newRec.date, addDays(newRec.date, 370), hotelId);
+  const order = { morning: 0, evening: 1, night: 2 };
+  const following = (later || []).filter((r) => r.date > newRec.date || (r.date === newRec.date && order[r.shiftKey] > order[newRec.shiftKey]));
+  let moved = 0, stoppedAt = null;
+  for (const rec of cascadeHandover(following, oldT, newT)) {
+    const r = await correctShiftRecord({ ...rec, ...(rec.closed ? computeShiftTotals(rec) : {}) }, rec.updatedAt);
+    if (!r.data) { stoppedAt = rec.date; break; }
+    moved += 1;
+  }
+  return { data: res.data, moved, stoppedAt };
+}
+
+/* بتشيل كل تحصيل حجز من كل اليوميات (قبل مسحه نهائيًا): كل يومية بتتصحّح والعهدة بتتنقل، فالخزينة تبقى كأن الحجز ماكانش */
+export async function purgeBookingFromLedgers(booking) {
+  const hotelId = booking.hotelId ?? getActiveHotelId();
+  let touched = 0;
+  for (let i = 0; i < 200; i++) {
+    const recs = await getShiftRecordsInRange("2000-01-01", addDays(shiftDayNow(), 2), hotelId);
+    if (!recs) return { error: "تعذر قراءة اليوميات (مشكلة اتصال) - جرّب تاني" };
+    const rec = recs.find((r) => recordMentionsBooking(r, booking.id));
+    if (!rec) return { touched };
+    const res = await applyCorrection(rec, stripBookingFromRecord(rec, booking.id));
+    if (!res.data) return { error: res.error || "اليومية اتغيّرت من مكان تاني - جرّب تاني" };
+    touched += 1;
+  }
+  return { error: "الحجز ليه تحصيل في يوميات كتير قوي - كلّم الدعم" };
 }
 
 /* كل سجلات اليومية في فترة (استعلام واحد بدل استعلام لكل شيفت في كل يوم -
