@@ -45,3 +45,7 @@ export const recordStaffCafeteria = ({ name, username, description, amount, curr
 
 export const settleStaffCafeteria = ({ name, username, currency, amount, method, details }) =>
   rpc("settle_staff_cafeteria", { p_name: name, p_username: username || null, p_currency: currency, p_amount: amount, p_method: method, p_details: details || {} });
+
+/* مبلغ اتدفع قبل استلام السيستم: بيتحسب في مدفوع الحجز والمتبقي من غير ما يدخل أي يومية/خزينة */
+export const setBookingPriorPaid = ({ bookingId, amount, expectedUpdatedAt }) =>
+  rpc("set_booking_prior_paid", { p_booking: bookingId, p_amount: Number(amount) || 0, p_expected: expectedUpdatedAt || null });

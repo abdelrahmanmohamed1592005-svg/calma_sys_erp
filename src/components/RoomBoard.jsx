@@ -1,13 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Pencil, Check, X, Plus, ArrowLeftRight, Eye, AlertTriangle, Search, Wallet, Receipt, BedDouble, CalendarDays, Moon, Users, Hash, LogIn, LogOut } from "lucide-react";
-import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, bookingDueLines, formatMoneyLines, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
+import { fmt, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, bookingDueLines, formatMoneyLines, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
 import { todayStr, shiftDayNow, nightsBetween, addDays, beforeCheckoutHour } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomStart, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
 import { recordBookingPayment, recordBookingPaymentOther, moveBookingRoom, changeBookingCurrency } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
+import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown, MoneyStack } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
@@ -61,6 +61,8 @@ function TodayStrip({ rooms, bookings, overrides, date, beforeCheckout, onOpen }
 }
 
 const EXTRA_KINDS = [["laundry", "غسيل"], ["cafeteria", "كافيتيريا"], ["tours", "جولات"], ["pickup", "بيك أب"]];
+
+const nonZero = (m) => Object.values(m || {}).some((v) => Math.abs(Number(v) || 0) > 0.004);
 
 export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, perms, profile, onSaveOverride, onUpdateBooking, onRefresh, onEditBooking, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
@@ -126,6 +128,8 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     let cancelled = false;
     (async () => {
       let rev = emptyMoney(), exp = emptyMoney(), flagged = 0;
+      const byMethod = {}, cafe = emptyMoney(), cafeStaff = emptyMoney(), roomsRev = emptyMoney();   // تفصيل التحصيل: كل وسيلة لوحدها، والكافيتيريا مفصولة عن الغرف
+      const add = (acc, src) => currencyKeysOf(src).forEach((c) => { acc[c] = Math.round(((acc[c] || 0) + (Number(src[c]) || 0)) * 100) / 100; });
       for (const s of SHIFTS) {
         const r = await getShiftRecord(shiftDayNow(), s.key);
         if (cancelled) return;
@@ -133,9 +137,11 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         const t = computeShiftTotals(r);
         currencyKeysOf(t.totalCollections).forEach((c) => { rev[c] = (rev[c] || 0) + t.totalCollections[c]; });
         currencyKeysOf(t.totalExpenses).forEach((c) => { exp[c] = (exp[c] || 0) + t.totalExpenses[c]; });
+        Object.entries(t.byMethodCurrency || {}).forEach(([m, v]) => { byMethod[m] = byMethod[m] || emptyMoney(); add(byMethod[m], v); });
+        add(cafe, t.cafeteriaGuest); add(cafe, t.cafeteriaDirect); add(cafeStaff, t.cafeteriaStaff); add(roomsRev, t.roomCollections);
         if (r.flagged) flagged += 1;
       }
-      if (!cancelled) setKpis({ rev, exp, flagged });
+      if (!cancelled) setKpis({ rev, exp, flagged, byMethod, cafe, cafeStaff, roomsRev });
     })();
     return () => { cancelled = true; };
   }, [date, dataVersion]);
@@ -363,7 +369,6 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
   }
 
   const counts = useMemo(() => { const c = { available: 0, occupied_paid: 0, occupied_unpaid: 0, reserved: 0, maintenance: 0, cleaning: 0, early_checkout: 0 }; rooms.forEach((r) => { const s = computeRoomStatus(r.number, bookings, overrides, date, { beforeCheckout }); c[s.key] = (c[s.key] || 0) + 1; }); return c; }, [rooms, bookings, overrides, date, beforeCheckout]);
-  const revCurrencies = kpis ? currencyKeysOf(kpis.rev, kpis.exp) : [];
   // بحث بكود النزيل: بيرجّع الغرفة اللي كان ساكن فيها
   const cq = codeQuery.trim().toLowerCase();
   const codeHits = findGuestCodeHits(bookings, cq);
@@ -400,8 +405,19 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         )}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 16 }}>
-        <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-green" aria-hidden="true"><Wallet size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>تحصيل اليوم</div><div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.rev, c)} ${c}`).join(" + ") : "0") : "…"}</div></div></div>
-        <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-red" aria-hidden="true"><Receipt size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>مصاريف اليوم</div><div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.exp, c)} ${c}`).join(" + ") : "0") : "…"}</div></div></div>
+        <div className="cx-kpi" data-testid="kpi-rev" style={{ display: "flex", gap: 12, alignItems: "flex-start" }}><span className="cx-ico ic-green" aria-hidden="true"><Wallet size={19} /></span><div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>تحصيل اليوم (كل الشيفتات)</div>
+          <div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? <MoneyStack value={kpis.rev} /> : "…"}</div>
+          {kpis && nonZero(kpis.rev) && (
+            <dl className="cx-kpi-split" data-testid="kpi-rev-split">
+              {Object.keys(kpis.byMethod).filter((m) => nonZero(kpis.byMethod[m])).sort((a, b) => (a === "كاش" ? -1 : b === "كاش" ? 1 : a.localeCompare(b, "ar"))).map((m) => <div key={m}><dt>{m}</dt><dd><MoneyStack value={kpis.byMethod[m]} /></dd></div>)}
+              {(nonZero(kpis.cafe) || nonZero(kpis.cafeStaff)) && <div className="sep"><dt>غرف</dt><dd><MoneyStack value={kpis.roomsRev} /></dd></div>}
+              {nonZero(kpis.cafe) && <div><dt>كافيتيريا النزلاء</dt><dd><MoneyStack value={kpis.cafe} /></dd></div>}
+              {nonZero(kpis.cafeStaff) && <div><dt>كافيتيريا الاستاف</dt><dd><MoneyStack value={kpis.cafeStaff} /></dd></div>}
+            </dl>
+          )}
+        </div></div>
+        <div className="cx-kpi" data-testid="kpi-exp" style={{ display: "flex", gap: 12, alignItems: "flex-start" }}><span className="cx-ico ic-red" aria-hidden="true"><Receipt size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>مصاريف اليوم</div><div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? <MoneyStack value={kpis.exp} /> : "…"}</div></div></div>
         <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-indigo" aria-hidden="true"><BedDouble size={19} /></span><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>نسبة الإشغال</div><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span style={{ fontWeight: 700, fontSize: 20 }}>{occPct}%</span><span aria-hidden="true" style={{ flex: 1, height: 6, background: "var(--paper2)", borderRadius: 6, overflow: "hidden" }}><span style={{ display: "block", height: "100%", width: occPct + "%", background: "linear-gradient(90deg,#7A6BC9,#5B4BA6)" }} /></span></div></div></div>
         <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className={"cx-ico " + (kpis?.flagged ? "ic-red" : "ic-amber")} aria-hidden="true"><AlertTriangle size={19} /></span><div><div style={{ fontSize: 13, color: "var(--muted)" }}>شيفتات تحتاج متابعة</div><div style={{ fontWeight: 700, fontSize: 20, color: kpis?.flagged ? "var(--rust)" : "var(--text)" }}>{kpis ? kpis.flagged : "…"}</div></div></div>
       </div>

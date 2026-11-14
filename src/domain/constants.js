@@ -18,10 +18,14 @@ export const SHIFTS = [
 
 export const ROLES = [
   { key: "staff", label: "موظف الشيفت" },
+  { key: "shift_manager", label: "مدير الشيفت" },
   { key: "reservations", label: "مدير الحجوزات" },
   { key: "accounts", label: "مديرة الحسابات" },
   { key: "gm", label: "المدير العام" },
+  // حساب المطوّر: واحد بس ومخفي من قايمة الموظفين (مابيتعملش من الواجهة) - تعديلاته بتظهر في سجل الحركة باسمه
+  { key: "dev", label: "المطوّر", hidden: true },
 ];
+export const ASSIGNABLE_ROLES = ROLES.filter((r) => !r.hidden);
 
 export const TAB_LABELS = { board: "لوحة الغرف", ledger: "اليومية", bookings: "الحجوزات", reports: "التقارير", activity: "سجل الحركة", users: "إدارة المستخدمين" };
 
@@ -39,7 +43,12 @@ export const PERMISSIONS = {
   // يقدروا يفتحوه تاني (انظر قسم ١٦ في schema.sql).
   reservations: { tabs: ["board", "bookings", "ledger", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, moveGuest: true, manageUsers: false, markPaymentReceived: false, reopenShift: true, decideRefund: true },
   accounts: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: false, markPaymentReceived: false, reopenShift: false },
-  gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false, reopenShift: true },
+  // مدير الشيفت: كل شغل موظف الشيفت + يشوف التقارير وسجل الحركة + يفتح شيفت اتقفل بالغلط + يلغي اختيار شيفت غلط
+  // + يصحّح يوميات شيفتات اليوم حتى لو اتقفلت (correctLedger: "today").
+  shift_manager: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: true, closeShift: true, editBookings: false, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: true, viewReports: true, viewActivity: true, manageUsers: false, manageClaims: true, markPaymentReceived: true, moveGuest: true, editBookingPrice: true, reopenShift: true, decideRefund: false, correctLedger: "today" },
+  // المطوّر: صلاحيات المدير العام + مدير الحجوزات، ويصحّح أي يومية في أي يوم (correctLedger: "any"). مابياخدش شيفت ومابيحصّلش.
+  dev: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], editLedger: false, closeShift: false, editBookings: true, canCreateBookings: true, editRoomStatus: true, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: true, manageClaims: true, markPaymentReceived: false, moveGuest: true, reopenShift: true, decideRefund: true, correctLedger: "any", priorPaid: true },
+  gm: { tabs: ["board", "ledger", "bookings", "reports", "activity", "users"], manageClaims: true, editLedger: false, closeShift: false, editBookings: false, canCreateBookings: false, editRoomStatus: false, roomStatusRestricted: false, viewReports: true, viewActivity: true, manageUsers: true, markPaymentReceived: false, reopenShift: true },
 };
 
 // جهات الحجز مثبّتة على الخمسة دول بس (مش نص حر تاني) - نفس فكرة تثبيت

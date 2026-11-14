@@ -16,7 +16,8 @@ per_booking as (select booking_id, cur, sum(amt) as led from ledger group by 1, 
 select 'خطأ' as level, 'المدفوع على الحجز مش مطابق لتحصيله في اليومية' as check_name, b.id::text as ref,
        format('[%s] %s غرفة %s: مدفوع %s %s / في اليومية %s', (select name from hotels h where h.id = b.hotel_id), b.guest_name, b.room, b.amount_paid, b.currency, coalesce(p.led, 0)) as detail
 from bookings b left join per_booking p on p.booking_id = b.id::text and p.cur = b.currency
-where coalesce(b.amount_paid, 0) <> coalesce(p.led, 0)
+-- المدفوع قبل استلام السيستم (payment_details.priorPaid) مش في أي يومية - بيتطرح قبل المقارنة
+where coalesce(b.amount_paid, 0) - coalesce(nullif(b.payment_details ->> 'priorPaid', '')::numeric, 0) <> coalesce(p.led, 0)
 union all
 select 'خطأ', 'تحصيل في اليومية لحجز مش موجود', p.booking_id, format('%s %s', p.led, p.cur)
 from per_booking p left join bookings b on b.id::text = p.booking_id

@@ -18,6 +18,11 @@ async function seedDay(env) {
     collections: [{ room: 610, amount: 3200, method: "فيزا", currency: "EGP", bookingId: b610 }, { room: 611, amount: 1600, currency: "EGP", bookingId: b611 }, { room: 605, amount: 200, currency: "EGP", bookingId: b605 }],   // 605: دفع خدمة الغسيل = تحصيل على غرفته
     rowsPatch: { 610: { paymentDetails: { senderName: "", senderNumber: "1234", ref: "", onlinePaid: false } } },
   });
+  // عهدة فيزا من الشيفت اللي قبله + كافيتيريا نزيل وكافيتيريا استاف (كل واحدة لوحدها في التقرير)
+  await env.qRaw(`update shift_records set method_handover = '{"فيزا":{"EGP":6245}}'::jsonb, cafeteria_rows = $1::jsonb`, [JSON.stringify([
+    { room: "كافيتيريا", kind: "guest", who: "Guest 611", guestRoom: 611, collectionAmt: 120, collectionMethod: "كاش", collectionCurrency: "EGP", collectionDesc: "", expenseAmt: "", paymentDetails: {}, notes: "" },
+    { room: "كافيتيريا", kind: "staff", who: "سارة", consumerKey: "sara", collectionAmt: 40, collectionMethod: "كاش", collectionCurrency: "EGP", collectionDesc: "", expenseAmt: "", paymentDetails: {}, notes: "" },
+  ])]);
   await env.qRaw(`update shift_records set hotel_rows = $1::jsonb`, [JSON.stringify([{ room: "فندق", expenseDesc: "فاتورة كهرباء", expenseAmt: 70, expenseCategory: "كهرباء ومياه", expenseCurrency: "EGP", collectionDesc: "", collectionAmt: "", collectionMethod: "كاش", collectionCurrency: "EGP", paymentDetails: {}, notes: "" }])]);
 }
 const text = async (loc) => (await loc.innerText()).replace(/[⁦-⁩]/g, "");
@@ -65,10 +70,15 @@ test("موظف الشيفت: زرار إرسال اليومية للأونر ب�
   expect(await text(sheets.first().locator("tbody tr", { hasText: "605" }).first())).toContain("كاش 200 EGP");
   const box = async (label) => text(sheets.first().locator(".cx-or-sum > div", { hasText: label }).first().locator("dd"));
   expect(await box("العهدة")).toBe("500 EGP");
-  expect(await box("إجمالي التحصيل")).toBe("5,000 EGP");
+  expect(await box("تحصيل الغرف")).toBe("5,000 EGP");
+  expect(await box("كافيتيريا النزلاء")).toBe("120 EGP");
+  expect(await box("كافيتيريا الاستاف")).toBe("40 EGP");
+  expect(await box("إجمالي التحصيل")).toBe("5,160 EGP");
   expect(await box("إجمالي المصاريف")).toBe("70 EGP");
-  expect(await box("رصيد الخزينة")).toBe("2,230 EGP");   // 500 + 1,800 كاش - 70
-  expect(await box("الفيزا")).toBe("3,200 EGP");
+  expect(await box("رصيد الخزينة")).toBe("2,390 EGP");   // 500 + 1,960 كاش - 70
+  expect(await box("الفيزا - عهدة")).toBe("6,245 EGP");
+  expect(await box("الفيزا - تحصيل الشيفت")).toBe("3,200 EGP");
+  expect(await box("الفيزا - الإجمالي بالعهدة")).toBe("9,445 EGP");
   expect(shift).toContain("تم تسليم العهدة");
 
   const send = page.getByTestId("owner-report-send");

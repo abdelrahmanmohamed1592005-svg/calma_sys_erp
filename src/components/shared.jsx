@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import { otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
+import { currencyKeysOf, otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { PRINT_FIT_CSS } from "../lib/printFit";
 import { roomLabel, roomDisplay } from "../domain/constants";
 
@@ -316,6 +316,10 @@ export function GlobalStyle() {
       .cx-auth-form{ display:flex; align-items:center; justify-content:center; padding:24px 16px; }
       .cx-auth-form .cx-card{ box-shadow:var(--sh-l); }
       ::placeholder{ color:#B3AA97; }
+      .cx-kpi-split{ margin:8px 0 0; padding-top:7px; border-top:1px dashed var(--hair); display:grid; gap:3px; font-size:12.5px; }
+      .cx-kpi-split > div{ display:flex; justify-content:space-between; gap:10px; align-items:baseline; }
+      .cx-kpi-split > div.sep{ border-top:1px dashed var(--hair); padding-top:5px; margin-top:2px; }
+      .cx-kpi-split dt{ color:var(--muted); } .cx-kpi-split dd{ margin:0; font-weight:700; color:var(--ink); }
       /* ---------- تقرير الأونر (كشف الغرف + ورقة الشيفت) ---------- */
       .cx-or{ position:fixed; inset:0; z-index:90; background:#EFEBE1; display:flex; flex-direction:column; }
       .cx-or-bar{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px 14px; background:#fff; border-bottom:1px solid var(--hair); box-shadow:var(--sh); }
@@ -408,6 +412,14 @@ export function GlobalStyle() {
 }
 
 /* حرفين من الاسم للصورة الرمزية (من غير "ال" في أول الكلمة) */
+/* مبالغ بأكتر من عملة: كل عملة في سطر لوحدها، من الشمال لليمين ("4,380 EGP")، والأصفار مابتتعرضش.
+   قبل كده كانت بتتكتب في سطر واحد "4,380 EGP + 50 EUR" جوه صفحة عربي فترتيبها بيتقلب وتتقرا غلط. */
+export function MoneyStack({ value, empty = "0" }) {
+  const keys = currencyKeysOf(value).filter((c) => Math.abs(Number(value?.[c]) || 0) > 0.004);
+  if (!keys.length) return <bdi dir="ltr">{empty}</bdi>;
+  return keys.map((c) => <bdi key={c} dir="ltr" style={{ display: "block", textAlign: "right", whiteSpace: "nowrap" }}>{fmt(value[c])} {c}</bdi>);
+}
+
 export function initials(name) {
   return String(name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w.replace(/^ال(?=..)/, "")[0] || "").join("") || "?";
 }
@@ -565,6 +577,7 @@ export function MoneyBox({ b }) {
   const cells = [["الإجمالي", fmt(total), null]];
   if (online) cells.push(["مدفوع أونلاين (سعر الغرفة)", fmt(onlineRoomCovered(b)), "var(--sage)"]);
   if (!online || paid > 0 || due > 0) cells.push([online ? "المتحصّل في الفندق" : "المدفوع", fmt(paid), null]);
+  if (Number(b.paymentDetails?.priorPaid) > 0) cells.push(["منها قبل السيستم", fmt(b.paymentDetails.priorPaid), "var(--muted)"]);
   if (b.status !== "ملغي" && (due > 0 || !online)) cells.push([online ? "المتبقي في الفندق (خدمات/دخول مبكر/تمديد)" : "المتبقي", fmt(due), due > 0 ? "var(--rust)" : "var(--sage)"]);
   // خدمات بعملات تانية (كل عملة لوحدها من غير تحويل)
   const oT = otherTotals(b), oP = otherPaidOf(b), oD = otherDue(b);

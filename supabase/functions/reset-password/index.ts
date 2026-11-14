@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
       .select("role, active")
       .eq("id", callerData.user.id)
       .maybeSingle();
-    if (profileErr || !callerProfile || callerProfile.role !== "gm" || !callerProfile.active) {
+    if (profileErr || !callerProfile || !["gm", "dev"].includes(callerProfile.role) || !callerProfile.active) {
       return json({ error: "الصلاحية دي للمدير العام بس" }, 403, corsHeaders);
     }
 
@@ -55,10 +55,11 @@ Deno.serve(async (req) => {
 
     const { data: targetProfile, error: targetErr } = await adminClient
       .from("profiles")
-      .select("id")
+      .select("id, role")
       .eq("username", username)
       .maybeSingle();
-    if (targetErr || !targetProfile) return json({ error: "المستخدم مش موجود" }, 404, corsHeaders);
+    // حساب المطوّر كلمة مروره بتتغيّر منه هو بس (من "تغيير كلمة المرور" في الهيدر) - لغيره كأنه مش موجود
+    if (targetErr || !targetProfile || (targetProfile.role === "dev" && callerProfile.role !== "dev")) return json({ error: "المستخدم مش موجود" }, 404, corsHeaders);
 
     const { error: updateErr } = await adminClient.auth.admin.updateUserById(targetProfile.id, {
       password: newPassword,

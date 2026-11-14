@@ -73,6 +73,17 @@ export async function updateShiftRecordIfUnchanged(date, shiftKey, expectedUpdat
   return { data: shiftFromRow(data) };
 }
 
+/* تصحيح يومية (المطوّر: أي يوم - مدير الشيفت: شيفتات اليوم): الرقم الأصلي بيتعدّل، والقاعدة بتظبط مدفوع الحجوزات المربوطة
+   بنفس الفرق وبتسجّل التصحيح في سجل التدقيق وسجل الحركة. بترجّع { data } أو { conflict } أو { error }. */
+export async function correctShiftRecord(record, expectedUpdatedAt) {
+  const { data, error } = await supabase.rpc("correct_shift_record", {
+    p_hotel: record.hotelId ?? getActiveHotelId(), p_date: record.date, p_key: record.shiftKey, p_expected: expectedUpdatedAt || null, p_record: shiftToRow(record),
+  });
+  if (error) return { error: friendlyDbError(error) };
+  if (!data || data.conflict) return { conflict: true };
+  return { data: shiftFromRow(data) };
+}
+
 /* كل سجلات اليومية في فترة (استعلام واحد بدل استعلام لكل شيفت في كل يوم -
    تقرير فترة سنة كان بيبعت أكتر من ١٠٠٠ طلب). بترجع null لو القراءة فشلت. */
 export async function getShiftRecordsInRange(fromDate, toDate, hotelId) {

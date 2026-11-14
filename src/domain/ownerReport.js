@@ -63,6 +63,7 @@ function paidLines(b, payments) {
   if (online) lines.push("الغرفة مدفوعة أونلاين");
   if (paid > 0 || !online) lines.push(amt(paid, b.currency));
   Object.entries(otherPaidOf(b)).forEach(([c, v]) => lines.push(amt(v, c)));
+  if (Number(b.paymentDetails?.priorPaid) > 0) lines.push(`قبل السيستم ${amt(b.paymentDetails.priorPaid, b.currency)}`);
   // تفاصيل الدفع من اليومية نفسها: كل وسيلة بمبلغها (كاش 1,261 / فيزا 6,245 ****1234)
   (payments || []).forEach((p) => {
     const d = describePaymentDetails(p.method, p.details);
@@ -147,9 +148,15 @@ export function buildShiftSheet({ record, rooms, hotelName, staffNames }) {
     const notes = mine.map((r) => r.notes).filter(Boolean);
     return { tone: collection.length || expenses.length ? "ok" : "empty", cells: { room: roomText(rooms, n), collection: [...collection, ...notes], expenses } };
   });
-  const cafe = [record.cafeteria || {}, ...(record.cafeteriaRows || [])];
-  const cafeCol = cafe.map((r) => { const l = collectionLine(r); return l && r.who ? `${l} (${r.who})` : l; }).filter(Boolean), cafeExp = cafe.map(expenseLine).filter(Boolean);
-  if (cafeCol.length || cafeExp.length) rows.push({ tone: "section", cells: { room: ["كافيتيريا"], collection: cafeCol, expenses: cafeExp } });
+  const cafeLine = (r) => { const l = collectionLine(r); return l && r.who ? `${l} (${r.who})` : l; };
+  const cafeGroup = (label, list) => {
+    const col = list.map(cafeLine).filter(Boolean), exp = list.map(expenseLine).filter(Boolean);
+    if (col.length || exp.length) rows.push({ tone: "section", cells: { room: [label], collection: col, expenses: exp } });
+  };
+  const autoRows = record.cafeteriaRows || [];
+  cafeGroup("كافيتيريا النزلاء", autoRows.filter((r) => r.kind !== "staff"));
+  cafeGroup("كافيتيريا الاستاف", autoRows.filter((r) => r.kind === "staff"));
+  cafeGroup("كافيتيريا مباشر", [record.cafeteria || {}]);
   (record.hotelRows || []).forEach((r) => {
     const c = collectionLine(r), e = expenseLine(r);
     if (c || e) rows.push({ tone: "section", cells: { room: ["مصاريف الفندق"], collection: [c, r.notes].filter(Boolean), expenses: e ? [e] : [] } });
@@ -159,6 +166,14 @@ export function buildShiftSheet({ record, rooms, hotelName, staffNames }) {
   Object.entries(t.cashCollections || {}).forEach(([c, v]) => { if (c !== "EGP") sumInto(foreign, c, Number(v) || 0); });
   const known = new Set(["كاش", ...VISA, ...TRANSFER, ...VODAFONE]);
   const otherMethods = Object.keys(t.byMethodCurrency || {}).filter((m) => !known.has(m));
+  // وسيلة الدفع (فيزا...): لو عليها عهدة من قبل الشيفت، بيظهر تحصيل الشيفت لوحده والإجمالي بالعهدة (اللي المفروض يطابق الجهاز/الورق)
+  const methodBoxes = (label, list) => {
+    const col = pickMethods(t.byMethodCurrency, list), hand = pickMethods(record.methodHandover, list);
+    if (moneyText(hand) === "0") return [[label, moneyText(col)]];
+    const total = {};
+    [hand, col].forEach((o) => Object.entries(o).forEach(([c, v]) => sumInto(total, c, v)));
+    return [[`${label} - عهدة`, moneyText(hand)], [`${label} - تحصيل الشيفت`, moneyText(col)], [`${label} - الإجمالي بالعهدة`, moneyText(total)]];
+  };
   const names = [record.staffName, ...(record.helpers || []).map((u) => staffNames?.[u] || u)].filter(Boolean).join(" + ");
   return {
     id: `shift-${record.shiftKey}`, title: `ورقة ${shift?.label || "الشيفت"}`, hotelName: hotelName || "",
@@ -166,9 +181,9 @@ export function buildShiftSheet({ record, rooms, hotelName, staffNames }) {
     columns: [{ key: "room", label: "الغرفة", w: 0.9 }, { key: "collection", label: "التحصيل", w: 2.6 }, { key: "expenses", label: "المصاريف", w: 2.1 }],
     rows,
     summary: [
-      ["العهدة", moneyText(record.handover)], ["إجمالي التحصيل", moneyText(t.totalCollections)], ["إجمالي المصاريف", moneyText(t.totalExpenses)], ["رصيد الخزينة", moneyText(t.closingCash)],
-      ["الفيزا", moneyText(pickMethods(t.byMethodCurrency, VISA))], ["انستاباي / تحويل", moneyText(pickMethods(t.byMethodCurrency, TRANSFER))],
-      ["فودافون كاش", moneyText(pickMethods(t.byMethodCurrency, VODAFONE))], ["عملة", moneyText(foreign)],
+      ["العهدة", moneyText(record.handover)], ["تحصيل الغرف", moneyText(t.roomCollections)], ["كافيتيريا النزلاء", moneyText(t.cafeteriaGuest)], ["كافيتيريا الاستاف", moneyText(t.cafeteriaStaff)],
+      ...(moneyText(t.cafeteriaDirect) !== "0" ? [["كافيتيريا مبيعات مباشرة", moneyText(t.cafeteriaDirect)]] : []), ["إجمالي التحصيل", moneyText(t.totalCollections)], ["إجمالي المصاريف", moneyText(t.totalExpenses)], ["رصيد الخزينة", moneyText(t.closingCash)], ["عملة", moneyText(foreign)],
+      ...methodBoxes("الفيزا", VISA), ...methodBoxes("انستاباي / تحويل", TRANSFER), ...methodBoxes("فودافون كاش", VODAFONE),
       ...otherMethods.map((m) => [m, moneyText(t.byMethodCurrency[m])]),
     ],
     notes: [record.flagged ? "⚠ فيه مشكلة تحتاج متابعة" : "", record.shiftNotes ? `ملاحظات: ${record.shiftNotes}` : ""].filter(Boolean),

@@ -315,6 +315,7 @@ test.describe("الجهاز المشترك: الموظف مايختارش شيف
     await page.getByTitle("تسجيل خروج").click();
     const gate = page.getByRole("button", { name: /طباعة التقرير وتسجيل الخروج/ });
     if (await gate.isVisible().catch(() => false)) { await page.evaluate(() => { window.print = () => {}; }); await gate.click(); }
+    await expect(page.getByRole("button", { name: "دخول", exact: true })).toBeVisible();     // الخروج خلص وشاشة الدخول ظهرت (قبل كده كان بيكتب الاسم بدري ساعات)
     await login(page, "ahmed");                                   // موظف بيدخل على نفس الجهاز
     await expect.poll(() => activeHotelId(page)).toBe("1");        // فندق ١ مش Park Plaza
     await goTab(page, "اليومية");

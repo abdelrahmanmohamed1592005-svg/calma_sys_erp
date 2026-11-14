@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Info, UserPlus, Key, Check, AlertTriangle, CalendarClock } from "lucide-react";
 import { TwoStepButton, initials, SectionHead } from "./shared";
-import { ROLES, SHIFTS } from "../domain/constants";
+import { ROLES, ASSIGNABLE_ROLES, SHIFTS } from "../domain/constants";
 import { shiftDayNow, isShiftOver } from "../domain/dates";
 import { getClaimsForDate, clearClaimRow, deleteShiftRecord, getShiftRecord } from "../data/shifts";
 import { adminCreateUser, setProfileActive, adminResetPassword } from "../lib/auth";
@@ -10,7 +10,7 @@ import { HotelsAdmin } from "./HotelsAdmin";
 import { setProfileHotels } from "../data/hotels";
 import { validatePasswordStrength, validateUsername, sanitizeText } from "../domain/security";
 
-export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog, showToast, dataVersion, allRooms = [], onHotelsChanged }) {
+export function UsersPanel({ users, onRefresh, currentUsername, readOnly, canManageClaims = !readOnly, onLog, showToast, dataVersion, allRooms = [], onHotelsChanged }) {
   const { hotel, hotels } = useHotel();
   const [form, setForm] = useState(null);
   const [resetTarget, setResetTarget] = useState(null);
@@ -18,7 +18,7 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
   const [claims, setClaims] = useState(null);
   const today = shiftDayNow();
 
-  useEffect(() => { if (!readOnly) (async () => setClaims(await getClaimsForDate(today)))(); }, [readOnly, dataVersion, today]);
+  useEffect(() => { if (canManageClaims) (async () => setClaims(await getClaimsForDate(today)))(); }, [canManageClaims, dataVersion, today]);
 
   // إلغاء اختيار شيفت غلط: بيمسح الاختيار نفسه + ورقة اليومية (shift_records)
   // المرتبطة بيه تحديدًا (دي ورقة تخص الاختيار الغلط ده بس، فمسحها كاملة
@@ -95,7 +95,7 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
 
       {!readOnly && <HotelsAdmin hotels={hotels} rooms={allRooms} onChanged={() => onHotelsChanged && onHotelsChanged()} onLog={onLog} showToast={showToast} />}
 
-      {!readOnly && claims && (
+      {canManageClaims && claims && (
         <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
           <SectionHead icon={CalendarClock} tone="amber" title={`شيفتات النهارده - ${hotel.name}`} hint="مين اختار أنهي شيفت النهارده في الفندق المفتوح (غيّر الفندق من أعلى الصفحة)" />
           <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8, lineHeight: 1.7 }}>لو حد اختار شيفت غلط بالغلط، تقدر تلغي اختياره من هنا عشان يقدر يختار تاني (تصحيح إداري بس) - طول ما معاد الشيفت لسه ماخلصش. تنبيه: ده بيمسح ورقة اليومية بتاعة الشيفت ده كاملة، أما أي حجوزات أو تغييرات غرف حصلت في نفس الوقت فمش بتُمسح أو تترجع تلقائيًا - لازم تراجعيها وتصلّحيها يدويًا لو فيها خطأ.</div>
@@ -119,7 +119,7 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>الاسم</label><input className="cx-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>اسم المستخدم</label><input className="cx-input" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></div>
-            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>الدور</label><select className="cx-select" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{ROLES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}</select></div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>الدور</label><select className="cx-select" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{ASSIGNABLE_ROLES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}</select></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>كلمة المرور</label><input className="cx-input" type="password" value={form.pw} onChange={(e) => setForm({ ...form, pw: e.target.value })} /></div>
           </div>
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}><button className="cx-btn cx-btn-gold" onClick={saveNew}><Check size={14} /> حفظ</button><button className="cx-btn cx-btn-outline" onClick={() => setForm(null)}>إلغاء</button></div>
@@ -127,10 +127,10 @@ export function UsersPanel({ users, onRefresh, currentUsername, readOnly, onLog,
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {users.map((u) => (
+        {users.filter((u) => u.role !== "dev").map((u) => (
           <div key={u.username} className="cx-card" style={{ padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, opacity: u.active ? 1 : 0.6 }}>
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-avatar" aria-hidden="true" style={{ width: 40, height: 40, background: u.active ? undefined : "#CFC8B8" }}>{initials(u.name)}</span><div><div style={{ fontWeight: 700, fontSize: 15 }}>{u.name} {u.username === currentUsername && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>(أنت)</span>}</div><div style={{ fontSize: 13, color: "var(--muted)" }}><span dir="ltr">@{u.username}</span> · <span className={"cx-role r-" + u.role}>{ROLES.find((r) => r.key === u.role)?.label}</span> {!u.active && <span className="cx-role off">· معطّل</span>}</div></div></div>
-            {!readOnly && u.role === "staff" && hotels.filter((h) => h.active).length > 1 && (
+            {!readOnly && (u.role === "staff" || u.role === "shift_manager") && hotels.filter((h) => h.active).length > 1 && (
               <div data-testid={"user-hotels-" + u.username} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexBasis: "100%", paddingTop: 8, borderTop: "1px dashed var(--hair)", fontSize: 13 }}>
                 <span style={{ color: "var(--muted)" }}>الفنادق المسموحة:</span>
                 {hotels.filter((h) => h.active).map((h) => {

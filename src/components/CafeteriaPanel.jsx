@@ -130,7 +130,7 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       {guestOutstanding.length > 0 && (
         <div data-testid="cafeteria-guest-due" style={{ fontSize: 13, background: "var(--paper2)", borderRadius: 8, padding: 8, marginBottom: 10 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>خدمات كافيتيريا على نزلاء لسه ماتحصّلتش</div>
-          {guestOutstanding.map((b) => <div key={b.id}><RoomName rooms={rooms} number={b.room} /> · <span className="cx-iso">{b.guestName}</span>: {cafeteriaOutstandingLines(b).map((l) => `${fmt(l.due)} ${l.currency}`).join(" + ")}</div>)}
+          {guestOutstanding.map((b) => <div key={b.id}><RoomName rooms={rooms} number={b.room} /> · <span className="cx-iso">{b.guestName}</span>: <bdi dir="ltr">{cafeteriaOutstandingLines(b).map((l) => `${fmt(l.due)} ${l.currency}`).join(" + ")}</bdi></div>)}
         </div>
       )}
 

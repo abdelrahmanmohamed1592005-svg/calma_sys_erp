@@ -74,7 +74,8 @@ describe("permission matrix sanity", () => {
 
   it("only the GM can manage user accounts", () => {
     ROLES.forEach((r) => {
-      if (r.key === "gm") expect(PERMISSIONS.gm.manageUsers).toBe(true);
+      // المطوّر (حساب واحد مخفي) صلاحياته = المدير العام
+      if (r.key === "gm" || r.key === "dev") expect(PERMISSIONS[r.key].manageUsers).toBe(true);
       else expect(PERMISSIONS[r.key].manageUsers).toBe(false);
     });
   });
