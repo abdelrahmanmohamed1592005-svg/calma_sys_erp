@@ -46,13 +46,44 @@ test.describe("الإعداد الأول وإدارة المستخدمين", () 
     await fill("نور", "nour", "short1");
     await expect(toast(page)).toContainText("كلمة المرور 8 حروف على الأقل");
     await fill("نور", "ahmed", "Strong123");
-    await expect(toast(page)).toContainText("اسم المستخدم موجود بالفعل");
+    await expect(toast(page)).toContainText("شغّال حاليًا للموظف");
     await fill("نور", "nour", "Strong123", "accounts");
     await expect(toast(page)).toContainText("تم إنشاء الحساب");
     expect((await env.q("select role, active, name from profiles where username = 'nour'"))[0]).toEqual({ role: "accounts", active: true, name: "نور" });
     await logout(page);
     await login(page, "nour", "Strong123");
     expect(await page.locator(".cx-tab").count()).toBe(6);
+  });
+
+  test("إضافة اسم مستخدم كان متسجّل قبل كده: موظف قديم متعطّل، أو حساب دخول من غير ملف - بيتضاف عادي ويدخل بالباسورد الجديد", async ({ page, env }) => {
+    await users(env);
+    await env.q("update profiles set active = false where username = 'sara'");                          // موظفة قديمة متعطّلة
+    const { randomUUID } = await import("node:crypto");
+    await env.q("insert into auth.users(id, email, password) values ($1, 'hany@calma.internal', 'OldPass123')", [randomUUID()]);   // حساب دخول يتيم من محاولة قديمة
+    await page.goto("/");
+    await login(page, "boss");
+    await goTab(page, "إدارة المستخدمين");
+    const add = async (name, user, pw, role) => {
+      await page.getByRole("button", { name: /مستخدم جديد/ }).click();
+      await field(page, "الاسم").fill(name); await field(page, "اسم المستخدم").fill(user); await field(page, "كلمة المرور").fill(pw);
+      await page.locator("xpath=//label[contains(.,'الدور')]/following-sibling::select").selectOption(role);
+      await page.getByRole("button", { name: /حفظ/ }).click();
+    };
+    const [before] = await env.q("select id from profiles where username = 'sara'");
+    await add("سارة الجديدة", "sara", "NewPass123", "accounts");
+    await expect(toast(page)).toContainText("الحساب القديم بنفس الاسم اترجّع");
+    expect((await env.q("select id, role, active, name from profiles where username = 'sara'"))[0]).toEqual({ id: before.id, role: "accounts", active: true, name: "سارة الجديدة" });
+    await expect(toast(page)).toHaveCount(0, { timeout: 10000 });
+    await add("mrhany", "hany", "HanyPass123", "gm");
+    await expect(toast(page)).toContainText("الحساب القديم بنفس الاسم اترجّع");
+    expect((await env.q("select role, active, name from profiles where username = 'hany'"))[0]).toEqual({ role: "gm", active: true, name: "mrhany" });
+    expect((await env.q("select count(*)::int n from auth.users where email = 'hany@calma.internal'"))[0].n).toBe(1);
+    await logout(page);
+    await login(page, "hany", "HanyPass123");
+    expect(await page.locator(".cx-tab").count()).toBe(6);
+    await logout(page);
+    await login(page, "sara", "NewPass123");
+    await expect(page.locator(".cx-tab").first()).toBeVisible();
   });
 
   test("إعادة تعيين كلمة مرور: الجديدة تدخل والقديمة لأ", async ({ page, env }) => {

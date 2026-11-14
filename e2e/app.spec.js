@@ -47,6 +47,30 @@ test.describe("تسجيل الدخول", () => {
     await login(page, "ahmed");
     await expect(page.getByRole("button", { name: "دخول", exact: true })).toBeVisible();
     await expect(tabs(page)).toHaveCount(0);
+    await expect(page.getByText("الحساب ده معطّل")).toBeVisible();          // السبب واضح فورًا، مش بعد مؤقّت
+  });
+
+  test("جهاز/نت بطيء: الدخول اللي بياخد أكتر من 6 ثواني مابيطلعش خطأ - بيطمّن المستخدم وبيدخل", async ({ page }) => {
+    await open(page);
+    // تأخير رد تسجيل الدخول 8 ثواني (زي جهاز ضعيف أو نت بطيء)
+    await page.route("**/auth/v1/token**", async (route) => { await new Promise((r) => setTimeout(r, 8000)); await route.fallback(); });
+    await page.locator("input").first().fill("ahmed");
+    await page.locator('input[type="password"]').fill("Passw0rd1");
+    await page.getByRole("button", { name: "دخول", exact: true }).click();
+    await expect(page.getByTestId("login-status")).toContainText("جارِ الدخول");
+    await expect(page.getByTestId("login-status")).toContainText("لسه بندخّلك", { timeout: 7000 });
+    await expect(page.getByText(/تعذر|خطأ/)).toHaveCount(0);
+    await expect(tabs(page).first()).toBeVisible({ timeout: 12000 });
+  });
+
+  test("النت واقع وقت الدخول: رسالة واضحة عن الاتصال والزرار بيرجع", async ({ page }) => {
+    await open(page);
+    await page.route("**/auth/v1/token**", (route) => route.abort("internetdisconnected"));
+    await page.locator("input").first().fill("ahmed");
+    await page.locator('input[type="password"]').fill("Passw0rd1");
+    await page.getByRole("button", { name: "دخول", exact: true }).click();
+    await expect(page.getByText("مفيش اتصال بالسيرفر")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole("button", { name: "دخول", exact: true })).toBeEnabled();
   });
 });
 

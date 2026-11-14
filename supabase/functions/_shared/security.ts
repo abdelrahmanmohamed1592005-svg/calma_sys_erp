@@ -58,7 +58,10 @@ export function validatePasswordStrength(password: unknown): { ok: boolean; mess
 export function safeServerError(context: string, error: unknown): string {
   // eslint-disable-next-line no-console
   console.error(`[${context}]`, error);
-  return "حصل خطأ في السيرفر، حاول تاني أو كلّم الدعم الفني";
+  // مرجع قصير (اسم الخطوة + كود الخطأ بس، من غير أي تفاصيل داخلية) عشان المشكلة تتعرف من صورة الشاشة من غير فتح الـ logs
+  const e = (error && typeof error === "object" ? error : {}) as { code?: unknown; status?: unknown };
+  const code = [e.code, e.status].map((v) => String(v ?? "")).find((v) => /^[A-Za-z0-9_]{1,40}$/.test(v)) || "";
+  return `حصل خطأ في السيرفر، حاول تاني أو كلّم الدعم الفني (مرجع: ${context}${code ? ":" + code : ""})`;
 }
 
 // التوكن من هيدر Authorization (Bearer) - بيرجّع "" لو مش موجود أو الصيغة غلط.

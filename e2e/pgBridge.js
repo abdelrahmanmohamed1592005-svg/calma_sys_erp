@@ -118,12 +118,28 @@ export function makeBridge(pool, { log } = {}) {
         if (!name) return json(400, { error: "الاسم مطلوب" });
         if (!["staff", "reservations", "accounts", "gm"].includes(body.role)) return json(400, { error: "دور غير معروف" });
         if (!pwOk(body.password)) return json(400, { error: "كلمة المرور 8 حروف على الأقل" });
-        const ex = await adminQ("select 1 from auth.users where email = $1", [`${username}@calma.internal`]);
-        if (ex.rows[0]) return json(409, { error: "اسم المستخدم ده موجود بالفعل" });
+        // نفس منطق الفنكشن الحقيقية: موظف شغّال = تكرار، موظف متعطّل = بيرجع بنفس الحساب، حساب دخول من غير ملف = بيتستخدم
+        const email = `${username}@calma.internal`;
+        const done = (id, reused) => json(200, { success: true, reused, data: { id, username, name, role: body.role, active: true } });
+        const prof = (await adminQ("select id, name, active from profiles where username = $1", [username])).rows[0];
+        if (prof) {
+          if (prof.active) return json(409, { error: `اسم المستخدم ده شغّال حاليًا للموظف "${prof.name}" - اختار اسم مستخدم تاني، أو عطّله الأول لو عايز تستبدله` });
+          await adminQ("update auth.users set email = $2, password = $3 where id = $1", [prof.id, email, body.password]);
+          await adminQ("update profiles set name = $2, role = $3, active = true where id = $1", [prof.id, name, body.role]);
+          return done(prof.id, true);
+        }
+        const orphan = (await adminQ("select id from auth.users where email = $1", [email])).rows[0];
+        if (orphan) {
+          const owner = (await adminQ("select username, name from profiles where id = $1", [orphan.id])).rows[0];
+          if (owner) return json(409, { error: `حساب الدخول ده مربوط بالموظف "${owner.name}" (@${owner.username}) - اختار اسم مستخدم تاني` });
+          await adminQ("update auth.users set password = $2 where id = $1", [orphan.id, body.password]);
+          await adminQ("insert into profiles(id, username, name, role, active) values ($1, $2, $3, $4, true)", [orphan.id, username, name, body.role]);
+          return done(orphan.id, true);
+        }
         const id = randomUUID();
-        await adminQ("insert into auth.users(id, email, password) values ($1, $2, $3)", [id, `${username}@calma.internal`, body.password]);
+        await adminQ("insert into auth.users(id, email, password) values ($1, $2, $3)", [id, email, body.password]);
         await adminQ("insert into profiles(id, username, name, role, active) values ($1, $2, $3, $4, true)", [id, username, name, body.role]);
-        return json(200, { success: true, data: { id, username, name, role: body.role, active: true } });
+        return done(id, false);
       }
       if (fn[1] === "reset-password") {
         const username = String(body.username || "").trim().toLowerCase();

@@ -59,24 +59,30 @@ export function SetupScreen({ onCreate }) {
   );
 }
 
-export function LoginScreen({ onLogin }) {
-  const stuckTimer = React.useRef(null);
-  React.useEffect(() => () => clearTimeout(stuckTimer.current), []);
-  const [username, setUsername] = useState(""); const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+export function LoginScreen({ onLogin, notice }) {
+  const slowTimer = React.useRef(null), stuckTimer = React.useRef(null);
+  const clearTimers = () => { clearTimeout(slowTimer.current); clearTimeout(stuckTimer.current); };
+  React.useEffect(() => clearTimers, []);
+  const [username, setUsername] = useState(""); const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false); const [slow, setSlow] = useState(false);
+  // التطبيق رفض الدخول صراحةً (حساب معطّل أو من غير بيانات): الزرار يرجع والسبب يبان فورًا - من غير تخمين بمؤقّت
+  React.useEffect(() => {
+    if (!notice) return;
+    clearTimers(); setBusy(false); setSlow(false); setErr(notice.text);
+  }, [notice]);
   async function submit() {
-    setErr(""); setBusy(true);
-    // حماية: لو الدخول نجح لكن التحقق من الـ profile بعده فشل بصمت (حساب من
-    // غير profile، أو معطّل)، الزرار متفضلش عالقة "بتحمّل" للأبد من غير أي
-    // توضيح - بعد 6 ثواني هيرجع قابل للدوس وهيوري رسالة واضحة.
-    // (المؤقّت بيفضل شغال بعد الدخول الناجح كمان: لو الحساب معطّل أو من غير
-    // profile، التطبيق بيطلّعه تاني وشاشة الدخول بتفضل - يرجع الزرار ويوضّح السبب.
-    // ولو الدخول نجح فعلاً، الشاشة دي بتتشال والمؤقّت بيتلغي مع قفلها.)
+    if (busy) return;
+    clearTimers(); setErr(""); setSlow(false); setBusy(true);
+    // جهاز أو نت بطيء: الدخول ممكن ياخد أكتر من كام ثانية وده مش خطأ. بنطمّن المستخدم إننا لسه شغالين،
+    // ومابنقولش "تعذر" غير بعد وقت طويل فعلاً (قبل كده كان بيطلع خطأ بعد 6 ثواني والدخول لسه ماشي).
+    slowTimer.current = setTimeout(() => setSlow(true), 5000);
     stuckTimer.current = setTimeout(() => {
-      setBusy(false);
-      setErr("تعذر الدخول - الحساب ممكن يكون معطّل أو بياناته ناقصة، كلّم المدير العام");
-    }, 6000);
-    const res = await onLogin({ username: username.trim(), password: pw });
-    if (res?.error) { clearTimeout(stuckTimer.current); setErr(res.error); setBusy(false); }
+      setBusy(false); setSlow(false);
+      setErr("الدخول اتأخر قوي - اتأكد من النت وجرّب تاني. لو اتكررت، كلّم المدير العام يتأكد إن الحساب مفعّل");
+    }, 60000);
+    let res;
+    try { res = await onLogin({ username: username.trim(), password: pw }); }
+    catch { res = { error: "مفيش اتصال بالسيرفر - اتأكد من النت وجرّب تاني" }; }
+    if (res?.error) { clearTimers(); setErr(res.error); setBusy(false); setSlow(false); }
   }
   return (
     <div className="calma-app cx-auth" dir="rtl">
@@ -91,6 +97,7 @@ export function LoginScreen({ onLogin }) {
         <input className="cx-input" aria-label="كلمة المرور" autoComplete="current-password" type="password" value={pw} onChange={(e) => setPw(e.target.value)} style={{ marginBottom: 12 }} onKeyDown={(e) => e.key === "Enter" && submit()} />
         {err && <div style={{ color: "var(--rust)", fontSize: 13.5, marginBottom: 10 }}>{err}</div>}
         <button className="cx-btn cx-btn-gold" style={{ width: "100%", justifyContent: "center", minHeight: 46, fontSize: 15 }} disabled={busy || !username || !pw} onClick={submit}>دخول</button>
+        {busy && <div role="status" data-testid="login-status" style={{ fontSize: 13, color: "var(--muted)", marginTop: 10, textAlign: "center" }}>{slow ? "النت أو الجهاز بطيء شوية - لسه بندخّلك، استنى وماتقفلش الصفحة..." : "جارِ الدخول..."}</div>}
         <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 14, textAlign: "center" }}>ما فيش تسجيل حساب جديد من هنا. الحسابات بتتعمل من المدير العام فقط.</div>
       </div>
       </div>
