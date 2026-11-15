@@ -1,7 +1,7 @@
 // مدير الشيفت + حساب المطوّر المخفي + تصحيح يومية قديمة (والمدفوع والعهدة بيتحدّثوا لوحدهم) + مدفوع قبل السيستم
 // + التقرير بيحسب عهدة الفيزا المكتوبة بالإيد + كروت تحصيل اليوم مفصّلة.
 import { test, expect } from "../fixtures";
-import { login, goTab, toast, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
+import { login, goTab, toast, addBooking, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
 import { readFileSync } from "node:fs";
 
 // الإجراءات الثانوية في كارت الحجز (مدفوع قبل السيستم وأدوات المطوّر) تحت "⋯ المزيد"
@@ -123,7 +123,7 @@ test("مدفوع قبل السيستم: بيتحسب في المدفوع وال�
   await page.goto("/");
   await login(page, "ahmed");                                      // موظف الشيفت هو اللي بيحدده
   await goTab(page, "الحجوزات");
-  await openMoreMenus(page);
+  await expect(page.getByTestId("booking-more")).toHaveCount(0);   // الزرار ظاهر على الكارت على طول - مش جوه "المزيد"
   const card = page.locator("div", { has: page.getByTestId("prior-paid-open") }).filter({ hasText: "Paper Guest" }).last();
   await card.getByTestId("prior-paid-open").click();
   await page.getByTestId("prior-paid-amount").fill("700");
@@ -271,6 +271,26 @@ test("رسوم الفيزا: الموظف بيكتب الرسم مع الدفع�
   expect(r604).toContain("رسوم فيزا 60 EGP");
   const visaBox = page.locator("[data-testid^='owner-sheet-shift-'] .cx-or-sum > div", { hasText: "الفيزا" }).first().locator("dd");
   expect((await visaBox.innerText()).replace(/[⁦-⁩]/g, "")).toBe("2,060 EGP");
+});
+
+test("حجز جديد: الموظف بيكتب مدفوع قبل السيستم ورسوم الفيزا مع العربون من فورم الحجز نفسه", async ({ page, env }) => {
+  await users(env);
+  await env.seedShift("ahmed", {});
+  await page.goto("/");
+  await login(page, "ahmed");
+  await addBooking(page, { room: 607, guest: "Form Guest", nights: 2, price: 1000, currency: "EGP", paid: 500, method: "فيزا", last4: "1234", visaFee: 25, prior: 800, priorNote: "حوّل قبل السيستم", expectSaved: false });
+  await expect(toast(page)).toContainText("رسوم فيزا 25");
+  await expect(toast(page)).toContainText("مدفوع قبل السيستم");
+  const row = (await env.q("select amount_paid, extras, payment_details from bookings where guest_name = 'Form Guest'"))[0];
+  expect(Number(row.amount_paid)).toBe(1325);                         // 500 عربون + 25 رسوم + 800 قبل السيستم
+  expect(Number(row.extras.visaFee)).toBe(25);
+  expect(Number(row.payment_details.priorPaid)).toBe(800);
+  expect(row.payment_details.priorPaidNote).toBe("حوّل قبل السيستم");
+  // اليومية فيها العربون والرسوم بس - الـ 800 مادخلتش الخزينة
+  const rows = (await env.q("select rows from shift_records"))[0].rows.filter((r) => r.bookingId);
+  expect(rows.map((r) => Number(r.collectionAmt)).sort((a, b) => a - b)).toEqual([25, 500]);
+  await expect(page.getByText("منها رسوم فيزا").first()).toBeVisible();
+  await expect(page.getByText("منها قبل السيستم").first()).toBeVisible();
 });
 
 test("المطوّر: زرار إرجاع حجز اتلغى بالغلط، وزرار إلغاء مغادرة مبكرة اتسجّلت بالغلط (بيرجع تاريخ الخروج والإجمالي الأصليين)", async ({ page, env }) => {
