@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { onlineRoomCovered, bookingHotelTotal, computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, emptyPaymentDetails, directBookingPaymentsByMethod, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, applyCollectionToRows, refundDueAmount, rebaseShiftRecord, refundStatusOf , otherTotals, otherDue, bookingDueLines, formatMoneyLines, bookingHasDue } from "../domain/money";
+import { trackBalances, cascadeHandover, onlineRoomCovered, bookingHotelTotal, computeShiftTotals, bookingGrandTotal, emptyLedgerRow, freshShiftRecord, emptyPaymentDetails, directBookingPaymentsByMethod, COMMON_CURRENCIES, PAYMENT_METHODS, ONLINE_METHODS, applyCollectionToRows, refundDueAmount, rebaseShiftRecord, refundStatusOf , otherTotals, otherDue, bookingDueLines, formatMoneyLines, bookingHasDue } from "../domain/money";
 
 // انستاباي والتحويل البنكي وسيلة واحدة فعليًا - اتدمجوا في خيار واحد بدل
 // خيارين مختلفين، وفضلت العملات المعتمدة خمسة بس.
@@ -470,5 +470,52 @@ describe("خدمات بعملات تانية (كل عملة لوحدها من غ
   it("مدفوع بالكامل بس لما كل العملات تتغطّى", () => {
     expect(bookingHasDue({ ...b, amountPaid: 150 })).toBe(true);
     expect(bookingHasDue({ ...b, amountPaid: 150, otherPaid: { EGP: 250 } })).toBe(false);
+  });
+});
+
+
+describe("trackBalances - متابعة العهدة شيفت بشيفت", () => {
+  const rooms = [{ number: 601 }];
+  const mk = (key, patch) => ({ ...freshShiftRecord("2026-11-13", key, "x", "x", rooms, { EGP: 0 }), ...patch });
+  it("عهدة فيزا اتكتبت بالإيد في شيفت لاحق بتدخل في الرصيد النهائي كفرق عهدة", () => {
+    const morning = mk("morning", {});
+    morning.rows[0] = { ...morning.rows[0], collectionAmt: 1000, collectionMethod: "فيزا" };
+    const evening = mk("evening", { methodHandover: { "فيزا": { EGP: 1500 } } });
+    evening.rows[0] = { ...evening.rows[0], collectionAmt: 200, collectionMethod: "فيزا" };
+    const b = trackBalances([morning, evening]);
+    expect(b["فيزا"]).toEqual({ opening: { EGP: 0 }, closing: { EGP: 1700 }, adjust: { EGP: 500 } });
+  });
+  it("الكاش: عهدة أول شيفت + التحصيل - المصاريف، وعهدة منقولة زي ما هي مافيهاش فرق", () => {
+    const morning = mk("morning", { handover: { EGP: 100 } });
+    morning.rows[0] = { ...morning.rows[0], collectionAmt: 300 };
+    morning.hotelRows = [{ ...emptyLedgerRow("فندق"), expenseAmt: 50 }];
+    const evening = mk("evening", { handover: { EGP: 350 } });
+    expect(trackBalances([morning, evening])["كاش"]).toEqual({ opening: { EGP: 100 }, closing: { EGP: 350 }, adjust: { EGP: 0 } });
+  });
+  it("كل فندق بيتتابع لوحده وبعدين بيتجمعوا", () => {
+    const a = mk("morning", { hotelId: 1, handover: { EGP: 100 } }), b = mk("morning", { hotelId: 2, handover: { EGP: 40 } });
+    expect(trackBalances([a, b])["كاش"].closing).toEqual({ EGP: 140 });
+  });
+});
+
+describe("cascadeHandover - نقل العهدة بعد تصحيح يومية قديمة", () => {
+  const rooms = [{ number: 601 }];
+  const mk = (date, handover) => freshShiftRecord(date, "morning", "x", "x", rooms, handover);
+  it("العهدة المنقولة تلقائي بتتحدّث، وبيقف عند أول عهدة مكتوبة بالإيد", () => {
+    const oldT = { closingCash: { EGP: 900 }, methodClosing: {} }, newT = { closingCash: { EGP: 1100 }, methodClosing: {} };
+    const s1 = mk("2026-11-12", { EGP: 900 }), s2 = mk("2026-11-13", { EGP: 900 }), s3 = mk("2026-11-14", { EGP: 500 }), s4 = mk("2026-11-15", { EGP: 500 });
+    const out = cascadeHandover([s1, s2, s3, s4], oldT, newT);
+    expect(out.map((r) => [r.date, r.handover.EGP])).toEqual([["2026-11-12", 1100], ["2026-11-13", 1100]]);
+  });
+  it("لو الرصيد ماتغيّرش مفيش حاجة بتتنقل", () => {
+    const t = { closingCash: { EGP: 900 }, methodClosing: {} };
+    expect(cascadeHandover([mk("2026-11-12", { EGP: 900 })], t, t)).toEqual([]);
+  });
+  it("عهدة الفيزا بتتنقل لوحدها من غير ما تلمس الكاش", () => {
+    const oldT = { closingCash: { EGP: 0 }, methodClosing: { "فيزا": { EGP: 1000 } } }, newT = { closingCash: { EGP: 0 }, methodClosing: { "فيزا": { EGP: 1200 } } };
+    const s1 = { ...mk("2026-11-12", { EGP: 0 }), methodHandover: { "فيزا": { EGP: 1000 } } };
+    const [r] = cascadeHandover([s1], oldT, newT);
+    expect(r.methodHandover).toEqual({ "فيزا": { EGP: 1200 } });
+    expect(r.handover).toEqual({ EGP: 0 });
   });
 });

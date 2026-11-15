@@ -1,16 +1,17 @@
 import { useState, useEffect, useRef } from "react";
-import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send } from "lucide-react";
-import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel } from "./shared";
+import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send, PencilLine, Check, X } from "lucide-react";
+import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel, TwoStepButton } from "./shared";
 import { guarded } from "../lib/busy";
+import { devDeleteShift } from "../data/payments";
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { OwnerReport } from "./OwnerReport";
 import { listStaffCafeteria } from "../data/staffCafeteria";
-import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails } from "../domain/money";
+import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, blankShiftRecord } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
-import { todayStr, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
+import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff } from "../data/shifts";
+import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -20,6 +21,13 @@ function CurrencyPicker({ value, onChange, disabled, width }) {
       {COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
     </select>
   );
+}
+
+/* خانة رقم: الصفر بيتعرض فاضي (placeholder 0) فمفيش "0" لازم يتمسح قبل الكتابة، والكتابة مابتتقطعش (كسور عشرية / مسح كامل) */
+function NumField({ value, onChange, ...rest }) {
+  const [txt, setTxt] = useState(null);
+  const shown = txt !== null ? txt : (Number(value) || 0) === 0 ? "" : String(value);
+  return <input className="cx-input" type="number" placeholder="0" {...rest} value={shown} onFocus={() => setTxt(shown)} onBlur={() => setTxt(null)} onChange={(e) => { setTxt(e.target.value); onChange(e.target.value); }} />;
 }
 
 // صف الغرفة "فيه بيانات" = فيه مبلغ أو بيان أو ملاحظة أو مربوط بحجز. باقي الغرف الفاضية مخفية
@@ -136,15 +144,19 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
             <div style={{ fontWeight: 800, marginBottom: 8 }}>{CURRENCY_LABEL[cur] || cur} ({cur})</div>
             <div style={{ marginBottom: 6 }}>
               <label style={{ fontSize: 12.5, color: "var(--muted)" }}>العهدة</label>
-              <input className="cx-input" type="number" disabled={locked} value={record.handover?.[cur] ?? 0} onChange={(e) => onChangeHandover(cur, e.target.value)} />
+              <NumField disabled={locked} value={record.handover?.[cur] ?? 0} onChange={(v) => onChangeHandover(cur, v)} />
               {prevClosing && prevClosing[cur] != null && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>مقترح: {money(prevClosing, cur)}</div>}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13.5 }}>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي التحصيل</div><div style={{ fontWeight: 700 }}>{money(totals.totalCollections, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>نقدًا منها</div><div style={{ fontWeight: 700 }}>{money(totals.cashCollections, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي المصاريف</div><div style={{ fontWeight: 700 }}>{money(totals.totalExpenses, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>رصيد الخزينة</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(totals.closingCash, cur)}</div></div>
-            </div>
+            {/* بالترتيب زي الورق: التحصيل مفصّل، وبعدين الكاش والمصاريف، والرصيد آخر سطر (العهدة + الكاش - المصاريف) */}
+            <dl className="cx-sum" data-testid={"cash-summary-" + cur} style={{ margin: 0 }}>
+              <div><dt>تحصيل الغرف</dt><dd data-testid={"sum-rooms-" + cur}>{money(totals.roomCollections, cur)}</dd></div>
+              <div><dt>كافيتيريا النزلاء</dt><dd data-testid={"sum-cafe-" + cur}>{money(totals.cafeteriaGuest, cur)}</dd></div>
+              <div><dt>كافيتيريا الاستاف</dt><dd data-testid={"sum-cafe-staff-" + cur}>{money(totals.cafeteriaStaff, cur)}</dd></div>
+              <div className="sep"><dt>إجمالي التحصيل (كل الوسائل)</dt><dd>{money(totals.totalCollections, cur)}</dd></div>
+              <div><dt>منه كاش في الدرج</dt><dd>{money(totals.cashCollections, cur)}</dd></div>
+              <div><dt>إجمالي المصاريف</dt><dd>{money(totals.totalExpenses, cur)}</dd></div>
+              <div className="sep"><dt style={{ color: "var(--ink)", fontWeight: 700 }}>رصيد الخزينة</dt><dd style={{ color: "var(--teal)", fontSize: 16 }}>{money(totals.closingCash, cur)}</dd></div>
+            </dl>
           </div>
         ))}
       </div>
@@ -174,7 +186,7 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
                     <div style={{ fontWeight: 800, marginBottom: 8 }}>{m} ({cur})</div>
                     <div style={{ marginBottom: 6 }}>
                       <label style={{ fontSize: 12.5, color: "var(--muted)" }}>العهدة (قراءة الجهاز في بداية الشيفت)</label>
-                      <input className="cx-input" type="number" disabled={locked} value={record.methodHandover?.[m]?.[cur] ?? 0} onChange={(e) => onChangeMethodHandover(m, cur, e.target.value)} />
+                      <NumField disabled={locked} value={record.methodHandover?.[m]?.[cur] ?? 0} onChange={(v) => onChangeMethodHandover(m, cur, v)} />
                       {prevMethodClosing?.[m]?.[cur] != null && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>مقترح: {money(prevMethodClosing[m], cur)}</div>}
                     </div>
                     {(() => { const tx = methodTransactions(record, m).filter((t) => t.currency === cur); return tx.length > 0 && (
@@ -259,7 +271,10 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   const [histShift, setHistShift] = useState(defaultShiftForNow());
   const [histRecord, setHistRecord] = useState(null);
   const [staffEntries, setStaffEntries] = useState(null);
-  const [ownerReportDate, setOwnerReportDate] = useState(null);   // تقرير الأونر مفتوح على اليوم ده (null = مقفول)
+  const [ownerReportDate, setOwnerReportDate] = useState(null);
+  // تصحيح يومية من "استعراض شيفتات سابقة": نسخة بيتعدّل فيها لحد ما يضغط حفظ (المطوّر: أي يوم - مدير الشيفت: شيفتات اليوم)
+  const [corr, setCorr] = useState(null);
+  useEffect(() => { setCorr(null); }, [mode, histDate, histShift, hotelId]);   // تقرير الأونر مفتوح على اليوم ده (null = مقفول)
 
   // حل مشكلة "العداد بيهيس وأنا بكتب": كل كتابة كانت بتبعت save فوري
   // للسيرفر، والـ realtime كان بيسمع صدى الحفظة دي ويعيد تحميل السجل من
@@ -564,6 +579,40 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // الموظف يقدر يكمل في شيفت اتفتح تاني بس لو الشيفت لسه في وقته (أو في هامش الأوفر تايم)؛ غير كده بيتقفل تلقائيًا عند فتح اليومية
   function staffCanContinue(date, shiftKey) { return date === shiftDayNow() && isShiftActiveNow(shiftKey); }
 
+  const canCorrect = (rec) => !!rec && (perms.correctLedger === "any" || (perms.correctLedger === "today" && rec.date >= addDays(todayStr(), -1)));
+  function corrUpdateRow(idx, patch) {
+    setCorr((c) => ({ ...c, rows: c.rows.map((r, i) => {
+      if (i !== idx) return r;
+      const next = { ...r, ...patch };
+      // دفعة بسعر صرف: المقابل بعملة الحجز بيتحسب من المبلغ الجديد بنفس السعر
+      if ("collectionAmt" in patch && Number(r.fxRate) > 0 && r.fxBookingCurrency) next.fxCovered = Math.round(((Number(patch.collectionAmt) || 0) / Number(r.fxRate)) * 100) / 100;
+      return next;
+    }) }));
+  }
+  const corrHotelRows = (c) => hotelRowsOf(c);
+  async function saveCorrection() { return guarded("ledger-saveCorrection", () => saveCorrectionInner()); }
+  async function saveCorrectionInner() {
+    if (!corr || !histRecord) return;
+    const res = await applyCorrection(histRecord, corr);
+    if (res.conflict) { showToast("⚠ اليومية اتغيّرت من مكان تاني - اتحدّثت، راجعها وصحّح تاني"); setCorr(null); setHistRecord(await getShiftRecord(histDate, histShift)); return; }
+    if (res.error) { showToast(res.error); return; }
+    setHistRecord(res.data); setCorr(null);
+    if (res.stoppedAt) showToast("⚠ التصحيح اتحفظ، لكن نقل العهدة للشيفتات اللي بعده وقف عند " + res.stoppedAt + " - راجع عهدتها");
+    else showToast("تم حفظ التصحيح" + (res.moved ? ` - والعهدة اتحدّثت في ${res.moved} شيفت بعده` : ""));
+  }
+  // المطوّر: مسح يومية اتفتحت بالغلط نهائيًا - بتتفضّى الأول (فالمدفوع على الحجوزات والعهدة بيتظبطوا) وبعدين بتتمسح هي واختيار الشيفت
+  async function devDeleteHistoryShift() { return guarded("ledger-devDelete", () => devDeleteHistoryShiftInner()); }
+  async function devDeleteHistoryShiftInner() {
+    if (!histRecord) return;
+    if ((histRecord.cafeteriaRows || []).some((r) => r.kind === "staff" && (Number(r.collectionAmt) || 0) !== 0)) { showToast("اليومية دي فيها سداد كافيتيريا استاف - ماينفعش تتمسح (السداد متسجّل على حساب الموظف). صحّح أرقامها بدل المسح"); return; }
+    const res = await applyCorrection(histRecord, blankShiftRecord(histRecord));
+    if (!res.data) { showToast(res.error || "اليومية اتغيّرت من مكان تاني - جرّب تاني"); setHistRecord(await getShiftRecord(histDate, histShift)); return; }
+    const del = await devDeleteShift({ hotelId: histRecord.hotelId, date: histRecord.date, shiftKey: histRecord.shiftKey });
+    if (del.error) { showToast(del.error); setHistRecord(await getShiftRecord(histDate, histShift)); return; }
+    setCorr(null); setHistRecord(null);
+    showToast("تم مسح اليومية واختيار الشيفت نهائيًا" + (res.moved ? ` - والعهدة اتحدّثت في ${res.moved} شيفت بعده` : ""));
+  }
+
   // تقرير الأونر (كشف الغرف + ورقة كل شيفت في اليوم): أي كتابة معلّقة بتتحفظ الأول عشان التقرير يطلع بآخر أرقام
   async function openOwnerReport() {
     if (mode === "live" && record) await flushNow();
@@ -579,7 +628,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
     <div className="cx-page">
       <div className="cx-no-print" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         {perms.editLedger && <button className={"cx-btn " + (mode === "live" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("live")}>شيفتي النهارده</button>}
-        <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> استعراض شيفتات سابقة (قراءة فقط)</button>
+        <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> {perms.correctLedger ? "استعراض وتصحيح شيفتات سابقة" : "استعراض شيفتات سابقة (قراءة فقط)"}</button>
         {printRecord && <button className="cx-btn cx-btn-outline" onClick={() => window.print()}><Printer size={13} /> طباعة اليومية</button>}
         {(mode === "history" || record) && <button className="cx-btn cx-btn-gold" data-testid="owner-report-btn" style={{ marginInlineStart: "auto" }} onClick={openOwnerReport}><Send size={14} /> إرسال اليومية للأونر</button>}
       </div>
@@ -669,10 +718,36 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
                   )}
                 </div>
               )}
-              <LedgerTable record={histRecord} rooms={rooms} locked={true} onUpdateRow={() => {}} />
+              {canCorrect(histRecord) && (
+                <div className="cx-card cx-no-print" data-testid="correction-bar" style={{ padding: 10, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", ...(corr ? { background: "var(--warn-bg)", borderColor: "#E9D49A" } : {}) }}>
+                  {!corr ? (
+                    <>
+                      <button className="cx-btn cx-btn-outline" data-testid="correction-start" style={{ fontSize: 13 }} onClick={() => setCorr(JSON.parse(JSON.stringify({ ...histRecord, hotelRows: hotelRowsOf(histRecord) })))}><PencilLine size={13} /> تصحيح اليومية</button>
+                      <span style={{ fontSize: 12.5, color: "var(--muted)" }}>لتصحيح رقم اتكتب غلط بعد مراجعة الورق - المدفوع على الحجز والعهدة والتقارير بيتحدّثوا لوحدهم.</span>
+                      {perms.devTools && <span data-testid="dev-delete-shift" style={{ marginInlineStart: "auto" }}><TwoStepButton label="مسح اليومية نهائيًا" confirmLabel="مسح اليومية واختيار الشيفت وكل تحصيلها؟" onConfirm={devDeleteHistoryShift} /></span>}
+                    </>
+                  ) : (
+                    <>
+                      <b style={{ fontSize: 13.5 }}>وضع التصحيح:</b>
+                      <span style={{ fontSize: 12.5 }}>عدّل الأرقام تحت (تحصيل الغرف، مصاريف الفندق، العهدة) وبعدين احفظ. التصحيح بيتسجّل باسمك في سجل الحركة.</span>
+                      <button className="cx-btn cx-btn-gold" data-testid="correction-save" style={{ fontSize: 13, marginInlineStart: "auto" }} onClick={saveCorrection}><Check size={13} /> حفظ التصحيح</button>
+                      <button className="cx-btn cx-btn-outline" data-testid="correction-cancel" style={{ fontSize: 13 }} onClick={() => setCorr(null)}><X size={13} /> إلغاء</button>
+                    </>
+                  )}
+                </div>
+              )}
+              <LedgerTable record={corr || histRecord} rooms={rooms} locked={!corr} onUpdateRow={corrUpdateRow} />
               <CafeteriaSection record={histRecord} rooms={rooms} bookings={bookings} onUpdateCafeteria={() => {}} locked={true} readOnly={true} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={async () => {}} reloadRecord={async () => {}} onLog={onLog} showToast={showToast} />
-              {(histRecord.hotelRows || []).some((r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || r.expenseDesc || r.collectionDesc) && <HotelRowsTable record={histRecord} locked={true} onUpdateRow={() => {}} onAddRow={() => {}} onRemoveRow={() => {}} />}
-              <ShiftSummaryFooter record={histRecord} totals={computeShiftTotals(histRecord)} locked={true} onChangeHandover={() => {}} onAddCurrency={() => {}} prevClosing={null} onChangeMethodHandover={() => {}} onAddMethodTracking={() => {}} prevMethodClosing={null} />
+              {corr
+                ? <HotelRowsTable record={corr} locked={false} onUpdateRow={(idx, patch) => setCorr((c) => ({ ...c, hotelRows: corrHotelRows(c).map((r, i) => (i === idx ? { ...r, ...patch } : r)) }))} onAddRow={() => setCorr((c) => ({ ...c, hotelRows: [...corrHotelRows(c), emptyLedgerRow(HOTEL_ROW_LABEL)] }))} onRemoveRow={(idx) => setCorr((c) => ({ ...c, hotelRows: corrHotelRows(c).filter((_, i) => i !== idx) }))} />
+                : (histRecord.hotelRows || []).some((r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || r.expenseDesc || r.collectionDesc) && <HotelRowsTable record={histRecord} locked={true} onUpdateRow={() => {}} onAddRow={() => {}} onRemoveRow={() => {}} />}
+              <ShiftSummaryFooter record={corr || histRecord} totals={computeShiftTotals(corr || histRecord)} locked={!corr}
+                onChangeHandover={(cur, val) => setCorr((c) => ({ ...c, handover: { ...c.handover, [cur]: Number(val) || 0 } }))}
+                onAddCurrency={(cur) => setCorr((c) => (cur && c.handover?.[cur] == null ? { ...c, handover: { ...c.handover, [cur]: 0 } } : c))}
+                prevClosing={null}
+                onChangeMethodHandover={(m, cur, val) => setCorr((c) => ({ ...c, methodHandover: { ...c.methodHandover, [m]: { ...(c.methodHandover?.[m] || {}), [cur]: Number(val) || 0 } } }))}
+                onAddMethodTracking={(m, cur) => setCorr((c) => (m && cur && c.methodHandover?.[m]?.[cur] == null ? { ...c, methodHandover: { ...c.methodHandover, [m]: { ...(c.methodHandover?.[m] || {}), [cur]: 0 } } } : c))}
+                prevMethodClosing={null} />
               {histRecord.shiftNotes && <div className="cx-card" style={{ marginTop: 10, padding: 10, fontSize: 13.5 }}>ملاحظات الشيفت: {histRecord.shiftNotes}</div>}
               <LedgerPrintFooter />
             </>
@@ -708,7 +783,7 @@ function LedgerBar({ sections, totals, record, canClose, onClose }) {
         ))}
       </nav>
       <div className="cx-ledbar-end">
-        <div className="cx-ledbar-cash"><span>رصيد الخزينة</span><b>{cash}</b></div>
+        <div className="cx-ledbar-cash"><span>رصيد الخزينة</span><b><bdi dir="ltr">{cash}</bdi></b></div>
         {canClose && <button className="cx-btn cx-btn-gold" onClick={onClose}><Lock size={15} /> إقفال الشيفت</button>}
         {record.closed && <span className="cx-pill" style={{ background: "#EFEEEC", color: "#6E685D" }}><Lock size={12} aria-hidden="true" /> الشيفت مقفول</span>}
       </div>

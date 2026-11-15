@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import { otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
+import { currencyKeysOf, otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails } from "../domain/money";
 import { PRINT_FIT_CSS } from "../lib/printFit";
 import { roomLabel, roomDisplay } from "../domain/constants";
 
@@ -294,6 +294,15 @@ export function GlobalStyle() {
       .cx-btn-soft:hover{ background:#F3E6C4; }
       .cx-role{ display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; padding:2px 9px; border-radius:999px; line-height:20px; }
       .cx-role.r-gm{ background:#FBF1DC; color:#8A6416; } .cx-role.r-staff{ background:#E5F2EC; color:#1E6B4E; }
+      .cx-role.r-shift_manager{ background:#DFF0EE; color:#14655E; } .cx-role.r-dev{ background:#EFE7F7; color:#5B3F96; }
+      .cx-bk-actions{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; min-width:0; max-width:100%; }
+      .cx-more{ position:relative; }
+      .cx-more > summary{ list-style:none; cursor:pointer; user-select:none; }
+      .cx-more > summary::-webkit-details-marker{ display:none; }
+      .cx-more[open] > summary{ background:var(--paper2); }
+      .cx-more-body{ display:flex; flex-direction:column; align-items:flex-start; gap:8px; margin-top:8px; padding:10px; background:#fff; border:1px solid var(--hair); border-radius:10px; box-shadow:var(--sh-l); }
+      @media screen and (min-width:760px){ .cx-more-body{ position:absolute; inset-inline-end:0; top:100%; z-index:30; min-width:260px; } }
+      @media screen and (max-width:759.98px){ .cx-bk-actions{ justify-content:flex-start; width:100%; } .cx-bk-actions > *{ flex:1 1 auto; } .cx-more{ flex-basis:100%; } }
       .cx-role.r-reservations{ background:#ECE7F6; color:#5B3F96; } .cx-role.r-accounts{ background:#E4EEF7; color:#2B5B86; }
       .cx-role.off{ background:#EFEEEC; color:#6E685D; }
       .cx-day-sep{ position:sticky; top:0; z-index:1; padding:7px 16px; font-size:12px; font-weight:700; color:var(--muted); background:#FAF8F3; border-top:1px solid var(--hair2); letter-spacing:.02em; }
@@ -316,6 +325,10 @@ export function GlobalStyle() {
       .cx-auth-form{ display:flex; align-items:center; justify-content:center; padding:24px 16px; }
       .cx-auth-form .cx-card{ box-shadow:var(--sh-l); }
       ::placeholder{ color:#B3AA97; }
+      .cx-kpi-split{ margin:8px 0 0; padding-top:7px; border-top:1px dashed var(--hair); display:grid; gap:3px; font-size:12.5px; }
+      .cx-kpi-split > div{ display:flex; justify-content:space-between; gap:10px; align-items:baseline; }
+      .cx-kpi-split > div.sep{ border-top:1px dashed var(--hair); padding-top:5px; margin-top:2px; }
+      .cx-kpi-split dt{ color:var(--muted); } .cx-kpi-split dd{ margin:0; font-weight:700; color:var(--ink); }
       /* ---------- تقرير الأونر (كشف الغرف + ورقة الشيفت) ---------- */
       .cx-or{ position:fixed; inset:0; z-index:90; background:#EFEBE1; display:flex; flex-direction:column; }
       .cx-or-bar{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px 14px; background:#fff; border-bottom:1px solid var(--hair); box-shadow:var(--sh); }
@@ -408,6 +421,14 @@ export function GlobalStyle() {
 }
 
 /* حرفين من الاسم للصورة الرمزية (من غير "ال" في أول الكلمة) */
+/* مبالغ بأكتر من عملة: كل عملة في سطر لوحدها، من الشمال لليمين ("4,380 EGP")، والأصفار مابتتعرضش.
+   قبل كده كانت بتتكتب في سطر واحد "4,380 EGP + 50 EUR" جوه صفحة عربي فترتيبها بيتقلب وتتقرا غلط. */
+export function MoneyStack({ value, empty = "0" }) {
+  const keys = currencyKeysOf(value).filter((c) => Math.abs(Number(value?.[c]) || 0) > 0.004);
+  if (!keys.length) return <bdi dir="ltr">{empty}</bdi>;
+  return keys.map((c) => <bdi key={c} dir="ltr" style={{ display: "block", textAlign: "right", whiteSpace: "nowrap" }}>{fmt(value[c])} {c}</bdi>);
+}
+
 export function initials(name) {
   return String(name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w.replace(/^ال(?=..)/, "")[0] || "").join("") || "?";
 }
@@ -565,6 +586,7 @@ export function MoneyBox({ b }) {
   const cells = [["الإجمالي", fmt(total), null]];
   if (online) cells.push(["مدفوع أونلاين (سعر الغرفة)", fmt(onlineRoomCovered(b)), "var(--sage)"]);
   if (!online || paid > 0 || due > 0) cells.push([online ? "المتحصّل في الفندق" : "المدفوع", fmt(paid), null]);
+  if (Number(b.paymentDetails?.priorPaid) > 0) cells.push([b.paymentDetails.priorPaidNote ? `منها قبل السيستم (${b.paymentDetails.priorPaidNote})` : "منها قبل السيستم", fmt(b.paymentDetails.priorPaid), "var(--muted)"]);
   if (b.status !== "ملغي" && (due > 0 || !online)) cells.push([online ? "المتبقي في الفندق (خدمات/دخول مبكر/تمديد)" : "المتبقي", fmt(due), due > 0 ? "var(--rust)" : "var(--sage)"]);
   // خدمات بعملات تانية (كل عملة لوحدها من غير تحويل)
   const oT = otherTotals(b), oP = otherPaidOf(b), oD = otherDue(b);
@@ -574,15 +596,15 @@ export function MoneyBox({ b }) {
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
         {state && <span data-testid="pay-state" className="cx-pill" style={{ background: state.color === "var(--sage)" ? "#EAF2EC" : "#FBE2E4", color: state.color }}>{state.text}</span>}
         {cells.map(([label, val, color]) => (
-          <div key={label}><div style={{ color: "var(--muted)", fontSize: 12 }}>{label}</div><div style={{ fontWeight: 800, color: color || "inherit" }}>{val} {b.currency}</div></div>
+          <div key={label}><div style={{ color: "var(--muted)", fontSize: 12 }}>{label}</div><div style={{ fontWeight: 800, color: color || "inherit" }}><bdi dir="ltr">{val} {b.currency}</bdi></div></div>
         ))}
       </div>
       {otherCurs.map((cur) => (
         <div key={cur} data-testid={"money-other-" + cur} style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", borderTop: "1px dashed var(--hair)", paddingTop: 6 }}>
           <span className="cx-pill" style={{ background: "var(--paper2)" }}>خدمات بالـ {cur}</span>
-          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>الإجمالي</div><div style={{ fontWeight: 800 }}>{fmt(oT[cur] || 0)} {cur}</div></div>
-          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المدفوع</div><div style={{ fontWeight: 800 }}>{fmt(oP[cur] || 0)} {cur}</div></div>
-          {!cancelled && <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المتبقي</div><div style={{ fontWeight: 800, color: oD[cur] ? "var(--rust)" : "var(--sage)" }}>{fmt(oD[cur] || 0)} {cur}</div></div>}
+          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>الإجمالي</div><div style={{ fontWeight: 800 }}><bdi dir="ltr">{fmt(oT[cur] || 0)} {cur}</bdi></div></div>
+          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المدفوع</div><div style={{ fontWeight: 800 }}><bdi dir="ltr">{fmt(oP[cur] || 0)} {cur}</bdi></div></div>
+          {!cancelled && <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المتبقي</div><div style={{ fontWeight: 800, color: oD[cur] ? "var(--rust)" : "var(--sage)" }}><bdi dir="ltr">{fmt(oD[cur] || 0)} {cur}</bdi></div></div>}
         </div>
       ))}
     </div>

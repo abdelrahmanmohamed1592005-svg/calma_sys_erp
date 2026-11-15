@@ -5,6 +5,7 @@
 #   SUPABASE_ACCESS_TOKEN : من supabase.com/dashboard/account/tokens (Generate new token)
 #   SUPABASE_PROJECT_REF  : كود المشروع (Project Settings -> General -> Reference ID)
 # من غيرهم الخطوة بتقف برسالة واضحة ومابتنشرش حاجة.
+# --yes: نسخ أداة Supabase الجديدة بتطلب تأكيد قبل النشر، وفي GitHub مفيش حد يرد فبتقف من غير ما تنشر.
 name: Deploy Supabase functions
 
 on:
@@ -41,6 +42,6 @@ jobs:
         with:
           version: latest
       - name: Deploy create-user
-        run: supabase functions deploy create-user --project-ref "$SUPABASE_PROJECT_REF"
+        run: supabase functions deploy create-user --project-ref "$SUPABASE_PROJECT_REF" --yes
       - name: Deploy reset-password
-        run: supabase functions deploy reset-password --project-ref "$SUPABASE_PROJECT_REF"
+        run: supabase functions deploy reset-password --project-ref "$SUPABASE_PROJECT_REF" --yes

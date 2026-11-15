@@ -1,13 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Pencil, Check, X, Plus, ArrowLeftRight, Eye, AlertTriangle, Search, Wallet, Receipt, BedDouble, CalendarDays, Moon, Users, Hash, LogIn, LogOut } from "lucide-react";
-import { fmt, money, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, bookingDueLines, formatMoneyLines, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
+import { fmt, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, bookingDueLines, formatMoneyLines, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
 import { todayStr, shiftDayNow, nightsBetween, addDays, beforeCheckoutHour } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomStart, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentOther, moveBookingRoom, changeBookingCurrency } from "../data/payments";
+import { recordBookingPayment, recordBookingPaymentOther, moveBookingRoom, changeBookingCurrency, recordVisaFee } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown } from "./shared";
+import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown, MoneyStack } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
@@ -61,6 +61,8 @@ function TodayStrip({ rooms, bookings, overrides, date, beforeCheckout, onOpen }
 }
 
 const EXTRA_KINDS = [["laundry", "غسيل"], ["cafeteria", "كافيتيريا"], ["tours", "جولات"], ["pickup", "بيك أب"]];
+
+const nonZero = (m) => Object.values(m || {}).some((v) => Math.abs(Number(v) || 0) > 0.004);
 
 export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, perms, profile, onSaveOverride, onUpdateBooking, onRefresh, onEditBooking, onLog, showToast, dataVersion }) {
   const [selected, setSelected] = useState(null);
@@ -126,6 +128,8 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     let cancelled = false;
     (async () => {
       let rev = emptyMoney(), exp = emptyMoney(), flagged = 0;
+      const byMethod = {}, cafe = emptyMoney(), cafeStaff = emptyMoney(), roomsRev = emptyMoney();   // تفصيل التحصيل: كل وسيلة لوحدها، والكافيتيريا مفصولة عن الغرف
+      const add = (acc, src) => currencyKeysOf(src).forEach((c) => { acc[c] = Math.round(((acc[c] || 0) + (Number(src[c]) || 0)) * 100) / 100; });
       for (const s of SHIFTS) {
         const r = await getShiftRecord(shiftDayNow(), s.key);
         if (cancelled) return;
@@ -133,9 +137,11 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         const t = computeShiftTotals(r);
         currencyKeysOf(t.totalCollections).forEach((c) => { rev[c] = (rev[c] || 0) + t.totalCollections[c]; });
         currencyKeysOf(t.totalExpenses).forEach((c) => { exp[c] = (exp[c] || 0) + t.totalExpenses[c]; });
+        Object.entries(t.byMethodCurrency || {}).forEach(([m, v]) => { byMethod[m] = byMethod[m] || emptyMoney(); add(byMethod[m], v); });
+        add(cafe, t.cafeteriaGuest); add(cafeStaff, t.cafeteriaStaff); add(roomsRev, t.roomCollections);
         if (r.flagged) flagged += 1;
       }
-      if (!cancelled) setKpis({ rev, exp, flagged });
+      if (!cancelled) setKpis({ rev, exp, flagged, byMethod, cafe, cafeStaff, roomsRev });
     })();
     return () => { cancelled = true; };
   }, [date, dataVersion]);
@@ -182,6 +188,9 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     if (!myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - التحصيل لازم يتسجّل في يومية شيفتك"); return; }
     const method = pay.method;
     const rawDetails = pay.details;
+    // رسوم الفيزا: مبلغ بيكتبه الموظف بيتدفع مع الدفعة على الفيزا (بعملة الحجز) - بيتسجّل صف لوحده "رسوم فيزا"
+    const visaFee = method === "فيزا" && !other ? Math.round((Number(pay.fee) || 0) * 100) / 100 : 0;
+    if (visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
     const before = { ...pay };
     // الخانات بتتصفّر فورًا (القيم اتحفظت فوق) عشان اللي بيتكتب بعد كده مايضيعش وقت الحفظ
     setPay({ amount: "", method: "كاش", details: emptyPaymentDetails(), currency: "" });
@@ -190,6 +199,12 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     const res = other ? await recordBookingPaymentOther({ ...req, currency: cur }) : await recordBookingPayment(req);
     if (res?.error) { showToast(res.error); if (onRefresh) onRefresh(); setPay({ ...before, amount: String(amount) }); return; }
     const out = res.data || {};
+    let feeNote = "";
+    if (visaFee > 0) {
+      const f = await recordVisaFee({ bookingId: booking.id, amount: visaFee, details: rawDetails });
+      if (f.error) showToast("⚠ الدفعة اتسجّلت، لكن رسوم الفيزا ماتسجّلتش: " + f.error + " - سجّلها تاني");
+      else { feeNote = ` + رسوم فيزا ${fmt(visaFee)} ${cur}`; onLog(`رسوم فيزا ${fmt(visaFee)} ${cur} - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`); }
+    }
     const details = out.details || cleanPaymentDetailsFor(method, rawDetails);
     const detailsText = describePaymentDetails(method, details) ? "\u2066" + describePaymentDetails(method, details) + "\u2069" : "";
     const paidText = `${fmt(amount)} ${cur}`;
@@ -198,7 +213,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); });     // تفصيل المدفوع بالوسيلة بعد ما اليومية اتحدّثت
     const cafe = Number(out.cafeteria) || 0;
     const left = opts.map((o) => (o.currency === cur ? { ...o, due: Math.max(0, Math.round((o.due - amount) * 100) / 100) } : o)).filter((o) => o.due > 0.004);
-    showToast(`تم تسجيل ${paidText} (${method}${detailsText ? " " + detailsText : ""})${cafe > 0 ? ` - منها ${fmt(cafe)} ${cur} كافيتيريا` : ""} - ${left.length ? `المتبقي ${formatMoneyLines(left)}` : "الحجز مدفوع بالكامل"}`);
+    showToast(`تم تسجيل ${paidText}${feeNote} (${method}${detailsText ? " " + detailsText : ""})${cafe > 0 ? ` - منها ${fmt(cafe)} ${cur} كافيتيريا` : ""} - ${left.length ? `المتبقي ${formatMoneyLines(left)}` : "الحجز مدفوع بالكامل"}`);
   }
   // غادر مبكرًا: بيقصّر الإقامة لحد النهارده (الحد الأدنى ليلة). مفيش رد فلوس: لو كان دافع زيادة، الفلوس بتفضل في الفندق.
   async function earlyLeave(booking) { return guarded("leave:" + booking.id, () => earlyLeaveInner(booking)); }
@@ -363,7 +378,6 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
   }
 
   const counts = useMemo(() => { const c = { available: 0, occupied_paid: 0, occupied_unpaid: 0, reserved: 0, maintenance: 0, cleaning: 0, early_checkout: 0 }; rooms.forEach((r) => { const s = computeRoomStatus(r.number, bookings, overrides, date, { beforeCheckout }); c[s.key] = (c[s.key] || 0) + 1; }); return c; }, [rooms, bookings, overrides, date, beforeCheckout]);
-  const revCurrencies = kpis ? currencyKeysOf(kpis.rev, kpis.exp) : [];
   // بحث بكود النزيل: بيرجّع الغرفة اللي كان ساكن فيها
   const cq = codeQuery.trim().toLowerCase();
   const codeHits = findGuestCodeHits(bookings, cq);
@@ -400,8 +414,19 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         )}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 16 }}>
-        <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-green" aria-hidden="true"><Wallet size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>تحصيل اليوم</div><div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.rev, c)} ${c}`).join(" + ") : "0") : "…"}</div></div></div>
-        <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-red" aria-hidden="true"><Receipt size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>مصاريف اليوم</div><div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? (revCurrencies.length ? revCurrencies.map((c) => `${money(kpis.exp, c)} ${c}`).join(" + ") : "0") : "…"}</div></div></div>
+        <div className="cx-kpi" data-testid="kpi-rev" style={{ display: "flex", gap: 12, alignItems: "flex-start" }}><span className="cx-ico ic-green" aria-hidden="true"><Wallet size={19} /></span><div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>تحصيل اليوم (كل الشيفتات)</div>
+          <div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? <MoneyStack value={kpis.rev} /> : "…"}</div>
+          {kpis && nonZero(kpis.rev) && (
+            <dl className="cx-kpi-split" data-testid="kpi-rev-split">
+              {Object.keys(kpis.byMethod).filter((m) => nonZero(kpis.byMethod[m])).sort((a, b) => (a === "كاش" ? -1 : b === "كاش" ? 1 : a.localeCompare(b, "ar"))).map((m) => <div key={m}><dt>{m}</dt><dd><MoneyStack value={kpis.byMethod[m]} /></dd></div>)}
+              {(nonZero(kpis.cafe) || nonZero(kpis.cafeStaff)) && <div className="sep"><dt>غرف</dt><dd><MoneyStack value={kpis.roomsRev} /></dd></div>}
+              {nonZero(kpis.cafe) && <div><dt>كافيتيريا النزلاء</dt><dd><MoneyStack value={kpis.cafe} /></dd></div>}
+              {nonZero(kpis.cafeStaff) && <div><dt>كافيتيريا الاستاف</dt><dd><MoneyStack value={kpis.cafeStaff} /></dd></div>}
+            </dl>
+          )}
+        </div></div>
+        <div className="cx-kpi" data-testid="kpi-exp" style={{ display: "flex", gap: 12, alignItems: "flex-start" }}><span className="cx-ico ic-red" aria-hidden="true"><Receipt size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>مصاريف اليوم</div><div style={{ fontWeight: 700, fontSize: 18 }}>{kpis ? <MoneyStack value={kpis.exp} /> : "…"}</div></div></div>
         <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-indigo" aria-hidden="true"><BedDouble size={19} /></span><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>نسبة الإشغال</div><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span style={{ fontWeight: 700, fontSize: 20 }}>{occPct}%</span><span aria-hidden="true" style={{ flex: 1, height: 6, background: "var(--paper2)", borderRadius: 6, overflow: "hidden" }}><span style={{ display: "block", height: "100%", width: occPct + "%", background: "linear-gradient(90deg,#7A6BC9,#5B4BA6)" }} /></span></div></div></div>
         <div className="cx-kpi" style={{ display: "flex", gap: 12, alignItems: "center" }}><span className={"cx-ico " + (kpis?.flagged ? "ic-red" : "ic-amber")} aria-hidden="true"><AlertTriangle size={19} /></span><div><div style={{ fontSize: 13, color: "var(--muted)" }}>شيفتات تحتاج متابعة</div><div style={{ fontWeight: 700, fontSize: 20, color: kpis?.flagged ? "var(--rust)" : "var(--text)" }}>{kpis ? kpis.flagged : "…"}</div></div></div>
       </div>
@@ -415,7 +440,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
             <span className="cx-tile-st" style={{ color: STATUS_TEXT[s.key] }}>{TILE_LABEL[s.key]}</span>
             <div style={{ fontWeight: 700, fontSize: r.name ? 16 : 22, lineHeight: 1.25, overflowWrap: "anywhere", color: "var(--ink)" }}><RoomName rooms={rooms} number={r.number} prefix={false} /></div>
             {s.guest && <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.guest}</div>}
-            {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 12.5, color: "var(--muted)" }}>{fmt(s.booking.priceNight)} {s.booking.currency} / ليلة</div>}
+            {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(s.booking.priceNight)} {s.booking.currency}</bdi> / ليلة</div>}
             {dueT.length > 0 && <div style={{ fontSize: 12.5, color: "var(--rust)", fontWeight: 600, marginTop: "auto" }}>متبقي <bdi dir="ltr">{formatMoneyLines(dueT)}</bdi></div>}
             {s.departingToday && <span className="cx-pill" style={{ background: "#FBE9DA", color: "#8F4A12", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>خروج 12 الضهر</span>}
             {s.booking?.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>تسكين مكرر</span>}
@@ -473,7 +498,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                 </div>
                 <div className="cx-meta" style={{ marginTop: 4 }}>
                   <span><CalendarDays size={14} aria-hidden="true" /><DateRange from={b.checkin} to={b.checkout} /></span>
-                  <span><Moon size={14} aria-hidden="true" />{nightsBetween(b.checkin, b.checkout)} ليلة · {fmt(b.priceNight)} {b.currency} / ليلة</span>
+                  <span><Moon size={14} aria-hidden="true" />{nightsBetween(b.checkin, b.checkout)} ليلة · <bdi dir="ltr">{fmt(b.priceNight)} {b.currency}</bdi> / ليلة</span>
                   <span><Users size={14} aria-hidden="true" />{b.pax || 1} فرد</span>
                   {b.code && <span><Hash size={14} aria-hidden="true" /><span dir="ltr" data-testid="card-booking-code" style={{ fontFamily: "monospace" }}>{b.code}</span></span>}
                 </div>
@@ -495,6 +520,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                       <PayCurrencySelect booking={b} value={payCur} onChange={(c) => setPay({ ...pay, currency: c, amount: "" })} />
                       <select className="cx-select" aria-label="وسيلة الدفع" data-testid="collect-method" style={{ fontSize: 13, width: 150 }} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
                       <PaymentDetailsInline compact={false} testid="pay" method={pay.method} details={pay.details} onChange={(d) => setPay({ ...pay, details: d })} />
+                      {pay.method === "فيزا" && payCur === b.currency && <input className="cx-input" data-testid="pay-visa-fee" type="number" min="0" placeholder={`رسوم فيزا (${payCur})`} aria-label="رسوم الفيزا" style={{ width: 140 }} value={pay.fee || ""} onChange={(e) => setPay({ ...pay, fee: e.target.value })} />}
                       <button className="cx-btn cx-btn-gold" data-testid="pay-record" style={{ fontSize: 13 }} disabled={payLock} aria-busy={payLock} onClick={() => recordPayment(b)}><Check size={13} /> تسجيل التحصيل</button>
                     </div>
                   </div>
