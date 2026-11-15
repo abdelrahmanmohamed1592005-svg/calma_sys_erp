@@ -147,15 +147,16 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
               <NumField disabled={locked} value={record.handover?.[cur] ?? 0} onChange={(v) => onChangeHandover(cur, v)} />
               {prevClosing && prevClosing[cur] != null && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>مقترح: {money(prevClosing, cur)}</div>}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13.5 }}>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>تحصيل الغرف</div><div style={{ fontWeight: 700 }} data-testid={"sum-rooms-" + cur}>{money(totals.roomCollections, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>كافيتيريا النزلاء</div><div style={{ fontWeight: 700 }} data-testid={"sum-cafe-" + cur}>{money(totals.cafeteriaGuest, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>كافيتيريا الاستاف</div><div style={{ fontWeight: 700 }} data-testid={"sum-cafe-staff-" + cur}>{money(totals.cafeteriaStaff, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي التحصيل</div><div style={{ fontWeight: 700 }}>{money(totals.totalCollections, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>نقدًا منها</div><div style={{ fontWeight: 700 }}>{money(totals.cashCollections, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>إجمالي المصاريف</div><div style={{ fontWeight: 700 }}>{money(totals.totalExpenses, cur)}</div></div>
-              <div><div style={{ color: "var(--muted)", fontSize: 12 }}>رصيد الخزينة</div><div style={{ fontWeight: 800, color: "var(--teal)" }}>{money(totals.closingCash, cur)}</div></div>
-            </div>
+            {/* بالترتيب زي الورق: التحصيل مفصّل، وبعدين الكاش والمصاريف، والرصيد آخر سطر (العهدة + الكاش - المصاريف) */}
+            <dl className="cx-sum" data-testid={"cash-summary-" + cur} style={{ margin: 0 }}>
+              <div><dt>تحصيل الغرف</dt><dd data-testid={"sum-rooms-" + cur}>{money(totals.roomCollections, cur)}</dd></div>
+              <div><dt>كافيتيريا النزلاء</dt><dd data-testid={"sum-cafe-" + cur}>{money(totals.cafeteriaGuest, cur)}</dd></div>
+              <div><dt>كافيتيريا الاستاف</dt><dd data-testid={"sum-cafe-staff-" + cur}>{money(totals.cafeteriaStaff, cur)}</dd></div>
+              <div className="sep"><dt>إجمالي التحصيل (كل الوسائل)</dt><dd>{money(totals.totalCollections, cur)}</dd></div>
+              <div><dt>منه كاش في الدرج</dt><dd>{money(totals.cashCollections, cur)}</dd></div>
+              <div><dt>إجمالي المصاريف</dt><dd>{money(totals.totalExpenses, cur)}</dd></div>
+              <div className="sep"><dt style={{ color: "var(--ink)", fontWeight: 700 }}>رصيد الخزينة</dt><dd style={{ color: "var(--teal)", fontSize: 16 }}>{money(totals.closingCash, cur)}</dd></div>
+            </dl>
           </div>
         ))}
       </div>

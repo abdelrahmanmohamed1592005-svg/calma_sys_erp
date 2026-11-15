@@ -697,21 +697,28 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                 </div>
                 <GuestCodeChips codes={guestCodeEntries(b)} />
               </div>
-              <div className="cx-no-print" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div className="cx-no-print cx-bk-actions">
                 {b.status === "تم تسجيل الخروج" && <span className="cx-pill" style={{ background: "#00000010", color: "var(--teal)" }}>{b.status}</span>}
                 {perms.markPaymentReceived && !cancelled && bookingHasDue(b) && <QuickPay booking={b} onDone={onRefresh} showToast={showToast} />}
-                {perms.priorPaid && !cancelled && <PriorPaid booking={b} onDone={onRefresh} showToast={showToast} />}
-                {perms.devTools && <DevRestore booking={b} onDone={onRefresh} showToast={showToast} />}
-                {perms.devTools && <span data-testid="dev-delete-booking"><DevDeleteBooking booking={b} onDone={onRefresh} showToast={showToast} /></span>}
                 {perms.editBookingPrice && !perms.editBookings && !offShift && !cancelled && b.status !== "تم تسجيل الخروج" && (
                   <button className="cx-btn cx-btn-outline" title="تعديل الحجز (بيانات النزيل والسعر والتمديد)" data-testid="edit-price" onClick={() => startEdit(b)}><Pencil size={13} /> تعديل الحجز</button>
                 )}
                 {perms.editBookings && (<>
-                  <button className="cx-btn cx-btn-outline" title="تعديل" onClick={() => startEdit(b)}><Pencil size={13} /></button>
+                  <button className="cx-btn cx-btn-outline" title="تعديل" aria-label="تعديل الحجز" onClick={() => startEdit(b)}><Pencil size={13} /></button>
                   {b.status !== "ملغي" && b.status !== "تم تسجيل الخروج" && (
                     <span data-testid="cancel-booking"><TwoStepButton label="إلغاء الحجز" confirmLabel={`تأكيد الإلغاء؟ ${(Number(b.amountPaid) || 0) > 0 ? `(عليه ${fmt(b.amountPaid)} ${b.currency} متحصّل - بتفضل في الفندق، مفيش رد)` : "(مفيش فلوس متحصّلة)"}`} icon={<Ban size={13} />} onConfirm={() => cancelBooking(b)} /></span>
                   )}
                 </>)}
+                {((perms.priorPaid && !cancelled) || perms.devTools) && (
+                  <details className="cx-more" data-testid="booking-more">
+                    <summary className="cx-btn cx-btn-outline" aria-label="خيارات أخرى">⋯ المزيد</summary>
+                    <div className="cx-more-body">
+                      {perms.priorPaid && !cancelled && <PriorPaid booking={b} onDone={onRefresh} showToast={showToast} />}
+                      {perms.devTools && <DevRestore booking={b} onDone={onRefresh} showToast={showToast} />}
+                      {perms.devTools && <span data-testid="dev-delete-booking"><DevDeleteBooking booking={b} onDone={onRefresh} showToast={showToast} /></span>}
+                    </div>
+                  </details>
+                )}
               </div>
               <div className="cx-print-only">
                 <span className="cx-pill" style={{ background: "#00000010", color: cancelled ? "var(--rust)" : "var(--teal)" }}>{b.status}</span>

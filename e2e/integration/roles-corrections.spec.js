@@ -4,6 +4,12 @@ import { test, expect } from "../fixtures";
 import { login, goTab, toast, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
 import { readFileSync } from "node:fs";
 
+// الإجراءات الثانوية في كارت الحجز (مدفوع قبل السيستم وأدوات المطوّر) تحت "⋯ المزيد"
+async function openMoreMenus(page) {
+  await page.getByTestId("booking-more").first().waitFor();
+  for (const s of await page.getByTestId("booking-more").locator("summary").all()) await s.click();
+}
+
 async function users(env) {
   await env.seedUser("boss", "gm", "المدير");
   await env.seedUser("ahmed", "staff", "أحمد");
@@ -117,6 +123,7 @@ test("مدفوع قبل السيستم: بيتحسب في المدفوع وال�
   await page.goto("/");
   await login(page, "ahmed");                                      // موظف الشيفت هو اللي بيحدده
   await goTab(page, "الحجوزات");
+  await openMoreMenus(page);
   const card = page.locator("div", { has: page.getByTestId("prior-paid-open") }).filter({ hasText: "Paper Guest" }).last();
   await card.getByTestId("prior-paid-open").click();
   await page.getByTestId("prior-paid-amount").fill("700");
@@ -182,6 +189,7 @@ test("المطوّر يمسح حجز اتضاف بالغلط نهائيًا: ت�
   await page.goto("/");
   await login(page, "devo");
   await goTab(page, "الحجوزات");
+  await openMoreMenus(page);
   const del = page.locator("div", { has: page.getByTestId("dev-delete-booking") }).filter({ hasText: "Wrong Booking" }).last().getByTestId("dev-delete-booking").getByRole("button");
   await del.click();
   await del.first().click();                                           // تأكيد
@@ -276,6 +284,7 @@ test("المطوّر: زرار إرجاع حجز اتلغى بالغلط، وز�
   await page.goto("/");
   await login(page, "devo");
   await goTab(page, "الحجوزات");
+  await openMoreMenus(page);
   await page.getByRole("button", { name: "إرجاع الحجز (اتلغى بالغلط)" }).click();
   await page.getByRole("button", { name: "ترجّع الحجز؟" }).click();
   await expect(toast(page)).toContainText("الحجز رجع تاني");

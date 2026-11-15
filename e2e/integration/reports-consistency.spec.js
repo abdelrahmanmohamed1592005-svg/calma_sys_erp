@@ -148,10 +148,10 @@ test("مجموع تقارير الأيام = تقرير الفترة (من غي�
   const t1 = await read("إجمالي التحصيل"), e1 = await read("إجمالي المصاريف"), o1 = await onlineNet();
   await dayInput.fill(d0);
   await expect(grid.locator(".cx-card", { hasText: "إجمالي التحصيل" }).first()).toContainText("60");
-  const t0 = await read("إجمالي التحصيل"), o0 = await onlineNet();
+  const t0 = await read("إجمالي التحصيل");
   expect(t1).toBe("100$"); expect(e1).toBe("40ج"); expect(t0).toBe("25ج+60$");
   expect(o1).toContain("300$");        // الإجمالي في يوم الدخول (امبارح)
-  expect(o0).not.toContain("300$");     // مش بيتكرر النهارده
+  await expect(page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" })).toHaveCount(0);     // مش بيتكرر النهارده (القسم مابيظهرش من غير حجوزات أونلاين)
   await page.getByRole("button", { name: "فترة", exact: true }).click();
   const dates = page.locator('input[type="date"]');
   await dates.nth(0).fill(d1);

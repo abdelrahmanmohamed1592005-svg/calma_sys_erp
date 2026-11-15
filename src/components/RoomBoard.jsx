@@ -440,7 +440,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
             <span className="cx-tile-st" style={{ color: STATUS_TEXT[s.key] }}>{TILE_LABEL[s.key]}</span>
             <div style={{ fontWeight: 700, fontSize: r.name ? 16 : 22, lineHeight: 1.25, overflowWrap: "anywhere", color: "var(--ink)" }}><RoomName rooms={rooms} number={r.number} prefix={false} /></div>
             {s.guest && <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.guest}</div>}
-            {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 12.5, color: "var(--muted)" }}>{fmt(s.booking.priceNight)} {s.booking.currency} / ليلة</div>}
+            {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(s.booking.priceNight)} {s.booking.currency}</bdi> / ليلة</div>}
             {dueT.length > 0 && <div style={{ fontSize: 12.5, color: "var(--rust)", fontWeight: 600, marginTop: "auto" }}>متبقي <bdi dir="ltr">{formatMoneyLines(dueT)}</bdi></div>}
             {s.departingToday && <span className="cx-pill" style={{ background: "#FBE9DA", color: "#8F4A12", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>خروج 12 الضهر</span>}
             {s.booking?.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>تسكين مكرر</span>}
@@ -498,7 +498,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                 </div>
                 <div className="cx-meta" style={{ marginTop: 4 }}>
                   <span><CalendarDays size={14} aria-hidden="true" /><DateRange from={b.checkin} to={b.checkout} /></span>
-                  <span><Moon size={14} aria-hidden="true" />{nightsBetween(b.checkin, b.checkout)} ليلة · {fmt(b.priceNight)} {b.currency} / ليلة</span>
+                  <span><Moon size={14} aria-hidden="true" />{nightsBetween(b.checkin, b.checkout)} ليلة · <bdi dir="ltr">{fmt(b.priceNight)} {b.currency}</bdi> / ليلة</span>
                   <span><Users size={14} aria-hidden="true" />{b.pax || 1} فرد</span>
                   {b.code && <span><Hash size={14} aria-hidden="true" /><span dir="ltr" data-testid="card-booking-code" style={{ fontFamily: "monospace" }}>{b.code}</span></span>}
                 </div>

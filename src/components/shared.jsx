@@ -294,6 +294,15 @@ export function GlobalStyle() {
       .cx-btn-soft:hover{ background:#F3E6C4; }
       .cx-role{ display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; padding:2px 9px; border-radius:999px; line-height:20px; }
       .cx-role.r-gm{ background:#FBF1DC; color:#8A6416; } .cx-role.r-staff{ background:#E5F2EC; color:#1E6B4E; }
+      .cx-role.r-shift_manager{ background:#DFF0EE; color:#14655E; } .cx-role.r-dev{ background:#EFE7F7; color:#5B3F96; }
+      .cx-bk-actions{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; min-width:0; max-width:100%; }
+      .cx-more{ position:relative; }
+      .cx-more > summary{ list-style:none; cursor:pointer; user-select:none; }
+      .cx-more > summary::-webkit-details-marker{ display:none; }
+      .cx-more[open] > summary{ background:var(--paper2); }
+      .cx-more-body{ display:flex; flex-direction:column; align-items:flex-start; gap:8px; margin-top:8px; padding:10px; background:#fff; border:1px solid var(--hair); border-radius:10px; box-shadow:var(--sh-l); }
+      @media screen and (min-width:760px){ .cx-more-body{ position:absolute; inset-inline-end:0; top:100%; z-index:30; min-width:260px; } }
+      @media screen and (max-width:759.98px){ .cx-bk-actions{ justify-content:flex-start; width:100%; } .cx-bk-actions > *{ flex:1 1 auto; } .cx-more{ flex-basis:100%; } }
       .cx-role.r-reservations{ background:#ECE7F6; color:#5B3F96; } .cx-role.r-accounts{ background:#E4EEF7; color:#2B5B86; }
       .cx-role.off{ background:#EFEEEC; color:#6E685D; }
       .cx-day-sep{ position:sticky; top:0; z-index:1; padding:7px 16px; font-size:12px; font-weight:700; color:var(--muted); background:#FAF8F3; border-top:1px solid var(--hair2); letter-spacing:.02em; }
@@ -587,15 +596,15 @@ export function MoneyBox({ b }) {
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
         {state && <span data-testid="pay-state" className="cx-pill" style={{ background: state.color === "var(--sage)" ? "#EAF2EC" : "#FBE2E4", color: state.color }}>{state.text}</span>}
         {cells.map(([label, val, color]) => (
-          <div key={label}><div style={{ color: "var(--muted)", fontSize: 12 }}>{label}</div><div style={{ fontWeight: 800, color: color || "inherit" }}>{val} {b.currency}</div></div>
+          <div key={label}><div style={{ color: "var(--muted)", fontSize: 12 }}>{label}</div><div style={{ fontWeight: 800, color: color || "inherit" }}><bdi dir="ltr">{val} {b.currency}</bdi></div></div>
         ))}
       </div>
       {otherCurs.map((cur) => (
         <div key={cur} data-testid={"money-other-" + cur} style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", borderTop: "1px dashed var(--hair)", paddingTop: 6 }}>
           <span className="cx-pill" style={{ background: "var(--paper2)" }}>خدمات بالـ {cur}</span>
-          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>الإجمالي</div><div style={{ fontWeight: 800 }}>{fmt(oT[cur] || 0)} {cur}</div></div>
-          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المدفوع</div><div style={{ fontWeight: 800 }}>{fmt(oP[cur] || 0)} {cur}</div></div>
-          {!cancelled && <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المتبقي</div><div style={{ fontWeight: 800, color: oD[cur] ? "var(--rust)" : "var(--sage)" }}>{fmt(oD[cur] || 0)} {cur}</div></div>}
+          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>الإجمالي</div><div style={{ fontWeight: 800 }}><bdi dir="ltr">{fmt(oT[cur] || 0)} {cur}</bdi></div></div>
+          <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المدفوع</div><div style={{ fontWeight: 800 }}><bdi dir="ltr">{fmt(oP[cur] || 0)} {cur}</bdi></div></div>
+          {!cancelled && <div><div style={{ color: "var(--muted)", fontSize: 12 }}>المتبقي</div><div style={{ fontWeight: 800, color: oD[cur] ? "var(--rust)" : "var(--sage)" }}><bdi dir="ltr">{fmt(oD[cur] || 0)} {cur}</bdi></div></div>}
         </div>
       ))}
     </div>

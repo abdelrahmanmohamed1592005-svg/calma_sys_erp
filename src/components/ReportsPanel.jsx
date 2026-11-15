@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble } from "lucide-react";
+import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble, Coffee } from "lucide-react";
 import { DateRange, Logo, RoomName } from "./shared";
 import { emptyMoney, computeShiftTotals, trackBalances, methodTransactions, bookingDueLines, formatMoneyLines, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, GROUP_NAME } from "../domain/constants";
@@ -20,7 +20,9 @@ function aggregateShifts(records) {
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
   const byMethodCurrency = {}, byCategory = {};
   const flaggedShifts = [];
+  const cafeteria = emptyMoney();      // الكافيتيريا (نزلاء + استاف) مفصولة عن فلوس الغرف في الإجماليات
   records.forEach((r) => {
+    addMoneyInto(cafeteria, computeShiftTotals(r).cafeteriaCollections || {});
     const t = r.closed && r.totalCollections && r.byMethodCurrency ? { totalExpenses: r.totalExpenses, totalCollections: r.totalCollections, cashCollections: r.cashCollections, byMethodCurrency: r.byMethodCurrency, byCategory: r.byCategory } : computeShiftTotals(r);
     addMoneyInto(totalExpenses, t.totalExpenses || {});
     addMoneyInto(totalCollections, t.totalCollections || {});
@@ -34,7 +36,7 @@ function aggregateShifts(records) {
   // متابعة العهدة لكل وسيلة وعملة: عهدة أول شيفت + تحصيل الفترة - المصاريف + فرق أي عهدة اتكتبت بالإيد في شيفت لاحق
   // = رصيد آخر شيفت فعلاً (قبل كده عهدة الفيزا اللي موظف كتبها في شيفت بعده ماكانتش بتدخل في الإجمالي).
   const balances = trackBalances(records);
-  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, flaggedShifts, netCash, balances };
+  return { totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, flaggedShifts, netCash, balances, cafeteria };
 }
 
 function aggregateBookings(bookings, fromDate, toDate, journaledIds) {
@@ -303,13 +305,14 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
             <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-green" aria-hidden="true"><Wallet size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>إجمالي التحصيل</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(combinedTotalCollections)}</div></div></div>
             <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-red" aria-hidden="true"><Receipt size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>إجمالي المصاريف</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(agg.totalExpenses)}</div></div></div>
             <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-teal" aria-hidden="true"><Landmark size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>صافي التحصيل بعد المصاريف</div><div style={{ fontWeight: 800, fontSize: 16, color: "var(--teal)" }}>{moneyLine(agg.netCash)}</div></div></div>
+            {currencyKeysOf(agg.cafeteria).some((c) => Math.abs(agg.cafeteria[c] || 0) > 0.004) && <div className="cx-card" data-testid="report-cafeteria" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-amber" aria-hidden="true"><Coffee size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>منها الكافيتيريا</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(agg.cafeteria)}</div></div></div>}
             <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-indigo" aria-hidden="true"><BedDouble size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>متوسط نسبة الإشغال</div><div style={{ fontWeight: 800, fontSize: 20 }}>{avgOccupancy}%</div></div></div>
           </div>
 
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 2, color: "var(--ink)" }}>التحصيل حسب طريقة الدفع والعملة</div>
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>كل تحصيل أو رد فلوس بيتسجّل من اليومية تلقائيًا.</div>
-            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{allMethods.map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
+            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{allMethods.filter((m) => reportCurrencies.some((c) => Math.abs(Number(combinedByMethodCurrency[m]?.[c]) || 0) > 0.004)).map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
           </div>
 
           {allMethods.some((m) => currencyKeysOf(agg.balances?.[m]?.opening, agg.balances?.[m]?.closing, m === "كاش" ? agg.cashCollections : agg.byMethodCurrency?.[m]).length > 0) && (
@@ -382,11 +385,12 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
             </div>
           )}
 
-          <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
+          {Object.keys(agg.byCategory).length > 0 && <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 6 }}>المصاريف حسب البند</div>
-            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">البند</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{EXPENSE_CATEGORIES.map((c) => <tr key={c}><td>{c}</td>{reportCurrencies.map((cur) => <td key={cur}>{money(agg.byCategory[c], cur)}</td>)}</tr>)}</tbody></table></div>
-          </div>
+            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">البند</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{Object.keys(agg.byCategory).filter((c) => reportCurrencies.some((cur) => Math.abs(Number(agg.byCategory[c]?.[cur]) || 0) > 0.004)).sort((a, b) => EXPENSE_CATEGORIES.indexOf(a) - EXPENSE_CATEGORIES.indexOf(b)).map((c) => <tr key={c}><td>{c}</td>{reportCurrencies.map((cur) => <td key={cur}>{money(agg.byCategory[c], cur)}</td>)}</tr>)}</tbody></table></div>
+          </div>}
 
+          {bAgg.count > 0 && (
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 2, color: "var(--ink)" }}>الحجوزات الأونلاين ({bAgg.count} حجز مدفوع أونلاين من إجمالي {bAgg.totalCount} حجز في الفترة)</div>
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>الحجوزات المدفوعة أونلاين (سعر الغرفة بس - الخدمات بتتحصّل في الفندق وبتدخل في التحصيل فوق).</div>
@@ -413,6 +417,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
               <div style={{ fontSize: 13, color: "var(--muted)" }}>مفيش حجوزات متحددة كـ"مدفوعة أونلاين" في الفترة دي.</div>
             )}
           </div>
+          )}
 
           {/* قسم مستقل تمامًا وبعيد عن الحجوزات الأونلاين - سعر الغرفة
               للحجز المدفوع أونلاين متسوّى بالفعل عن طريق المنصة فمبيظهرش هنا
