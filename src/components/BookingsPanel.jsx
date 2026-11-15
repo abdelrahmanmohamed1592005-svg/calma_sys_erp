@@ -184,7 +184,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   // حالة الدفع (مدفوع بالكامل / متبقي) بتتحسب لوحدها من المدفوع والإجمالي -
   // مفيش علامة "متحصّل" بتتعلّم بالإيد ولا بتقفل حاجة.
   // المطوّر كمان مابيحصّلش (مش واخد شيفت) - التحصيل من اليومية/الموظف بس، والتصحيح من شاشة التصحيح
-  const collectionLocked = role === "reservations" || role === "dev";
+  const collectionLocked = role === "reservations";
   const chargeLocked = moneyLocked;
   // موظف الشيفت بيعدّل بيانات النزيل والسعر والتمديد؛ الغرفة بتتغيّر من "نقل النزيل" وتاريخ الدخول ثابت (القاعدة بتفرض ده)
   const staffEdit = isExistingBooking && !perms.editBookings;
@@ -288,7 +288,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     const payNow = form.payNow || { amount: "", method: "كاش", details: emptyPaymentDetails() };
     const advance = !isExistingBooking && !collectionLocked && !online ? Number(payNow.amount) || 0 : 0;
     if (!Number.isFinite(advance) || advance < 0) { showToast("المدفوع لازم يكون رقم صحيح مش سالب"); return; }
-    if (advance > 0 && !myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - ماينفعش تسجّل دفعة مقدّمة. احفظ الحجز من غير دفعة وسجّلها بعد ما تفتح شيفتك"); return; }
+    if (advance > 0 && !myActiveShiftKey && !perms.devTools) { showToast("مفيش شيفتك شغال دلوقتي - ماينفعش تسجّل دفعة مقدّمة. احفظ الحجز من غير دفعة وسجّلها بعد ما تفتح شيفتك"); return; }
     if (advance > 0) {
       const detailsErr = validatePaymentDetailsFor(payNow.method, payNow.details);
       if (detailsErr) { showToast(detailsErr); return; }
@@ -296,7 +296,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     // دفعات إضافية (وسيلة أو عملة تانية): كل سطر بوسيلته وتفاصيله، والعملة التانية بسعر صرف بيتكتب مع الدفعة
     const moreLines = !isExistingBooking && !collectionLocked && !online ? (form.payMore || []).filter((l) => Number(l.amount) > 0) : [];
     for (const l of moreLines) {
-      if (!myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - ماينفعش تسجّل دفعة مقدّمة"); return; }
+      if (!myActiveShiftKey && !perms.devTools) { showToast("مفيش شيفتك شغال دلوقتي - ماينفعش تسجّل دفعة مقدّمة"); return; }
       const e2 = validatePaymentDetailsFor(l.method, l.details);
       if (e2) { showToast(e2); return; }
       if (l.currency !== form.currency && !(Number(l.rate) > 0)) { showToast(`اكتب سعر الصرف لدفعة ${l.currency} (كام ${l.currency} في كل 1 ${form.currency})`); return; }

@@ -48,7 +48,7 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       await flushNow();
       const res = await recordStaffCafeteria({
         name: c.name, username: c.username, description: sanitizeText(desc, 300), amount: amt, currency,
-        method: payMode === "pay" ? method : null, details: payMode === "pay" ? det : null,
+        method: payMode === "pay" ? method : null, details: payMode === "pay" ? det : null, devHotel: profile?.role === "dev" ? record.hotelId : null,
       });
       if (res.error) { showToast(res.error); return; }
       onLog(`كافيتيريا استاف - ${c.name}: ${fmt(amt)} ${currency}${payMode === "pay" ? ` (دفع ${method})` : " (آجل - عليه فلوس)"}`);
@@ -78,7 +78,7 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       const err = validatePaymentDetailsFor(payMethod, payDetails); if (err) { showToast(err); return; }
       const det = cleanPaymentDetailsFor(payMethod, payDetails);
       await flushNow();
-      const r = await settleStaffCafeteria({ name: g.name, username: g.username, currency: g.currency, amount: amt, method: payMethod, details: det });
+      const r = await settleStaffCafeteria({ name: g.name, username: g.username, currency: g.currency, amount: amt, method: payMethod, details: det, devHotel: profile?.role === "dev" ? record.hotelId : null });
       if (r.error) { showToast(r.error); await onReload(); return; }
       onLog(`سداد كافيتيريا استاف - ${g.name}: ${fmt(amt)} ${g.currency} (${payMethod})`);
       setPayFor(null); setPayAmt(""); setPayMethod("كاش"); setPayDetails(emptyPaymentDetails());
