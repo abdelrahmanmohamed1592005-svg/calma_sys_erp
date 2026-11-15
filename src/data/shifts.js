@@ -120,6 +120,24 @@ export async function purgeBookingFromLedgers(booking) {
   return { error: "الحجز ليه تحصيل في يوميات كتير قوي - كلّم الدعم" };
 }
 
+/* المطوّر بيغيّر عملة حجز ليه تحصيل في يوميات مقفولة: القاعدة بتغيّر العملة في الصفوف، وبعدها كل يومية مقفولة اتأثرت
+   أرقامها بتتحسب من جديد والعهدة بتتنقل للشيفتات اللي بعدها (نفس التصحيح). change = الدالة اللي بتغيّر العملة في القاعدة. */
+export async function devChangeCurrencyAcrossLedgers(booking, change) {
+  const hotelId = booking.hotelId ?? getActiveHotelId();
+  const all = await getShiftRecordsInRange("2000-01-01", addDays(shiftDayNow(), 2), hotelId);
+  if (!all) return { error: "تعذر قراءة اليوميات (مشكلة اتصال) - جرّب تاني" };
+  const before = all.filter((r) => r.closed && recordMentionsBooking(r, booking.id));
+  const res = await change();
+  if (res?.error) return res;
+  for (const old of before) {
+    const fresh = await getShiftRecord(old.date, old.shiftKey, hotelId);
+    if (!fresh) return { ...res, warn: `العملة اتغيّرت، لكن أرقام يومية ${old.date} ماتحسبتش من جديد - افتحها وصحّحها` };
+    const r = await applyCorrection({ ...old, updatedAt: fresh.updatedAt }, fresh);
+    if (!r.data) return { ...res, warn: `العملة اتغيّرت، لكن أرقام يومية ${old.date} ماتحسبتش من جديد - افتحها وصحّحها` };
+  }
+  return res;
+}
+
 /* كل سجلات اليومية في فترة (استعلام واحد بدل استعلام لكل شيفت في كل يوم -
    تقرير فترة سنة كان بيبعت أكتر من ١٠٠٠ طلب). بترجع null لو القراءة فشلت. */
 export async function getShiftRecordsInRange(fromDate, toDate, hotelId) {

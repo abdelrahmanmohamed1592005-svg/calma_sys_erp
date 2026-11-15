@@ -4,7 +4,7 @@ import { fmt, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal,
 import { todayStr, shiftDayNow, nightsBetween, addDays, beforeCheckoutHour } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomStart, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
-import { getShiftRecord, getBookingPayments } from "../data/shifts";
+import { getShiftRecord, getBookingPayments, devChangeCurrencyAcrossLedgers } from "../data/shifts";
 import { recordBookingPayment, recordBookingPaymentOther, moveBookingRoom, changeBookingCurrency, recordVisaFee } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown, MoneyStack } from "./shared";
@@ -185,7 +185,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     if (amount > due + 0.004) { showToast(`المبلغ أكبر من المتبقي على النزيل بالـ ${cur} (${fmt(due)} ${cur})`); return; }
     const detailsErr = validatePaymentDetailsFor(pay.method, pay.details);
     if (detailsErr) { showToast(detailsErr); return; }
-    if (!myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - التحصيل لازم يتسجّل في يومية شيفتك"); return; }
+    if (!myActiveShiftKey && !perms.devTools) { showToast("مفيش شيفتك شغال دلوقتي - التحصيل لازم يتسجّل في يومية شيفتك"); return; }
     const method = pay.method;
     const rawDetails = pay.details;
     // رسوم الفيزا: مبلغ بيكتبه الموظف بيتدفع مع الدفعة على الفيزا (بعملة الحجز) - بيتسجّل صف لوحده "رسوم فيزا"
@@ -342,12 +342,14 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
   async function changeCurrencyInner(booking) {
     if (!curTo) { showToast("اختار العملة الصح"); return; }
     if (offShift && !perms.editBookings) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
-    const res = await changeBookingCurrency({ bookingId: booking.id, currency: curTo, expectedUpdatedAt: booking.updatedAt });
+    const change = () => changeBookingCurrency({ bookingId: booking.id, currency: curTo, expectedUpdatedAt: booking.updatedAt });
+    // المطوّر: لو فيه تحصيل في يومية مقفولة، العملة بتتغيّر فيها كمان وأرقامها والعهدة اللي بعدها بيتحسبوا من جديد
+    const res = perms.devTools ? await devChangeCurrencyAcrossLedgers(booking, change) : await change();
     if (res?.error) { showToast(res.error); if (onRefresh) onRefresh(); return; }
     onLog(`تعديل عملة الحجز - ${roomLabel(rooms, booking.room)} - ${booking.guestName}: من ${booking.currency} إلى ${curTo}`);
     setCurOpen(false); setCurTo("");
     if (onRefresh) await onRefresh();
-    showToast(`اتغيّرت عملة الحجز من ${booking.currency} لـ ${curTo} (الأرقام زي ما هي) وفي اليومية كمان`);
+    showToast(res?.warn ? "⚠ " + res.warn : `اتغيّرت عملة الحجز من ${booking.currency} لـ ${curTo} (الأرقام زي ما هي) وفي اليومية كمان`);
   }
   async function saveExtras(booking) { return guarded("extras:" + booking.id, () => saveExtrasInner(booking)); }
   async function saveExtrasInner(booking) {

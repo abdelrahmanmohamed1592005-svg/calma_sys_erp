@@ -133,12 +133,24 @@ Deno.serve(async (req) => {
       .insert({ id: userId, username: cleanUsername, name: cleanName, role, active: true });
 
     if (insertErr) {
+      const ie = insertErr as { code?: string; message?: string; details?: string };
+      if (ie.code === "23505") {
+        // فيه ملف موظف اتعمل لنفس حساب الدخول قبل ما نوصل (مثلاً trigger على مشروع Supabase بيعمل ملف لكل حساب جديد):
+        // بنكمّل البيانات عليه بدل ما نفشل
+        const { data: same } = await adminClient.from("profiles").select("id").eq("id", userId).maybeSingle();
+        if (same) {
+          const { error: fixErr } = await adminClient.from("profiles").update({ username: cleanUsername, name: cleanName, role, active: true }).eq("id", userId);
+          if (!fixErr) return ok(userId, !createdNow);
+          if (createdNow) await adminClient.auth.admin.deleteUser(userId);
+          return json({ error: safeServerError("create-user:fixAutoProfile", fixErr) }, 500, corsHeaders);
+        }
+        if (createdNow) await adminClient.auth.admin.deleteUser(userId);
+        // تعارض حقيقي: بنقول اسم القيد اللي رفض (من غير بيانات) عشان السبب يبان من صورة الشاشة
+        const constraint = (`${ie.message || ""} ${ie.details || ""}`.match(/"([a-z0-9_]+)"/i) || [])[1] || "";
+        return json({ error: `القاعدة رفضت حفظ الموظف لأن فيه بيانات مكررة${constraint ? ` (القيد: ${constraint})` : ""} - حدّث الصفحة وراجع قايمة الموظفين، ولو الاسم مش موجود ابعت الرسالة دي للدعم` }, 409, corsHeaders);
+      }
       // نظافة: حساب دخول اتعمل دلوقتي ومالوش profile مايفضلش معلّق (الحساب القديم اللي استخدمناه مابنمسحوش)
       if (createdNow) await adminClient.auth.admin.deleteUser(userId);
-      // اتنين ضافوا نفس الاسم في نفس اللحظة
-      if ((insertErr as { code?: string }).code === "23505") {
-        return json({ error: "اسم المستخدم ده اتسجّل حالًا من جهاز تاني - حدّث الصفحة وراجع قايمة الموظفين" }, 409, corsHeaders);
-      }
       return json({ error: safeServerError("create-user:insertProfile", insertErr) }, 500, corsHeaders);
     }
 

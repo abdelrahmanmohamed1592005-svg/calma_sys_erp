@@ -61,7 +61,7 @@ export const toast = (page) => page.locator(".cx-toast");
 /* بيضيف حجز من شاشة الحجوزات: بيدخل غرفة، اسم، تواريخ (بالفرق من النهارده)، سعر الليلة،
    والمدفوع/الوسيلة لو متحددين (الموظف بس بيقدر يكتب المدفوع). */
 export async function addBooking(page, o) {
-  const { room, guest, price = 100, nights = 1, startOffset = 0, paid, method, currency, dup = false, expectSaved = true, last4, senderName, phone } = o;
+  const { room, guest, price = 100, nights = 1, startOffset = 0, paid, method, currency, dup = false, expectSaved = true, last4, senderName, phone, visaFee, prior, priorNote } = o;
   await goTab(page, "الحجوزات");
   await page.getByRole("button", { name: /حجز جديد/ }).click();
   const form = page.locator(".cx-card[data-calma-editing]");
@@ -77,6 +77,9 @@ export async function addBooking(page, o) {
   if (last4) await page.getByTestId("advance-last4").fill(String(last4));
   if (senderName) await page.getByTestId("advance-name").fill(senderName);
   if (phone) await page.getByTestId("advance-phone").fill(phone);
+  if (visaFee != null) await page.getByTestId("advance-visa-fee").fill(String(visaFee));
+  if (prior != null) await page.getByTestId("new-prior-amount").fill(String(prior));
+  if (priorNote) await page.getByTestId("new-prior-note").fill(priorNote);
   await form.getByRole("button", { name: /حفظ الحجز/ }).click();
   if (expectSaved) {
     // الفورم بيتقفل بس بعد نجاح الحفظ (رسالة "تم الحفظ" ممكن تكون لسه ظاهرة من حفظة قبلها)

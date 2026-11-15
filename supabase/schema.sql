@@ -2065,7 +2065,7 @@ returns trigger language plpgsql security definer set search_path = public as $$
 declare
   old_paid numeric; old_tendered numeric;
 begin
-  if coalesce(current_setting('calma.refund_rpc', true), '') = '1' then
+  if coalesce(current_setting('calma.refund_rpc', true), '') = '1' or coalesce(current_setting('calma.pay_rpc', true), '') = '1' then
     return new;
   end if;
   if is_reservations_manager() then
@@ -2459,7 +2459,7 @@ declare
   b bookings%rowtype; sr shift_records; amt numeric := round(p_amount, 2); due numeric; err text; det jsonb;
   cafe_out numeric; cafe numeric := 0; v_extras jsonb; v_rows jsonb; v_caf jsonb; note text := left(coalesce(nullif(btrim(p_note), ''), 'تحصيل'), 60);
 begin
-  if not is_staff() then raise exception 'تسجيل التحصيل من صلاحية موظف الشيفت بس'; end if;
+  if not (is_staff() or is_dev()) then raise exception 'تسجيل التحصيل من صلاحية موظف الشيفت بس'; end if;
   if amt is null or amt <= 0 then raise exception 'اكتب مبلغ الدفعة (أكبر من صفر)'; end if;
   if not calma_valid_method(p_method) then raise exception 'وسيلة الدفع غير صالحة'; end if;
   err := calma_details_err(p_method, coalesce(p_details, '{}'::jsonb));
@@ -2473,6 +2473,7 @@ begin
   end if;
   due := greatest(0, booking_hotel_total(b) - coalesce(b.amount_paid, 0));
   if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل (%)', trim_scale(due); end if;
+  perform set_config('calma.dev_hotel', b.hotel_id::text, true);   -- المطوّر: الدفعة بتدخل الشيفت المفتوح في فندق الحجز
   sr := calma_my_open_shift();
   if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
   -- الدفعة بتسدّد خدمات كافيتيريا النزيل الأول، والباقي لصف الغرفة
@@ -2851,7 +2852,7 @@ declare
   cafe_out numeric; cafe numeric := 0; cafe_x numeric := 0; room_x numeric; v_extras jsonb; v_rows jsonb; v_caf jsonb; cur text := upper(btrim(coalesce(p_currency, '')));
   note text := left(coalesce(nullif(btrim(p_note), ''), 'تحصيل'), 60); base jsonb;
 begin
-  if not is_staff() then raise exception 'تسجيل التحصيل من صلاحية موظف الشيفت بس'; end if;
+  if not (is_staff() or is_dev()) then raise exception 'تسجيل التحصيل من صلاحية موظف الشيفت بس'; end if;
   if amt is null or amt <= 0 then raise exception 'اكتب مبلغ الدفعة (أكبر من صفر)'; end if;
   if cur !~ '^[A-Z]{3}$' then raise exception 'اختار عملة الدفعة'; end if;
   if rate is null or rate <= 0 or rate > 1000000 then raise exception 'اكتب سعر الصرف (أكبر من صفر)'; end if;
@@ -2871,6 +2872,7 @@ begin
   if covered > due and covered - due <= 0.01 then covered := due; end if;      -- كسور التقريب
   if covered <= 0 then raise exception 'المبلغ صغير جدًا بالنسبة لسعر الصرف'; end if;
   if covered > due then raise exception 'المبلغ (= % %) أكبر من المتبقي على النزيل (% %)', trim_scale(covered), b.currency, trim_scale(due), b.currency; end if;
+  perform set_config('calma.dev_hotel', b.hotel_id::text, true);   -- المطوّر: الدفعة بتدخل الشيفت المفتوح في فندق الحجز
   sr := calma_my_open_shift();
   if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
   cafe_out := greatest(0, calma_num(b.extras ->> 'cafeteria') - calma_num(b.extras ->> 'cafeteriaPaid'));
@@ -3031,7 +3033,7 @@ declare
   b bookings%rowtype; sr shift_records; amt numeric := round(p_amount, 2); cur text := upper(btrim(coalesce(p_currency, ''))); due numeric; err text; det jsonb;
   c jsonb; cafe_out numeric; cafe numeric := 0; v_rows jsonb; v_caf jsonb; note text := left(coalesce(nullif(btrim(p_note), ''), 'تحصيل'), 60);
 begin
-  if not is_staff() then raise exception 'تسجيل التحصيل من صلاحية موظف الشيفت بس'; end if;
+  if not (is_staff() or is_dev()) then raise exception 'تسجيل التحصيل من صلاحية موظف الشيفت بس'; end if;
   if amt is null or amt <= 0 then raise exception 'اكتب مبلغ الدفعة (أكبر من صفر)'; end if;
   if cur not in ('EGP', 'USD', 'EUR', 'SAR', 'GBP') then raise exception 'اختار عملة الدفعة'; end if;
   if not calma_valid_method(p_method) then raise exception 'وسيلة الدفع غير صالحة'; end if;
@@ -3049,6 +3051,7 @@ begin
   due := greatest(0, calma_other_total(c) - calma_num(b.other_paid ->> cur));
   if due <= 0 then raise exception 'مفيش متبقي على النزيل بالـ %', cur; end if;
   if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل بالـ % (%)', cur, trim_scale(due); end if;
+  perform set_config('calma.dev_hotel', b.hotel_id::text, true);   -- المطوّر: الدفعة بتدخل الشيفت المفتوح في فندق الحجز
   sr := calma_my_open_shift();
   if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
   cafe_out := greatest(0, calma_num(c ->> 'cafeteria') - calma_num(c ->> 'cafeteriaPaid'));
@@ -3182,15 +3185,16 @@ begin
   if coalesce(calma_other_total(oc -> cur), 0) > 0 or calma_num(oc #>> array[cur, 'cafeteriaPaid']) > 0 or calma_num(b.other_paid ->> cur) > 0 then
     raise exception 'على الحجز خدمات أو مدفوع منفصل بعملة % - اتعامل معاهم الأول وبعدين غيّر العملة', cur;
   end if;
-  -- أي تحصيل/رد بالعملة القديمة بتاع الحجز ده في شيفت مقفول = ممنوع (الشيفت المقفول أرقامه متثبّتة)
-  if exists (
+  -- أي تحصيل/رد بالعملة القديمة بتاع الحجز ده في شيفت مقفول = ممنوع (الشيفت المقفول أرقامه متثبّتة) - إلا المطوّر:
+  -- بيغيّرها في اليوميات المقفولة كمان، والواجهة بعدها بتعيد حساب أرقام الشيفت المقفول والعهدة اللي بعده (تصحيح)
+  if not is_dev() and exists (
     select 1 from shift_records s, jsonb_array_elements(coalesce(s.rows, '[]'::jsonb) || coalesce(s.cafeteria_rows, '[]'::jsonb)) e
     where s.closed = true and e ->> 'bookingId' = b.id::text and e ->> 'collectionCurrency' = old_cur
   ) then
     raise exception 'فيه تحصيل على الحجز ده في شيفت اتقفل - تعديل العملة لازم يتعمل من الحسابات أو المدير العام';
   end if;
   for sr in select s.hotel_id, s.date, s.shift_key, s.rows, s.cafeteria_rows from shift_records s
-    where s.closed = false and s.hotel_id = b.hotel_id and exists (
+    where (s.closed = false or is_dev()) and s.hotel_id = b.hotel_id and exists (
       select 1 from jsonb_array_elements(coalesce(s.rows, '[]'::jsonb) || coalesce(s.cafeteria_rows, '[]'::jsonb)) e
       where e ->> 'bookingId' = b.id::text and e ->> 'collectionCurrency' = old_cur)
     for update
@@ -3499,6 +3503,13 @@ $$;
 create or replace function calma_my_open_shift() returns shift_records language plpgsql security definer set search_path = public as $$
 declare uname text; sr shift_records;
 begin
+  -- المطوّر مابياخدش شيفت: الدفعة اللي بيسجّلها بتدخل آخر شيفت مفتوح في فندق الحجز (calma.dev_hotel)
+  if is_dev() then
+    select * into sr from shift_records where hotel_id = nullif(current_setting('calma.dev_hotel', true), '')::int and closed = false and date >= hotel_today() - 1
+      order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc limit 1 for update;
+    if not found then raise exception 'مفيش شيفت مفتوح في الفندق ده دلوقتي - الدفعة لازم تدخل يومية شيفت مفتوح (أو صحّح يومية بالإيد)'; end if;
+    return sr;
+  end if;
   select username into uname from profiles where id = auth.uid();
   select * into sr from shift_records where (staff_username = uname or uname = any(coalesce(helpers, '{}'))) and closed = false and date >= hotel_today() - 1
     order by date desc, (case shift_key when 'night' then 3 when 'evening' then 2 else 1 end) desc limit 1 for update;
@@ -4075,7 +4086,7 @@ create or replace function record_visa_fee(p_booking uuid, p_amount numeric, p_d
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare b bookings%rowtype; sr shift_records; amt numeric := round(p_amount, 2); err text; det jsonb;
 begin
-  if not is_staff() then raise exception 'تسجيل رسوم الفيزا من صلاحية موظف الشيفت بس'; end if;
+  if not (is_staff() or is_dev()) then raise exception 'تسجيل رسوم الفيزا من صلاحية موظف الشيفت بس'; end if;
   if amt is null or amt <= 0 or amt > 10000000 then raise exception 'اكتب مبلغ رسوم الفيزا (أكبر من صفر)'; end if;
   err := calma_details_err('فيزا', coalesce(p_details, '{}'::jsonb));
   if err is not null then raise exception '%', err; end if;
@@ -4083,6 +4094,7 @@ begin
   select * into b from bookings where id = p_booking for update;
   if not found then raise exception 'الحجز مش موجود'; end if;
   if b.status = 'ملغي' then raise exception 'الحجز ملغي - مينفعش يتسجّل عليه رسوم'; end if;
+  perform set_config('calma.dev_hotel', b.hotel_id::text, true);   -- المطوّر: الدفعة بتدخل الشيفت المفتوح في فندق الحجز
   sr := calma_my_open_shift();
   if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك'; end if;
   perform set_config('calma.pay_rpc', '1', true);
@@ -4143,7 +4155,7 @@ $$;
 revoke all on function dev_restore_booking(uuid, text) from public, anon;
 grant execute on function dev_restore_booking(uuid, text) to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 45 $$;
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 46 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart
