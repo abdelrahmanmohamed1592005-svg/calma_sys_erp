@@ -228,3 +228,63 @@ test("المطوّر يمسح يومية اتفتحت بالغلط، ويرجّ�
   expect(back.status, JSON.stringify(back.body)).toBeLessThan(300);
   expect((await env.q("select left_early, status, checkout::text, total_room from bookings where id = $1", [b]))[0]).toMatchObject({ left_early: false, status: "تم تسجيل الدخول", checkout: out });
 });
+
+test("رسوم الفيزا: الموظف بيكتب الرسم مع الدفعة - بيتحسب على النزيل وبيتسجّل في اليومية صف لوحده 'رسوم فيزا' وبيدخل في إجمالي الفيزا", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 604, guest: "Visa Guest", start: 0, nights: 2, price: 1000, paid: 0, currency: "EGP", anchor: "shift" });
+  await env.seedShift("ahmed", {});
+  await page.goto("/");
+  await login(page, "ahmed");
+  await goTab(page, "الحجوزات");
+  const card = page.locator("div", { has: page.getByTestId("quickpay-open") }).filter({ hasText: "Visa Guest" }).last();
+  await card.getByTestId("quickpay-open").click();
+  await page.getByTestId("quickpay-amount").fill("2000");
+  await page.getByTestId("quickpay-method").selectOption("فيزا");
+  await page.getByTestId("quickpay-last4").fill("4321");
+  await page.getByTestId("quickpay-visa-fee").fill("60");
+  await page.getByTestId("quickpay-submit").click();
+  await expect(toast(page)).toContainText("رسوم فيزا 60");
+  const row = (await env.q("select amount_paid, extras, settled from bookings where id = $1", [b]))[0];
+  expect(Number(row.amount_paid)).toBe(2060);
+  expect(Number(row.extras.visaFee)).toBe(60);
+  expect(row.settled).toBe(true);                                                  // الإجمالي = 2000 + 60 رسوم، والمدفوع 2060
+  const shift = (await env.q("select rows from shift_records"))[0];
+  const feeRow = shift.rows.find((r) => r.visaFee);
+  expect(feeRow).toMatchObject({ room: 604, collectionAmt: 60, collectionMethod: "فيزا", collectionCurrency: "EGP" });
+  expect(feeRow.collectionDesc).toContain("رسوم فيزا");
+  // فحص التطابق: المدفوع = تحصيل اليومية (الدفعة + الرسوم)
+  const res = await env.pool.query(readFileSync(new URL("../../supabase/ops/reconcile.sql", import.meta.url), "utf8"));
+  const rows = (Array.isArray(res) ? res : [res]).flatMap((r) => r.rows || []);
+  expect(rows.filter((r) => r.level === "خطأ")).toEqual([]);
+  // تقرير الأونر: الرسوم بتظهر في خدمات الغرفة، وإجمالي الفيزا = 2,060
+  await goTab(page, "اليومية");
+  await page.getByTestId("owner-report-btn").click();
+  const r604 = (await page.getByTestId("owner-sheet-rooms").locator("tbody tr", { hasText: "604" }).first().innerText()).replace(/[⁦-⁩]/g, "");
+  expect(r604).toContain("رسوم فيزا 60 EGP");
+  const visaBox = page.locator("[data-testid^='owner-sheet-shift-'] .cx-or-sum > div", { hasText: "الفيزا" }).first().locator("dd");
+  expect((await visaBox.innerText()).replace(/[⁦-⁩]/g, "")).toBe("2,060 EGP");
+});
+
+test("المطوّر: زرار إرجاع حجز اتلغى بالغلط، وزرار إلغاء مغادرة مبكرة اتسجّلت بالغلط (بيرجع تاريخ الخروج والإجمالي الأصليين)", async ({ page, env }) => {
+  await users(env);
+  const c = await env.seedBooking({ room: 605, guest: "Cancelled By Mistake", start: 0, nights: 2, price: 300, currency: "EGP", status: "ملغي" });
+  const e = await env.seedBooking({ room: 606, guest: "Early By Mistake", start: -2, nights: 5, price: 300, currency: "EGP", status: "تم تسجيل الدخول" });
+  const origOut = cairoDate(3);
+  // مغادرة مبكرة بالغلط النهارده: تريجر الذاكرة بيحفظ الخروج والإجمالي الأصليين
+  await env.q("update bookings set left_early = true, status = 'تم تسجيل الخروج', checkout = $2, total_room = 600 where id = $1", [e, cairoDate(0)]);
+  expect((await env.q("select pre_early_checkout::text from bookings where id = $1", [e]))[0].pre_early_checkout).toBe(origOut);
+  await page.goto("/");
+  await login(page, "devo");
+  await goTab(page, "الحجوزات");
+  await page.getByRole("button", { name: "إرجاع الحجز (اتلغى بالغلط)" }).click();
+  await page.getByRole("button", { name: "ترجّع الحجز؟" }).click();
+  await expect(toast(page)).toContainText("الحجز رجع تاني");
+  expect((await env.q("select status from bookings where id = $1", [c]))[0].status).toBe("تم تسجيل الدخول");
+  await page.getByRole("button", { name: "إلغاء المغادرة المبكرة" }).click();
+  await page.getByRole("button", { name: "ترجّع تاريخ الخروج الأصلي؟" }).click();
+  await expect(toast(page)).toContainText("المغادرة المبكرة اتلغت");
+  expect((await env.q("select left_early, status, checkout::text, total_room::float as total_room from bookings where id = $1", [e]))[0]).toEqual({ left_early: false, status: "تم تسجيل الدخول", checkout: origOut, total_room: 1500 });
+  expect((await env.q("select count(*)::int n from activity_log where username = 'devo' and (action like 'إرجاع حجز%' or action like 'إلغاء مغادرة%')"))[0].n).toBe(2);
+  // غير المطوّر مايقدرش
+  expect((await env.api("boss", "POST", "/rest/v1/rpc/dev_restore_booking", { p_booking: c, p_what: "uncancel" })).status).toBeGreaterThanOrEqual(400);
+});

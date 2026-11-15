@@ -8,7 +8,7 @@ import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, ea
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
 import { getPaymentsIndex } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentOther, recordBookingPaymentFx, setBookingPriorPaid, devDeleteBooking } from "../data/payments";
+import { recordBookingPayment, recordBookingPaymentOther, recordBookingPaymentFx, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
 import { guarded } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
@@ -37,6 +37,7 @@ function QuickPay({ booking, onDone, showToast }) {
   const [method, setMethod] = useState("كاش");
   const [details, setDetails] = useState(emptyPaymentDetails());
   const [currency, setCurrency] = useState("");
+  const [fee, setFee] = useState("");
   // كل عملة لوحدها (من غير سعر صرف): عملة الحجز + أي عملة عليها خدمات لسه ماتحصّلتش
   const opts = payCurrencyOptions(booking);
   const cur = opts.some((o) => o.currency === currency) ? currency : opts[0].currency;
@@ -49,11 +50,19 @@ function QuickPay({ booking, onDone, showToast }) {
       const err = validatePaymentDetailsFor(method, details);
       if (err) { showToast(err); return; }
       const req = { bookingId: booking.id, amount: amt, method, details: cleanPaymentDetailsFor(method, details), note: "تحصيل", expectedUpdatedAt: booking.updatedAt };
+      const visaFee = method === "فيزا" && cur === booking.currency ? Math.round((Number(fee) || 0) * 100) / 100 : 0;
+      if (visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
       const res = cur !== booking.currency ? await recordBookingPaymentOther({ ...req, currency: cur }) : await recordBookingPayment(req);
       if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
+      let feeNote = "";
+      if (visaFee > 0) {
+        const f = await recordVisaFee({ bookingId: booking.id, amount: visaFee, details: req.details });
+        if (f.error) { showToast("⚠ الدفعة اتسجّلت، لكن رسوم الفيزا ماتسجّلتش: " + f.error + " - سجّلها تاني"); if (onDone) await onDone(); return; }
+        feeNote = ` + رسوم فيزا ${fmt(visaFee)} ${cur}`;
+      }
       if (onDone) await onDone();
-      setOpen(false); setAmount(""); setDetails(emptyPaymentDetails()); setMethod("كاش"); setCurrency("");
-      showToast(`تم تسجيل ${fmt(amt)} ${cur} (${method}) على ${booking.guestName} - المتبقي بالـ ${cur} ${fmt(Math.max(0, Math.round((due - amt) * 100) / 100))} ${cur}`);
+      setOpen(false); setAmount(""); setDetails(emptyPaymentDetails()); setMethod("كاش"); setCurrency(""); setFee("");
+      showToast(`تم تسجيل ${fmt(amt)} ${cur}${feeNote} (${method}) على ${booking.guestName} - المتبقي بالـ ${cur} ${fmt(Math.max(0, Math.round((due - amt) * 100) / 100))} ${cur}`);
     });
   }
   if (!open) return <button className="cx-btn cx-btn-soft" style={{ fontSize: 13 }} data-testid="quickpay-open" onClick={() => setOpen(true)}><Wallet size={14} aria-hidden="true" />تسجيل دفعة</button>;
@@ -64,6 +73,7 @@ function QuickPay({ booking, onDone, showToast }) {
       <PayCurrencySelect testid="quickpay" booking={booking} value={cur} onChange={(c) => { setCurrency(c); setAmount(""); }} />
       <select className="cx-select" data-testid="quickpay-method" style={{ width: 130 }} value={method} onChange={(e) => { setMethod(e.target.value); setDetails(emptyPaymentDetails()); }}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
       <PaymentDetailsInline method={method} details={details} onChange={setDetails} testid="quickpay" />
+      {method === "فيزا" && cur === booking.currency && <input className="cx-input" data-testid="quickpay-visa-fee" type="number" min="0" placeholder={`رسوم فيزا (${cur})`} aria-label="رسوم الفيزا" style={{ width: 130 }} value={fee} onChange={(e) => setFee(e.target.value)} />}
       <button className="cx-btn cx-btn-gold" data-testid="quickpay-submit" onClick={submit}>سجّل</button>
       <button className="cx-btn cx-btn-outline" onClick={() => setOpen(false)}>إلغاء</button>
     </div>
@@ -96,6 +106,20 @@ function PriorPaid({ booking, onDone, showToast }) {
       <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5 }} onClick={() => setOpen(false)}>إلغاء</button>
     </div>
   );
+}
+
+/* المطوّر: يرجّع حجز اتلغى بالغلط، أو نزيل اتسجّل "غادر مبكرًا" بالغلط (بيرجع لتاريخ خروجه وإجماليه الأصليين) */
+function DevRestore({ booking, onDone, showToast }) {
+  const cancelled = booking.status === "ملغي", early = !!booking.leftEarly;
+  if (!cancelled && !early) return null;
+  const what = cancelled ? "uncancel" : "unearly";
+  const run = () => guarded("booking-devRestore", async () => {
+    const res = await devRestoreBooking(booking.id, what);
+    if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
+    showToast(cancelled ? `الحجز رجع تاني (${booking.guestName})` : `المغادرة المبكرة اتلغت - ${booking.guestName} رجع لتاريخ خروجه الأصلي`);
+    if (onDone) await onDone();
+  });
+  return <span data-testid="dev-restore"><TwoStepButton className="cx-btn-outline" label={cancelled ? "إرجاع الحجز (اتلغى بالغلط)" : "إلغاء المغادرة المبكرة"} confirmLabel={cancelled ? "ترجّع الحجز؟" : "ترجّع تاريخ الخروج الأصلي؟"} onConfirm={run} /></span>;
 }
 
 /* المطوّر: مسح نهائي لحجز اتضاف بالغلط - تحصيله بيتشال من كل اليوميات (والعهدة بتتظبط) وبعدين الحجز نفسه بيتمسح كأنه ماكانش */
@@ -675,6 +699,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                 {b.status === "تم تسجيل الخروج" && <span className="cx-pill" style={{ background: "#00000010", color: "var(--teal)" }}>{b.status}</span>}
                 {perms.markPaymentReceived && !cancelled && bookingHasDue(b) && <QuickPay booking={b} onDone={onRefresh} showToast={showToast} />}
                 {perms.priorPaid && !cancelled && <PriorPaid booking={b} onDone={onRefresh} showToast={showToast} />}
+                {perms.devTools && <DevRestore booking={b} onDone={onRefresh} showToast={showToast} />}
                 {perms.devTools && <span data-testid="dev-delete-booking"><DevDeleteBooking booking={b} onDone={onRefresh} showToast={showToast} /></span>}
                 {perms.editBookingPrice && !perms.editBookings && !offShift && !cancelled && b.status !== "تم تسجيل الخروج" && (
                   <button className="cx-btn cx-btn-outline" title="تعديل السعر" data-testid="edit-price" onClick={() => startEdit(b)}><Pencil size={13} /> تعديل السعر</button>

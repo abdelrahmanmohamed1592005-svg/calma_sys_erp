@@ -5,7 +5,7 @@ import { todayStr, shiftDayNow, nightsBetween, addDays, beforeCheckoutHour } fro
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomStart, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentOther, moveBookingRoom, changeBookingCurrency } from "../data/payments";
+import { recordBookingPayment, recordBookingPaymentOther, moveBookingRoom, changeBookingCurrency, recordVisaFee } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown, MoneyStack } from "./shared";
 import { sanitizeText } from "../domain/security";
@@ -188,6 +188,9 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     if (!myActiveShiftKey) { showToast("مفيش شيفتك شغال دلوقتي - التحصيل لازم يتسجّل في يومية شيفتك"); return; }
     const method = pay.method;
     const rawDetails = pay.details;
+    // رسوم الفيزا: مبلغ بيكتبه الموظف بيتدفع مع الدفعة على الفيزا (بعملة الحجز) - بيتسجّل صف لوحده "رسوم فيزا"
+    const visaFee = method === "فيزا" && !other ? Math.round((Number(pay.fee) || 0) * 100) / 100 : 0;
+    if (visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
     const before = { ...pay };
     // الخانات بتتصفّر فورًا (القيم اتحفظت فوق) عشان اللي بيتكتب بعد كده مايضيعش وقت الحفظ
     setPay({ amount: "", method: "كاش", details: emptyPaymentDetails(), currency: "" });
@@ -196,6 +199,12 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     const res = other ? await recordBookingPaymentOther({ ...req, currency: cur }) : await recordBookingPayment(req);
     if (res?.error) { showToast(res.error); if (onRefresh) onRefresh(); setPay({ ...before, amount: String(amount) }); return; }
     const out = res.data || {};
+    let feeNote = "";
+    if (visaFee > 0) {
+      const f = await recordVisaFee({ bookingId: booking.id, amount: visaFee, details: rawDetails });
+      if (f.error) showToast("⚠ الدفعة اتسجّلت، لكن رسوم الفيزا ماتسجّلتش: " + f.error + " - سجّلها تاني");
+      else { feeNote = ` + رسوم فيزا ${fmt(visaFee)} ${cur}`; onLog(`رسوم فيزا ${fmt(visaFee)} ${cur} - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`); }
+    }
     const details = out.details || cleanPaymentDetailsFor(method, rawDetails);
     const detailsText = describePaymentDetails(method, details) ? "\u2066" + describePaymentDetails(method, details) + "\u2069" : "";
     const paidText = `${fmt(amount)} ${cur}`;
@@ -204,7 +213,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); });     // تفصيل المدفوع بالوسيلة بعد ما اليومية اتحدّثت
     const cafe = Number(out.cafeteria) || 0;
     const left = opts.map((o) => (o.currency === cur ? { ...o, due: Math.max(0, Math.round((o.due - amount) * 100) / 100) } : o)).filter((o) => o.due > 0.004);
-    showToast(`تم تسجيل ${paidText} (${method}${detailsText ? " " + detailsText : ""})${cafe > 0 ? ` - منها ${fmt(cafe)} ${cur} كافيتيريا` : ""} - ${left.length ? `المتبقي ${formatMoneyLines(left)}` : "الحجز مدفوع بالكامل"}`);
+    showToast(`تم تسجيل ${paidText}${feeNote} (${method}${detailsText ? " " + detailsText : ""})${cafe > 0 ? ` - منها ${fmt(cafe)} ${cur} كافيتيريا` : ""} - ${left.length ? `المتبقي ${formatMoneyLines(left)}` : "الحجز مدفوع بالكامل"}`);
   }
   // غادر مبكرًا: بيقصّر الإقامة لحد النهارده (الحد الأدنى ليلة). مفيش رد فلوس: لو كان دافع زيادة، الفلوس بتفضل في الفندق.
   async function earlyLeave(booking) { return guarded("leave:" + booking.id, () => earlyLeaveInner(booking)); }
@@ -511,6 +520,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                       <PayCurrencySelect booking={b} value={payCur} onChange={(c) => setPay({ ...pay, currency: c, amount: "" })} />
                       <select className="cx-select" aria-label="وسيلة الدفع" data-testid="collect-method" style={{ fontSize: 13, width: 150 }} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
                       <PaymentDetailsInline compact={false} testid="pay" method={pay.method} details={pay.details} onChange={(d) => setPay({ ...pay, details: d })} />
+                      {pay.method === "فيزا" && payCur === b.currency && <input className="cx-input" data-testid="pay-visa-fee" type="number" min="0" placeholder={`رسوم فيزا (${payCur})`} aria-label="رسوم الفيزا" style={{ width: 140 }} value={pay.fee || ""} onChange={(e) => setPay({ ...pay, fee: e.target.value })} />}
                       <button className="cx-btn cx-btn-gold" data-testid="pay-record" style={{ fontSize: 13 }} disabled={payLock} aria-busy={payLock} onClick={() => recordPayment(b)}><Check size={13} /> تسجيل التحصيل</button>
                     </div>
                   </div>

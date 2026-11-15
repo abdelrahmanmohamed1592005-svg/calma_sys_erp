@@ -3857,6 +3857,21 @@ begin
     perform set_config('calma.correct_rpc', '', true);
   end loop;
 
+  -- رسم فيزا اتعدّل/اتشال في التصحيح: extras.visaFee على الحجز بيتظبط بنفس الفرق (المدفوع اتظبط فوق)
+  for d in
+    select coalesce(n.bid, o.bid) as bid, coalesce(n.amt, 0) - coalesce(o.amt, 0) as delta
+    from calma_ledger_fee_sums(n_rows) n full join calma_ledger_fee_sums(sr.rows) o on o.bid = n.bid
+    where coalesce(n.amt, 0) <> coalesce(o.amt, 0)
+  loop
+    perform set_config('calma.pay_rpc', '1', true);
+    perform set_config('calma.refund_rpc', '1', true);
+    perform set_config('calma.correct_rpc', '1', true);
+    update bookings set extras = jsonb_set(coalesce(extras, '{}'::jsonb), '{visaFee}', to_jsonb(greatest(0, calma_num(extras ->> 'visaFee') + d.delta))) where id::text = d.bid;
+    perform set_config('calma.pay_rpc', '', true);
+    perform set_config('calma.refund_rpc', '', true);
+    perform set_config('calma.correct_rpc', '', true);
+  end loop;
+
   update shift_records set
     rows = n_rows, cafeteria_rows = coalesce(n_caf, '[]'::jsonb),
     hotel_rows = coalesce(patch -> 'hotel_rows', hotel_rows), cafeteria = coalesce(patch -> 'cafeteria', cafeteria),
@@ -4026,6 +4041,108 @@ revoke all on function dev_delete_booking(uuid) from public, anon;
 grant execute on function dev_delete_booking(uuid) to authenticated;
 revoke all on function dev_delete_shift(integer, date, text) from public, anon;
 grant execute on function dev_delete_shift(integer, date, text) to authenticated;
+
+-- (و) رسوم الفيزا: رسم بيحدده الموظف (مبلغ مش نسبة) بيتدفع على الفيزا مع المبلغ. بيتحسب على النزيل (extras.visaFee جزء من إجمالي
+--     الحجز) وبيتسجّل في يومية الشيفت صف لوحده على الغرفة باسم "رسوم فيزا" (بيدخل في إجمالي الفيزا). المتبقي على النزيل مابيتغيّرش.
+create or replace function booking_grand_total(b bookings)
+returns numeric language sql immutable as $$
+  select coalesce(b.total_room, 0)
+    + coalesce((b.extras->>'laundry')::numeric, 0)
+    + coalesce((b.extras->>'cafeteria')::numeric, 0)
+    + coalesce((b.extras->>'tours')::numeric, 0)
+    + coalesce((b.extras->>'pickup')::numeric, 0)
+    + coalesce((b.extras->>'visaFee')::numeric, 0)
+    + case when coalesce((b.early_checkin->>'applied')::boolean, false) then coalesce((b.early_checkin->>'fee')::numeric, 0) else 0 end;
+$$;
+
+-- extras.visaFee بيتغيّر من دالة رسوم الفيزا (أو تصحيح اليومية) بس: حفظ الخدمات/تعديل الحجز من الشاشة مايمسحوش
+create or replace function keep_visa_fee()
+returns trigger language plpgsql as $$
+declare old_v jsonb;
+begin
+  if auth.uid() is null or coalesce(current_setting('calma.pay_rpc', true), '') = '1' then return new; end if;
+  old_v := case when TG_OP = 'UPDATE' then old.extras -> 'visaFee' else null end;
+  if (new.extras -> 'visaFee') is distinct from old_v then
+    new.extras := case when old_v is null then coalesce(new.extras, '{}'::jsonb) - 'visaFee' else jsonb_set(coalesce(new.extras, '{}'::jsonb), '{visaFee}', old_v) end;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists bookings_keep_visa_fee on bookings;
+create trigger bookings_keep_visa_fee before insert or update on bookings
+  for each row execute function keep_visa_fee();
+
+create or replace function record_visa_fee(p_booking uuid, p_amount numeric, p_details jsonb default '{}'::jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare b bookings%rowtype; sr shift_records; amt numeric := round(p_amount, 2); err text; det jsonb;
+begin
+  if not is_staff() then raise exception 'تسجيل رسوم الفيزا من صلاحية موظف الشيفت بس'; end if;
+  if amt is null or amt <= 0 or amt > 10000000 then raise exception 'اكتب مبلغ رسوم الفيزا (أكبر من صفر)'; end if;
+  err := calma_details_err('فيزا', coalesce(p_details, '{}'::jsonb));
+  if err is not null then raise exception '%', err; end if;
+  det := calma_clean_details('فيزا', coalesce(p_details, '{}'::jsonb));
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if b.status = 'ملغي' then raise exception 'الحجز ملغي - مينفعش يتسجّل عليه رسوم'; end if;
+  sr := calma_my_open_shift();
+  if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك'; end if;
+  perform set_config('calma.pay_rpc', '1', true);
+  update bookings set amount_paid = coalesce(amount_paid, 0) + amt,
+    extras = jsonb_set(coalesce(extras, '{}'::jsonb), '{visaFee}', to_jsonb(calma_num(extras ->> 'visaFee') + amt))
+    where id = p_booking;
+  perform set_config('calma.pay_rpc', '', true);
+  update shift_records set
+    rows = coalesce(rows, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+      'room', b.room, 'bookingId', b.id, 'visaFee', true, 'expenseDesc', '', 'expenseAmt', '', 'expenseCategory', 'أخرى', 'expenseCurrency', 'EGP',
+      'collectionAmt', amt, 'collectionMethod', 'فيزا', 'collectionCurrency', b.currency, 'paymentDetails', det, 'notes', '',
+      'collectionDesc', 'رسوم فيزا' || coalesce(' - ' || nullif(b.guest_name, ''), '') || ' (+' || trim_scale(amt) || ' ' || b.currency || ')')),
+    booking_collections = coalesce(booking_collections, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id', gen_random_uuid()::text, 'bookingId', b.id))
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
+  return jsonb_build_object('fee', amt, 'currency', b.currency, 'shiftDate', sr.date, 'shiftKey', sr.shift_key);
+end;
+$$;
+revoke all on function record_visa_fee(uuid, numeric, jsonb) from public, anon;
+grant execute on function record_visa_fee(uuid, numeric, jsonb) to authenticated;
+
+-- مجموع رسوم الفيزا لكل حجز في صفوف يومية (لتصحيح اليومية: لو الرسم اتعدّل/اتشال، extras.visaFee بيتظبط معاه)
+create or replace function calma_ledger_fee_sums(p_rows jsonb)
+returns table(bid text, amt numeric) language sql immutable as $$
+  select x ->> 'bookingId', sum(calma_num(x ->> 'collectionAmt'))
+  from jsonb_array_elements(case when jsonb_typeof(p_rows) = 'array' then p_rows else '[]'::jsonb end) x
+  where coalesce(x ->> 'bookingId', '') <> '' and coalesce(x ->> 'visaFee', '') = 'true'
+  group by 1
+$$;
+revoke all on function calma_ledger_fee_sums(jsonb) from public, anon;
+
+-- (ز) المطوّر يرجّع حجز اتلغى بالغلط أو نزيل اتسجّل "غادر مبكرًا" بالغلط (بيرجع لتاريخ خروجه وإجماليه الأصليين)
+create or replace function dev_restore_booking(p_booking uuid, p_what text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare b bookings%rowtype; new_out date; new_status text;
+begin
+  if not is_dev() then raise exception 'الإرجاع من صلاحية حساب المطوّر بس'; end if;
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if p_what = 'uncancel' then
+    if b.status <> 'ملغي' then raise exception 'الحجز ده مش ملغي'; end if;
+    new_status := case when b.checkout <= hotel_today() then 'تم تسجيل الخروج' when b.checkin <= hotel_today() then 'تم تسجيل الدخول' else 'مؤكد' end;
+    update bookings set status = new_status where id = p_booking;
+    insert into activity_log(action, hotel_id) values ('إرجاع حجز اتلغى بالغلط: ' || coalesce(b.guest_name, '') || ' (غرفة ' || b.room || ')', b.hotel_id);
+  elsif p_what = 'unearly' then
+    if not coalesce(b.left_early, false) then raise exception 'الحجز ده مش متسجّل عليه مغادرة مبكرة'; end if;
+    new_out := coalesce(b.pre_early_checkout, b.checkout);
+    new_status := case when new_out > hotel_today() then 'تم تسجيل الدخول' else 'تم تسجيل الخروج' end;
+    update bookings set left_early = false, checkout = new_out, total_room = coalesce(b.pre_early_total, b.total_room), status = new_status where id = p_booking;
+    insert into activity_log(action, hotel_id) values ('إلغاء مغادرة مبكرة اتسجّلت بالغلط: ' || coalesce(b.guest_name, '') || ' (غرفة ' || b.room || ') - الخروج رجع ' || new_out, b.hotel_id);
+  else
+    raise exception 'عملية غير معروفة';
+  end if;
+  return jsonb_build_object('ok', true);
+exception when exclusion_violation then
+  raise exception 'الغرفة اتحجزت لنزيل تاني في نفس التواريخ - انقل أو عدّل الحجز التاني الأول';
+end;
+$$;
+revoke all on function dev_restore_booking(uuid, text) from public, anon;
+grant execute on function dev_restore_booking(uuid, text) to authenticated;
 
 create or replace function calma_schema_version() returns int language sql immutable as $$ select 45 $$;
 revoke all on function calma_schema_version() from public, anon;

@@ -420,7 +420,8 @@ export function directBookingPaymentsByMethod(bookings, journaledIds) {
 export function bookingGrandTotal(b) {
   const extras = b.extras || {};
   const earlyFee = b.earlyCheckin?.applied ? Number(b.earlyCheckin.fee) || 0 : 0;
-  return (Number(b.totalRoom) || 0) + (Number(extras.laundry) || 0) + (Number(extras.cafeteria) || 0) + (Number(extras.tours) || 0) + (Number(extras.pickup) || 0) + earlyFee;
+  // رسوم الفيزا (extras.visaFee): رسم بيحدده الموظف وبيتدفع على الفيزا مع المبلغ - جزء من إجمالي النزيل (نفس booking_grand_total في القاعدة)
+  return (Number(b.totalRoom) || 0) + (Number(extras.laundry) || 0) + (Number(extras.cafeteria) || 0) + (Number(extras.tours) || 0) + (Number(extras.pickup) || 0) + (Number(extras.visaFee) || 0) + earlyFee;
 }
 
 /* اللي الفندق نفسه مطلوب يحصّله من النزيل (وده اللي بيدخل اليومية والتقرير والتوتال):

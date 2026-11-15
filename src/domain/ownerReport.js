@@ -42,7 +42,8 @@ export function paidNights(b) {
   const nights = Math.max(1, nightsBetween(b.checkin, b.checkout));
   const room = Number(b.totalRoom) || 0;
   if (room <= 0) return { paid: nights, nights };
-  const paidHere = Math.max(0, (Number(b.amountPaid) || 0) - Math.max(0, Number(b.extras?.cafeteriaPaid) || 0));
+  // المدفوع على الغرفة = المدفوع ناقص اللي راح للكافيتيريا ورسوم الفيزا
+  const paidHere = Math.max(0, (Number(b.amountPaid) || 0) - Math.max(0, Number(b.extras?.cafeteriaPaid) || 0) - Math.max(0, Number(b.extras?.visaFee) || 0));
   const toward = Math.min(room, onlineRoomCovered(b) + paidHere);
   return { paid: Math.min(nights, Math.floor(toward / (room / nights) + 1e-6)), nights };
 }
@@ -52,6 +53,7 @@ function servicesLines(b) {
   const cur = b.currency || "";
   EXTRA_KEYS.forEach((k) => { const v = Number(b.extras?.[k]) || 0; if (v > 0) lines.push(`${EXTRA_LABEL[k]} ${amt(v, cur)}`); });
   if (b.earlyCheckin?.applied && Number(b.earlyCheckin.fee) > 0) lines.push(`دخول مبكر ${amt(b.earlyCheckin.fee, cur)}`);
+  if (Number(b.extras?.visaFee) > 0) lines.push(`رسوم فيزا ${amt(b.extras.visaFee, cur)}`);
   Object.entries(b.otherCharges || {}).forEach(([c, ch]) => EXTRA_KEYS.forEach((k) => { const v = Number(ch?.[k]) || 0; if (v > 0) lines.push(`${EXTRA_LABEL[k]} ${amt(v, c)}`); }));
   return lines;
 }

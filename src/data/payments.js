@@ -50,6 +50,11 @@ export const settleStaffCafeteria = ({ name, username, currency, amount, method,
 export const setBookingPriorPaid = ({ bookingId, amount, note, expectedUpdatedAt }) =>
   rpc("set_booking_prior_paid", { p_booking: bookingId, p_amount: Number(amount) || 0, p_note: note || null, p_expected: expectedUpdatedAt || null });
 
+/* رسوم الفيزا: مبلغ بيحدده الموظف بيتدفع على الفيزا مع الدفعة - بيتحسب على النزيل وبيتسجّل في اليومية صف "رسوم فيزا" */
+export const recordVisaFee = ({ bookingId, amount, details }) => rpc("record_visa_fee", { p_booking: bookingId, p_amount: Number(amount) || 0, p_details: details || {} });
+/* المطوّر: يرجّع حجز اتلغى بالغلط (what = "uncancel") أو مغادرة مبكرة اتسجّلت بالغلط (what = "unearly") */
+export const devRestoreBooking = (bookingId, what) => rpc("dev_restore_booking", { p_booking: bookingId, p_what: what });
+
 /* المطوّر: مسح نهائي لحجز أو يومية اتعملوا بالغلط (بعد ما تحصيلهم اتشال من اليوميات) */
 export const devDeleteBooking = (bookingId) => rpc("dev_delete_booking", { p_booking: bookingId });
 export const devDeleteShift = ({ hotelId, date, shiftKey }) => rpc("dev_delete_shift", { p_hotel: hotelId, p_date: date, p_key: shiftKey });
