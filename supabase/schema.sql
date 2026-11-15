@@ -3828,6 +3828,7 @@ begin
   loop
     select * into b from bookings where id::text = d.bid for update;
     if not found then continue; end if;
+    if b.hotel_id is distinct from p_hotel then raise exception 'صف في اليومية مربوط بحجز في فندق تاني (%) - صحّح الصف ده', coalesce(b.guest_name, ''); end if;
     main := d.cur = '' or d.cur = b.currency;
     perform set_config('calma.pay_rpc', '1', true);
     perform set_config('calma.refund_rpc', '1', true);

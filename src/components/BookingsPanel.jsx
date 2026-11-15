@@ -181,7 +181,8 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   // فعليًا. القفل ده شامل حتى وقت إنشاء حجز جديد، مش بس وقت تعديل حجز قديم.
   // حالة الدفع (مدفوع بالكامل / متبقي) بتتحسب لوحدها من المدفوع والإجمالي -
   // مفيش علامة "متحصّل" بتتعلّم بالإيد ولا بتقفل حاجة.
-  const collectionLocked = role === "reservations";
+  // المطوّر كمان مابيحصّلش (مش واخد شيفت) - التحصيل من اليومية/الموظف بس، والتصحيح من شاشة التصحيح
+  const collectionLocked = role === "reservations" || role === "dev";
   const chargeLocked = moneyLocked;
   // موظف الشيفت بيعدّل بيانات النزيل والسعر والتمديد؛ الغرفة بتتغيّر من "نقل النزيل" وتاريخ الدخول ثابت (القاعدة بتفرض ده)
   const staffEdit = isExistingBooking && !perms.editBookings;

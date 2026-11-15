@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble, Coffee } from "lucide-react";
+import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble } from "lucide-react";
 import { DateRange, Logo, RoomName } from "./shared";
 import { emptyMoney, computeShiftTotals, trackBalances, methodTransactions, bookingDueLines, formatMoneyLines, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, GROUP_NAME } from "../domain/constants";
@@ -305,7 +305,6 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
             <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-green" aria-hidden="true"><Wallet size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>إجمالي التحصيل</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(combinedTotalCollections)}</div></div></div>
             <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-red" aria-hidden="true"><Receipt size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>إجمالي المصاريف</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(agg.totalExpenses)}</div></div></div>
             <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-teal" aria-hidden="true"><Landmark size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>صافي التحصيل بعد المصاريف</div><div style={{ fontWeight: 800, fontSize: 16, color: "var(--teal)" }}>{moneyLine(agg.netCash)}</div></div></div>
-            {currencyKeysOf(agg.cafeteria).some((c) => Math.abs(agg.cafeteria[c] || 0) > 0.004) && <div className="cx-card" data-testid="report-cafeteria" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-amber" aria-hidden="true"><Coffee size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>منها الكافيتيريا</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(agg.cafeteria)}</div></div></div>}
             <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-indigo" aria-hidden="true"><BedDouble size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>متوسط نسبة الإشغال</div><div style={{ fontWeight: 800, fontSize: 20 }}>{avgOccupancy}%</div></div></div>
           </div>
 

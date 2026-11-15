@@ -318,3 +318,19 @@ test("موظف الشيفت يعدّل بيانات النزيل (الاسم و�
   expect((await env.api("ahmed", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { checkin: cairoDate(-3) })).status).toBeGreaterThanOrEqual(400);
   expect((await env.api("ahmed", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { room: 608 })).status).toBeGreaterThanOrEqual(400);
 });
+
+test("المطوّر يعدّل سعر حجز موجود من الفورم (مش مقفول عليه)، ومايقدرش يسجّل دفعة مقدّمة (مش واخد شيفت)", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 608, guest: "Price Fix", start: 0, nights: 2, price: 500, currency: "EGP", anchor: "shift" });
+  await page.goto("/");
+  await login(page, "devo");
+  await goTab(page, "الحجوزات");
+  await page.getByRole("button", { name: "تعديل الحجز" }).first().click();
+  const price = page.locator("xpath=//label[starts-with(normalize-space(.),'السعر لليلة')]/following-sibling::*//input").first();
+  await expect(price).toBeEnabled();
+  await price.fill("450");
+  await page.getByRole("button", { name: /^حفظ/ }).last().click();
+  await expect(toast(page)).toContainText("تم الحفظ");
+  expect(Number((await env.q("select price_night from bookings where id = $1", [b]))[0].price_night)).toBe(450);
+  await expect(page.getByTestId("advance-amount")).toHaveCount(0);
+});
