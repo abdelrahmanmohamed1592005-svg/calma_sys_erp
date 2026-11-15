@@ -2503,7 +2503,7 @@ create or replace function record_staff_cafeteria(p_name text, p_username text, 
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare sr shift_records; amt numeric := round(p_amount, 2); nm text := btrim(coalesce(p_name, '')); err text; det jsonb; v_id uuid; paid boolean := p_method is not null and btrim(p_method) <> '';
 begin
-  if not is_staff() then raise exception 'تسجيل كافيتيريا الاستاف من صلاحية موظف الشيفت بس'; end if;
+  if not (is_staff() or is_dev()) then raise exception 'تسجيل كافيتيريا الاستاف من صلاحية موظف الشيفت بس'; end if;
   if char_length(nm) < 1 or char_length(nm) > 120 then raise exception 'اختار اسم الموظف أو اكتب الاسم'; end if;
   if amt is null or amt <= 0 or amt > 1000000 then raise exception 'اكتب مبلغ الاستهلاك (أكبر من صفر)'; end if;
   if p_currency not in ('EGP', 'USD', 'EUR', 'SAR', 'GBP') then raise exception 'عملة غير صالحة'; end if;
@@ -2537,7 +2537,7 @@ declare
   sr shift_records; amt numeric := round(p_amount, 2); nm text := btrim(coalesce(p_name, '')); k text := coalesce(nullif(btrim(coalesce(p_username, '')), ''), lower(btrim(coalesce(p_name, ''))));
   err text; det jsonb; owed numeric; left_amt numeric; e record; part numeric;
 begin
-  if not is_staff() then raise exception 'تسجيل سداد الاستاف من صلاحية موظف الشيفت بس'; end if;
+  if not (is_staff() or is_dev()) then raise exception 'تسجيل سداد الاستاف من صلاحية موظف الشيفت بس'; end if;
   if amt is null or amt <= 0 then raise exception 'اكتب مبلغ السداد'; end if;
   if not calma_valid_method(p_method) then raise exception 'وسيلة الدفع غير صالحة'; end if;
   err := calma_details_err(p_method, coalesce(p_details, '{}'::jsonb));
@@ -4155,7 +4155,32 @@ $$;
 revoke all on function dev_restore_booking(uuid, text) from public, anon;
 grant execute on function dev_restore_booking(uuid, text) to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 46 $$;
+-- ======================================================================
+-- ٤٦) المطوّر بكل الصلاحيات: كافيتيريا الاستاف (استهلاك/سداد) على الشيفت المفتوح في الفندق اللي بيحدده
+-- ======================================================================
+create or replace function dev_record_staff_cafeteria(p_hotel int, p_name text, p_username text, p_desc text, p_amount numeric, p_currency text, p_method text default null, p_details jsonb default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+begin
+  if not is_dev() then raise exception 'الدالة دي لحساب المطوّر بس'; end if;
+  perform set_config('calma.dev_hotel', p_hotel::text, true);
+  return record_staff_cafeteria(p_name, p_username, p_desc, p_amount, p_currency, p_method, p_details);
+end;
+$$;
+revoke all on function dev_record_staff_cafeteria(int, text, text, text, numeric, text, text, jsonb) from public, anon;
+grant execute on function dev_record_staff_cafeteria(int, text, text, text, numeric, text, text, jsonb) to authenticated;
+
+create or replace function dev_settle_staff_cafeteria(p_hotel int, p_name text, p_username text, p_currency text, p_amount numeric, p_method text, p_details jsonb default '{}'::jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+begin
+  if not is_dev() then raise exception 'الدالة دي لحساب المطوّر بس'; end if;
+  perform set_config('calma.dev_hotel', p_hotel::text, true);
+  return settle_staff_cafeteria(p_name, p_username, p_currency, p_amount, p_method, p_details);
+end;
+$$;
+revoke all on function dev_settle_staff_cafeteria(int, text, text, text, numeric, text, jsonb) from public, anon;
+grant execute on function dev_settle_staff_cafeteria(int, text, text, text, numeric, text, jsonb) to authenticated;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 47 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

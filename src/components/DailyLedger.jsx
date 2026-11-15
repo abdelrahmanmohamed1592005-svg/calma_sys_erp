@@ -11,7 +11,7 @@ import { SHIFTS } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
 import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { resolveMyShift, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection } from "../data/shifts";
+import { resolveMyShift, getShiftRecordsInRange, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -294,6 +294,21 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
     let cancelled = false;
     (async () => {
       setLoading(true);
+      // المطوّر مابياخدش شيفت: بيشتغل على الشيفت المفتوح في الفندق ده (الشغّال دلوقتي، وإلا آخر شيفت مفتوح) بكل صلاحيات موظف الشيفت
+      if (perms.devTools) {
+        const d0 = shiftDayNow();
+        const [c0, recs] = [await getClaimsForDate(d0), await getShiftRecordsInRange(addDays(d0, -1), d0, hotelId)];
+        if (cancelled) return;
+        const open = (recs || []).filter((r) => !r.closed);
+        const pick = open.find((r) => r.date === d0 && isShiftActiveNow(r.shiftKey)) || open[open.length - 1];
+        setLiveDay(pick ? pick.date : d0); setClaims(c0);
+        if (!pick) { setMyShiftKey(null); setRecord(null); setLoading(false); return; }
+        const prev = await getPrevShiftClosing(pick.date, pick.shiftKey);
+        if (cancelled) return;
+        setMyShiftKey(pick.shiftKey); setRecord(pick); setPrevClosing(prev.data?.cash || null); setPrevMethodClosing(prev.data?.method || null);
+        setLoading(false);
+        return;
+      }
       let day = shiftDayNow();
       let c = await getClaimsForDate(day);
       let mine = Object.entries(c).find(([, v]) => v && v.username === profile.username);
@@ -358,7 +373,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
     // كل حفظة مباشرة، وإضافة dataVersion كانت بتخلي كل كتابة تعمل تحميل
     // كامل من جديد فوق نفسها (ده كان سبب مشكلة "العداد بيهيس").
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, refreshKey]);
+  }, [mode, refreshKey, perms.devTools ? hotelId : 0]);
 
   // تحديث لحظي لشيفتي المفتوح: لو حد (مدير الحجوزات/المدير العام) فتح الشيفت
   // أو قفله، أو اتسجّل عليه تحصيل/رد من جهاز تاني - الشاشة تتحدث لوحدها من
@@ -529,7 +544,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // الشيفت يتقفل (يبقى غير قابل للتعديل من موظف الشيفت) لو اتقفل فعليًا، أو
   // لو انتهى هامش الأوفر تايم بتاعه (ساعتين بعد نهاية معاده) - في الحالة
   // التانية هيتقفل تلقائيًا فعليًا عند أول تحميل للشاشة (انظر الإيفكت فوق).
-  const locked = !record || record.closed || !perms.editLedger || (!!myShiftKey && !isShiftActiveNow(myShiftKey));
+  const locked = !record || record.closed || !perms.editLedger || (!perms.devTools && !!myShiftKey && !isShiftActiveNow(myShiftKey));
 
   async function closeShift() { return guarded("ledger-closeShift", () => closeShiftInner()); }
   async function closeShiftInner() {
@@ -627,7 +642,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   return (
     <div className="cx-page">
       <div className="cx-no-print" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {perms.editLedger && <button className={"cx-btn " + (mode === "live" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("live")}>شيفتي النهارده</button>}
+        {perms.editLedger && <button className={"cx-btn " + (mode === "live" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("live")}>{perms.devTools ? "الشيفت المفتوح" : "شيفتي النهارده"}</button>}
         <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> {perms.correctLedger ? "استعراض وتصحيح شيفتات سابقة" : "استعراض شيفتات سابقة (قراءة فقط)"}</button>
         {printRecord && <button className="cx-btn cx-btn-outline" onClick={() => window.print()}><Printer size={13} /> طباعة اليومية</button>}
         {(mode === "history" || record) && <button className="cx-btn cx-btn-gold" data-testid="owner-report-btn" style={{ marginInlineStart: "auto" }} onClick={openOwnerReport}><Send size={14} /> إرسال اليومية للأونر</button>}
@@ -654,7 +669,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
       )}
 
       {mode === "live" ? (
-        loading ? <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>جارِ التحميل...</div> : !myShiftKey ? (
+        loading ? <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>جارِ التحميل...</div> : !myShiftKey ? (perms.devTools ? <div className="cx-card" data-testid="dev-no-open-shift" style={{ padding: 20, color: "var(--muted)" }}>مفيش شيفت مفتوح دلوقتي في الفندق ده - أول ما موظف يبدأ شيفته هتقدر تشتغل عليه من هنا، أو صحّح أي يومية من "استعراض وتصحيح".</div> :
           <ShiftClaimPicker date={today} claims={claims || {}} onClaim={claimShift} />
         ) : (
           <>

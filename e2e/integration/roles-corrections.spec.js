@@ -342,6 +342,31 @@ test("المطوّر يسجّل دفعة (ورسوم فيزا) من غير ما 
   expect(rows.map((r) => Number(r.collectionAmt)).sort((x, y) => x - y)).toEqual([30, 1000]);
 });
 
+test("المطوّر بكل الصلاحيات: بيشتغل على الشيفت المفتوح (كافيتيريا استاف وإقفال) وبيسجّل عربون في حجز جديد من غير ما ياخد شيفت", async ({ page, env }) => {
+  await users(env);
+  await page.goto("/");
+  await login(page, "devo");
+  await goTab(page, "اليومية");
+  await expect(page.getByTestId("dev-no-open-shift")).toBeVisible();          // مفيش شيفت مفتوح: رسالة بدل اختيار شيفت
+  await env.seedShift("ahmed", {});
+  await page.reload();
+  await goTab(page, "اليومية");
+  await page.getByTestId("staff-cafe-who").selectOption("sara");
+  await page.getByTestId("staff-cafe-amount").fill("40");
+  await page.getByTestId("staff-cafe-add").click();
+  await expect(toast(page)).toContainText("سارة");
+  expect((await env.q("select consumer_username, amount::float from staff_cafeteria"))[0]).toEqual({ consumer_username: "sara", amount: 40 });
+  // عربون في حجز جديد بيدخل نفس الشيفت المفتوح
+  await addBooking(page, { room: 610, guest: "Dev Deposit", nights: 1, price: 300, currency: "EGP", paid: 100, prior: 50 });
+  const bk = (await env.q("select amount_paid, payment_details from bookings where guest_name = 'Dev Deposit'"))[0];
+  expect(Number(bk.amount_paid)).toBe(150);
+  expect((await env.q("select rows from shift_records"))[0].rows.filter((r) => r.bookingId).map((r) => Number(r.collectionAmt))).toEqual([100]);
+  // إقفال الشيفت المفتوح
+  await goTab(page, "اليومية");
+  await page.getByRole("button", { name: "إقفال الشيفت" }).click();
+  await expect.poll(async () => (await env.q("select closed from shift_records"))[0].closed).toBe(true);
+});
+
 test("المطوّر: زرار إرجاع حجز اتلغى بالغلط، وزرار إلغاء مغادرة مبكرة اتسجّلت بالغلط (بيرجع تاريخ الخروج والإجمالي الأصليين)", async ({ page, env }) => {
   await users(env);
   const c = await env.seedBooking({ room: 605, guest: "Cancelled By Mistake", start: 0, nights: 2, price: 300, currency: "EGP", status: "ملغي" });
@@ -388,7 +413,7 @@ test("موظف الشيفت يعدّل بيانات النزيل (الاسم و�
   expect((await env.api("ahmed", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { room: 608 })).status).toBeGreaterThanOrEqual(400);
 });
 
-test("المطوّر يعدّل سعر حجز موجود من الفورم (مش مقفول عليه)، ومايقدرش يسجّل دفعة مقدّمة (مش واخد شيفت)", async ({ page, env }) => {
+test("المطوّر يعدّل سعر حجز موجود من الفورم (مش مقفول عليه)، وفورم التعديل مافيهوش دفعة مقدّمة", async ({ page, env }) => {
   await users(env);
   const b = await env.seedBooking({ room: 608, guest: "Price Fix", start: 0, nights: 2, price: 500, currency: "EGP", anchor: "shift" });
   await page.goto("/");

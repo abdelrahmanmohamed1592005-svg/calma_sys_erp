@@ -40,11 +40,12 @@ export const moveBookingRoom = ({ bookingId, room, expectedUpdatedAt }) =>
 export const changeBookingCurrency = ({ bookingId, currency, expectedUpdatedAt }) =>
   rpc("change_booking_currency", { p_booking: bookingId, p_currency: currency, p_expected: expectedUpdatedAt || null });
 
-export const recordStaffCafeteria = ({ name, username, description, amount, currency, method, details }) =>
-  rpc("record_staff_cafeteria", { p_name: name, p_username: username || null, p_desc: description || "", p_amount: amount, p_currency: currency, p_method: method || null, p_details: details || null });
+// المطوّر (devHotel): نفس الدالة بس على الشيفت المفتوح في الفندق ده (هو مش واخد شيفت)
+export const recordStaffCafeteria = ({ name, username, description, amount, currency, method, details, devHotel }) =>
+  rpc(devHotel ? "dev_record_staff_cafeteria" : "record_staff_cafeteria", { ...(devHotel ? { p_hotel: devHotel } : {}), p_name: name, p_username: username || null, p_desc: description || "", p_amount: amount, p_currency: currency, p_method: method || null, p_details: details || null });
 
-export const settleStaffCafeteria = ({ name, username, currency, amount, method, details }) =>
-  rpc("settle_staff_cafeteria", { p_name: name, p_username: username || null, p_currency: currency, p_amount: amount, p_method: method, p_details: details || {} });
+export const settleStaffCafeteria = ({ name, username, currency, amount, method, details, devHotel }) =>
+  rpc(devHotel ? "dev_settle_staff_cafeteria" : "settle_staff_cafeteria", { ...(devHotel ? { p_hotel: devHotel } : {}), p_name: name, p_username: username || null, p_currency: currency, p_amount: amount, p_method: method, p_details: details || {} });
 
 /* مبلغ اتدفع قبل استلام السيستم: بيتحسب في مدفوع الحجز والمتبقي من غير ما يدخل أي يومية/خزينة */
 export const setBookingPriorPaid = ({ bookingId, amount, note, expectedUpdatedAt }) =>
