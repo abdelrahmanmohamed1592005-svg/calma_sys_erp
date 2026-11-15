@@ -183,6 +183,8 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   // مفيش علامة "متحصّل" بتتعلّم بالإيد ولا بتقفل حاجة.
   const collectionLocked = role === "reservations";
   const chargeLocked = moneyLocked;
+  // موظف الشيفت بيعدّل بيانات النزيل والسعر والتمديد؛ الغرفة بتتغيّر من "نقل النزيل" وتاريخ الدخول ثابت (القاعدة بتفرض ده)
+  const staffEdit = isExistingBooking && !perms.editBookings;
   // الدخول المبكر ممكن يتسجّل على حجز موجود لسه ماتسجّلش عليه (حتى لو التسعير مقفول)؛ لو اتسجّل قبل كده بيتقفل زي باقي الرسوم.
   const earlyLocked = chargeLocked && !(isExistingBooking && !originalBooking?.earlyCheckin?.applied);
 
@@ -473,7 +475,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
           <StepHead n={1} done={step1Done} title="الغرفة والنزيل" hint="اختار الغرفة واكتب اسم النزيل" />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
 
-            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>الغرفة</label><select className="cx-select" value={form.room} onChange={(e) => onRoomChange(e.target.value)}><option value="">اختر</option>{rooms.map((r) => <option key={r.number} value={r.number}>{r.name ? roomShortLabel(rooms, r.number) : `غرفة ${r.number}`}</option>)}</select></div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>الغرفة {staffEdit && <span style={{ fontSize: 11.5 }}>(تتغيّر من "نقل النزيل")</span>}</label><select className="cx-select" disabled={staffEdit} value={form.room} onChange={(e) => onRoomChange(e.target.value)}><option value="">اختر</option>{rooms.map((r) => <option key={r.number} value={r.number}>{r.name ? roomShortLabel(rooms, r.number) : `غرفة ${r.number}`}</option>)}</select></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>اسم النزيل</label><AutoText className="cx-input" value={form.guestName} onChange={(e) => setForm({ ...form, guestName: e.target.value })} /></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>الهاتف</label><input className="cx-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>عدد الأفراد</label><input className="cx-input" type="number" min="1" value={form.pax} onChange={(e) => setForm({ ...form, pax: e.target.value })} /></div>
@@ -500,7 +502,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
           <section className="cx-step">
           <StepHead n={2} done={step2Done} title="الإقامة والسعر" hint="التواريخ وسعر الليلة - الإجمالي بيتحسب لوحده" />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
-            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>تاريخ الدخول</label><input className="cx-input" type="date" value={form.checkin} onChange={(e) => { const newCheckin = e.target.value; setForm((f) => ({ ...f, checkin: newCheckin, checkout: f.checkout && f.checkout > newCheckin ? f.checkout : addDays(newCheckin, 1) })); }} /></div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>تاريخ الدخول</label><input className="cx-input" type="date" disabled={staffEdit} value={form.checkin} onChange={(e) => { const newCheckin = e.target.value; setForm((f) => ({ ...f, checkin: newCheckin, checkout: f.checkout && f.checkout > newCheckin ? f.checkout : addDays(newCheckin, 1) })); }} /></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>تاريخ الخروج</label><input className="cx-input" type="date" min={form.checkin ? addDays(form.checkin, 1) : undefined} value={form.checkout} onChange={(e) => setForm({ ...form, checkout: e.target.value })} /></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>السعر لليلة {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={chargeLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value })} /><select className="cx-select" disabled={chargeLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 90 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={chargeLocked} placeholder={String(autoTotalRoom)} value={lockedRepricedTotal != null ? lockedRepricedTotal : form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
@@ -702,7 +704,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                 {perms.devTools && <DevRestore booking={b} onDone={onRefresh} showToast={showToast} />}
                 {perms.devTools && <span data-testid="dev-delete-booking"><DevDeleteBooking booking={b} onDone={onRefresh} showToast={showToast} /></span>}
                 {perms.editBookingPrice && !perms.editBookings && !offShift && !cancelled && b.status !== "تم تسجيل الخروج" && (
-                  <button className="cx-btn cx-btn-outline" title="تعديل السعر" data-testid="edit-price" onClick={() => startEdit(b)}><Pencil size={13} /> تعديل السعر</button>
+                  <button className="cx-btn cx-btn-outline" title="تعديل الحجز (بيانات النزيل والسعر والتمديد)" data-testid="edit-price" onClick={() => startEdit(b)}><Pencil size={13} /> تعديل الحجز</button>
                 )}
                 {perms.editBookings && (<>
                   <button className="cx-btn cx-btn-outline" title="تعديل" onClick={() => startEdit(b)}><Pencil size={13} /></button>

@@ -288,3 +288,24 @@ test("المطوّر: زرار إرجاع حجز اتلغى بالغلط، وز�
   // غير المطوّر مايقدرش
   expect((await env.api("boss", "POST", "/rest/v1/rpc/dev_restore_booking", { p_booking: c, p_what: "uncancel" })).status).toBeGreaterThanOrEqual(400);
 });
+
+test("موظف الشيفت يعدّل بيانات النزيل (الاسم والتليفون وعدد الأفراد وجهة الحجز) من الحجوزات - والغرفة وتاريخ الدخول ثابتين", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 607, guest: "Old Name", start: 0, nights: 2, price: 300, currency: "EGP", anchor: "shift" });
+  await env.seedShift("ahmed", {});
+  await page.goto("/");
+  await login(page, "ahmed");
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("edit-price").first().click();
+  await page.locator("xpath=//label[normalize-space(.)='اسم النزيل']/following-sibling::*[1]").fill("New Name");
+  await expect(page.locator("xpath=//label[starts-with(normalize-space(.),'الغرفة')]/following-sibling::select")).toBeDisabled();
+  await expect(page.locator("xpath=//label[normalize-space(.)='تاريخ الدخول']/following-sibling::input")).toBeDisabled();
+  await page.getByRole("button", { name: /^حفظ/ }).last().click();
+  await expect(toast(page)).toContainText("تم الحفظ");
+  expect((await env.q("select guest_name from bookings where id = $1", [b]))[0].guest_name).toBe("New Name");
+  // من الـ API: بيانات النزيل مسموحة، والغرفة وتاريخ الدخول لأ
+  expect((await env.api("ahmed", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { phone: "01000000000", pax: 2, source: "Booking.com" })).status).toBeLessThan(300);
+  expect((await env.q("select phone, pax, source from bookings where id = $1", [b]))[0]).toEqual({ phone: "01000000000", pax: 2, source: "Booking.com" });
+  expect((await env.api("ahmed", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { checkin: cairoDate(-3) })).status).toBeGreaterThanOrEqual(400);
+  expect((await env.api("ahmed", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { room: 608 })).status).toBeGreaterThanOrEqual(400);
+});

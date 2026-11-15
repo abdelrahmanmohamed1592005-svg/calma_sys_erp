@@ -1017,10 +1017,9 @@ begin
     restoring := coalesce(old.left_early, false) and not coalesce(new.left_early, false)
                  and old.pre_early_checkout is not null
                  and new.checkout = old.pre_early_checkout and new.total_room = old.pre_early_total;
+    -- بيانات النزيل (الاسم، التليفون، عدد الأفراد، أكواد الأفراد، جهة الحجز، الملاحظات) موظف الشيفت يعدّلها عادي (قرار المالك).
+    -- الغرفة بتتغيّر من "نقل النزيل" بس، وتاريخ الدخول وتفاصيل الدفع والكود ثابتين.
     if (new.room is distinct from old.room)
-       or (new.guest_name is distinct from old.guest_name)
-       or (new.phone is distinct from old.phone)
-       or (new.pax is distinct from old.pax)
        or (new.checkin is distinct from old.checkin)
        -- السعر (price_night / currency / total_room) مسموح لموظف الشيفت يعدّله من الحجوزات (قرار المالك)،
        -- ما عدا لو الحجز متحصّل بالكامل (قيد prevent_charge_edit_when_settled) أو فيه دفعة بتتعارض مع الإجمالي.
@@ -1039,7 +1038,6 @@ begin
                     and coalesce((new.early_checkin ->> 'applied')::boolean, false)))
        or (new.payment_details is distinct from old.payment_details)
        or (new.amount_tendered is distinct from old.amount_tendered)
-       or (new.source is distinct from old.source)
        or (new.approval_status is distinct from old.approval_status)
        or (new.code is distinct from old.code)
        or (new.imported is distinct from old.imported)
