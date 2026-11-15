@@ -1,7 +1,7 @@
 // مدير الشيفت + حساب المطوّر المخفي + تصحيح يومية قديمة (والمدفوع والعهدة بيتحدّثوا لوحدهم) + مدفوع قبل السيستم
 // + التقرير بيحسب عهدة الفيزا المكتوبة بالإيد + كروت تحصيل اليوم مفصّلة.
 import { test, expect } from "../fixtures";
-import { login, goTab, toast, addBooking, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
+import { login, goTab, toast, addBooking, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
 import { readFileSync } from "node:fs";
 
 // الإجراءات الثانوية في كارت الحجز (مدفوع قبل السيستم وأدوات المطوّر) تحت "⋯ المزيد"
@@ -291,6 +291,55 @@ test("حجز جديد: الموظف بيكتب مدفوع قبل السيستم 
   expect(rows.map((r) => Number(r.collectionAmt)).sort((a, b) => a - b)).toEqual([25, 500]);
   await expect(page.getByText("منها رسوم فيزا").first()).toBeVisible();
   await expect(page.getByText("منها قبل السيستم").first()).toBeVisible();
+});
+
+test("المطوّر يغيّر عملة حجز ليه تحصيل في يومية مقفولة: العملة بتتغيّر في اليومية وأرقامها والعهدة اللي بعدها بيتحسبوا", async ({ page, env }) => {
+  await users(env);
+  const d2 = cairoDate(-2), d1 = cairoDate(-1);
+  const b = await env.seedBooking({ room: 608, guest: "Wrong Currency", start: -2, nights: 4, price: 200, paid: 800, currency: "EGP" });
+  await env.seedShift("ahmed", { day: d2, key: "morning", closed: true, handover: { EGP: 100 }, closingCash: { EGP: 900 }, collections: [{ room: 608, amount: 800, currency: "EGP", bookingId: b }] });
+  await env.seedShift("ahmed", { day: d1, key: "morning", closed: true, handover: { EGP: 900 }, closingCash: { EGP: 900 } });
+  // الموظف العادي لسه ممنوع
+  expect((await env.api("ahmed", "POST", "/rest/v1/rpc/change_booking_currency", { p_booking: b, p_currency: "USD", p_expected: null })).status).toBeGreaterThanOrEqual(400);
+  await page.goto("/");
+  await login(page, "devo");
+  await openRoom(page, 608);
+  await page.getByTestId("currency-open").click();
+  await page.getByTestId("currency-select").selectOption("USD");
+  await page.getByTestId("currency-confirm").click();
+  await expect(toast(page)).toContainText("اتغيّرت عملة الحجز");
+  expect((await env.q("select currency from bookings where id = $1", [b]))[0].currency).toBe("USD");
+  const fixed = await rec(env, d2, "morning");
+  expect(fixed.rows.find((r) => r.room === 608).collectionCurrency).toBe("USD");
+  expect(fixed.closed).toBe(true);
+  expect(Number(fixed.closing_cash.USD)).toBe(800);
+  expect(Number(fixed.closing_cash.EGP || 0)).toBe(100);
+  const next = await rec(env, d1, "morning");
+  expect(Number(next.handover.USD)).toBe(800);
+  expect(Number(next.handover.EGP || 0)).toBe(100);
+});
+
+test("المطوّر يسجّل دفعة (ورسوم فيزا) من غير ما ياخد شيفت: بتدخل الشيفت المفتوح في فندق الحجز", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 609, guest: "Dev Pays", start: 0, nights: 2, price: 500, paid: 0, currency: "EGP", anchor: "shift" });
+  // مفيش شيفت مفتوح: الدفعة بتترفض برسالة واضحة
+  const none = await env.api("devo", "POST", "/rest/v1/rpc/record_booking_payment", { p_booking: b, p_amount: 100, p_method: "كاش", p_details: {}, p_note: "تحصيل", p_expected: null });
+  expect(JSON.stringify(none.body)).toContain("مفيش شيفت مفتوح");
+  await env.seedShift("ahmed", {});
+  await page.goto("/");
+  await login(page, "devo");
+  await goTab(page, "الحجوزات");
+  const card = page.locator("div", { has: page.getByTestId("quickpay-open") }).filter({ hasText: "Dev Pays" }).last();
+  await card.getByTestId("quickpay-open").click();
+  await page.getByTestId("quickpay-amount").fill("1000");
+  await page.getByTestId("quickpay-method").selectOption("فيزا");
+  await page.getByTestId("quickpay-last4").fill("9876");
+  await page.getByTestId("quickpay-visa-fee").fill("30");
+  await page.getByTestId("quickpay-submit").click();
+  await expect(toast(page)).toContainText("رسوم فيزا 30");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(1030);
+  const rows = (await env.q("select rows from shift_records"))[0].rows.filter((r) => r.bookingId === b);
+  expect(rows.map((r) => Number(r.collectionAmt)).sort((x, y) => x - y)).toEqual([30, 1000]);
 });
 
 test("المطوّر: زرار إرجاع حجز اتلغى بالغلط، وزرار إلغاء مغادرة مبكرة اتسجّلت بالغلط (بيرجع تاريخ الخروج والإجمالي الأصليين)", async ({ page, env }) => {
