@@ -69,13 +69,13 @@ test("موظف الشيفت: زرار إرسال اليومية للأونر ب�
   expect(shift).toContain("فاتورة كهرباء 70 EGP");
   expect(await text(sheets.first().locator("tbody tr", { hasText: "605" }).first())).toContain("كاش 200 EGP");
   const box = async (label) => text(sheets.first().locator(".cx-or-sum > div", { hasText: label }).first().locator("dd"));
-  // المربعات زي الورق: الأربعة الأولى كاش (عهدة + تحصيل - مصاريف = رصيد)، والفيزا بإجماليها بالعهدة
+  // المربعات زي الورق: الأربعة الأولى كاش (عهدة + تحصيل - مصاريف = رصيد)، والفيزا تحصيل الشيفت بس
   await expect(sheets.first().locator(".cx-or-sum > div")).toHaveCount(9);
   expect(await box("العهدة")).toBe("500 EGP");
   expect(await box("إجمالي التحصيل")).toBe("1,960 EGP");   // كاش: 1,600 + 200 + كافيتيريا 160
   expect(await box("إجمالي المصاريف")).toBe("70 EGP");
   expect(await box("رصيد الخزينة")).toBe("2,390 EGP");     // 500 + 1,960 - 70
-  expect(await box("الفيزا")).toBe("9,445 EGP");           // عهدة 6,245 + تحصيل الشيفت 3,200
+  expect(await box("الفيزا")).toBe("3,200 EGP");           // تحصيل الشيفت بس (العهدة 6,245 مش محسوبة)
   expect(await box("انستاباي")).toBe("0");
   expect(await box("إجمالي الكافيتيريا")).toBe("160 EGP");
   expect(shift).toContain("تم تسليم العهدة");

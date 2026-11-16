@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Pencil, Check, X, Plus, ArrowLeftRight, Eye, AlertTriangle, Search, Wallet, Receipt, BedDouble, CalendarDays, Moon, Users, Hash, LogIn, LogOut } from "lucide-react";
 import { fmt, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, bookingDueLines, formatMoneyLines, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
-import { todayStr, shiftDayNow, nightsBetween, addDays, beforeCheckoutHour } from "../domain/dates";
+import { todayStr, shiftDayNow, nightsBetween, addDays, beforeCheckoutHour, beforeExtendCutoff } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomStart, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, getBookingPayments, devChangeCurrencyAcrossLedgers } from "../data/shifts";
@@ -103,7 +103,8 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
   const date = todayStr();
   // قبل 12 الضهر (معاد الخروج) النزيل اللي خروجه النهارده لسه في الغرفة - بنحدّث كل دقيقة عشان الغرفة تفضى لوحدها الساعة 12
   const [beforeCheckout, setBeforeCheckout] = useState(() => beforeCheckoutHour());
-  useEffect(() => { const t = setInterval(() => setBeforeCheckout(beforeCheckoutHour()), 60000); return () => clearInterval(t); }, []);
+  const [canLateExtend, setCanLateExtend] = useState(() => beforeExtendCutoff());
+  useEffect(() => { const t = setInterval(() => { setBeforeCheckout(beforeCheckoutHour()); setCanLateExtend(beforeExtendCutoff()); }, 60000); return () => clearInterval(t); }, []);
   const room = rooms.find((r) => r.number === selected);
   const status = selected ? computeRoomStatus(selected, bookings, overrides, date, { beforeCheckout }) : null;
 
@@ -455,6 +456,10 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         const departedList = bookings.filter((bk) => bk.room === selected && bk.leftEarly && bk.status !== "ملغي" && (bk.checkout === date || bk.checkin === date) && bk.id !== b?.id);
         const occupiedNow = status.key === "occupied_paid" || status.key === "occupied_unpaid";
         const canAct = (perms.editBookings || perms.markPaymentReceived) && !offShift;
+        // بعد 12 (معاد الخروج) ولحد الساعة 1: النزيل اللي خروجه النهارده لسه ينفع يتمدّد له من بطاقة الغرفة
+        const lateLeaver = !beforeCheckout && canLateExtend && date === todayStr()
+          ? bookings.find((bk) => bk.room === selected && bk.id !== b?.id && bk.status !== "ملغي" && bk.status !== "تم تسجيل الخروج" && !bk.leftEarly && bk.checkout === date && roomStart(bk) < date)
+          : null;
         const online = !!b?.paymentDetails?.onlinePaid;
         const dueLines = b ? bookingDueLines(b) : [];
         const payOpts = b ? payCurrencyOptions(b) : [];
@@ -489,6 +494,17 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
               <RefundBox key={d.id} b={d} />
             </div>
           ))}
+
+          {lateLeaver && canAct && (
+            <div data-testid="late-extend" className="cx-card" style={{ marginTop: 10, padding: 10, background: "#FFF6E0", display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ fontSize: 14 }}><b>{lateLeaver.guestName}</b> خروجه النهارده - التمديد مسموح لحد الساعة 1 الضهر</div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <input className="cx-input" aria-label="عدد ليالي التمديد" data-testid="late-extend-nights" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
+                <span style={{ fontSize: 13, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
+                <button className="cx-btn cx-btn-outline" data-testid="late-extend-btn" style={{ fontSize: 13 }} onClick={() => extendBooking(lateLeaver)}>تمديد الحجز</button>
+              </div>
+            </div>
+          )}
 
           {b && (
             <div className="cx-card" data-testid="booking-card" style={{ marginTop: 10, padding: 12, background: "var(--paper2)", display: "flex", flexDirection: "column", gap: 8 }}>
