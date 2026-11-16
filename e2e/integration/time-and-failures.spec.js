@@ -182,3 +182,29 @@ test.describe("الحجز الملغي مبيعطّلش الغرفة", () => {
     expect(await env.q("select 1 from bookings where guest_name = 'On Cancelled Dates'")).toHaveLength(1);
   });
 });
+
+test.describe("تمديد بعد معاد الخروج", () => {
+  test("النزيل اللي خروجه النهارده يتمدّد له لحد الساعة 1 الضهر، وبعدها الزرار بيختفي", async ({ page, env }) => {
+    await users(env);
+    const b = await env.seedBooking({ room: 611, guest: "Late Leaver", start: -2, nights: 2, price: 300, currency: "EGP" });
+    await env.seedShift("ahmed", { key: "morning", day: today() });
+    await setCairoTime(page, 12, 40);
+    await page.goto("/");
+    await login(page, "ahmed");
+    await boardTile(page, 611).click();
+    await expect(page.getByTestId("late-extend")).toContainText("Late Leaver");
+    await page.getByTestId("late-extend-btn").click();
+    await expect(toast(page)).toContainText("تم تمديد الحجز");
+    const row = (await env.q("select checkout::text, total_room from bookings where id = $1", [b]))[0];
+    expect(row.checkout).toBe(cairoDate(1));
+    expect(Number(row.total_room)).toBe(900);
+
+    // الساعة 1:05: مفيش تمديد لنزيل خروجه النهارده
+    const c = await env.seedBooking({ room: 612, guest: "Too Late", start: -1, nights: 1, price: 300, currency: "EGP" });
+    await setCairoTime(page, 13, 5);
+    await page.reload();
+    await boardTile(page, 612).click();
+    await expect(page.getByTestId("late-extend")).toHaveCount(0);
+    expect((await env.q("select checkout::text from bookings where id = $1", [c]))[0].checkout).toBe(cairoDate(0));
+  });
+});

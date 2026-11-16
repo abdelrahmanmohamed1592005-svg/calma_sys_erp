@@ -167,11 +167,11 @@ export function buildShiftSheet({ record, rooms, hotelName, staffNames }) {
   });
   const known = new Set(["كاش", ...VISA, ...TRANSFER, ...VODAFONE]);
   const otherMethods = Object.keys(t.byMethodCurrency || {}).filter((m) => !known.has(m));
-  // المربعات زي الورق بالظبط: الأربعة الأولى كاش بالجنيه (عهدة + تحصيل - مصاريف = رصيد الخزينة)، وبعدها الفيزا بإجماليها
-  // (عهدتها + تحصيل الشيفت = اللي على الجهاز)، وانستاباي وفودافون تحصيل الشيفت، والعملة (كاش غير الجنيه بعهدته)، وإجمالي الكافيتيريا.
+  // المربعات زي الورق بالظبط: الأربعة الأولى كاش بالجنيه (عهدة + تحصيل - مصاريف = رصيد الخزينة)، وبعدها الفيزا
+  // (تحصيل الشيفت بس)، وانستاباي وفودافون تحصيل الشيفت، والعملة (كاش غير الجنيه بعهدته)، وإجمالي الكافيتيريا.
   const egp = (o) => amt(Number(o?.EGP) || 0, "EGP");
-  const visaTotal = {};
-  [pickMethods(record.methodHandover, VISA), pickMethods(t.byMethodCurrency, VISA)].forEach((o) => Object.entries(o).forEach(([c, v]) => sumInto(visaTotal, c, v)));
+  // الفيزا: تحصيل الشيفت ده بس (من غير عهدة الفيزا اللي جاية من الشيفت اللي قبله)
+  const visaTotal = pickMethods(t.byMethodCurrency, VISA);
   const foreignCash = {};
   Object.entries(t.closingCash || {}).forEach(([c, v]) => { if (c !== "EGP") sumInto(foreignCash, c, Number(v) || 0); });
   const names = [record.staffName, ...(record.helpers || []).map((u) => staffNames?.[u] || u)].filter(Boolean).join(" + ");

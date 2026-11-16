@@ -50,6 +50,9 @@ export function parseDateFlexible(s) {
 /* معاد الدخول والخروج في الفندق: 12 الضهر. قبلها النزيل اللي خروجه النهارده لسه في الغرفة (لوحة الغرف). */
 export const CHECKOUT_HOUR = 12;
 export const beforeCheckoutHour = (now = new Date()) => now.getHours() < CHECKOUT_HOUR;
+/* تمديد إقامة النزيل اللي خروجه النهارده مسموح لحد الساعة 1 الضهر (ساعة بعد معاد الخروج) */
+export const EXTEND_UNTIL_HOUR = 13;
+export const beforeExtendCutoff = (now = new Date()) => now.getHours() < EXTEND_UNTIL_HOUR;
 
 export function shiftDayNow(now = new Date()) {
   const cal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
