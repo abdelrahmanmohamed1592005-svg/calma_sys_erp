@@ -373,7 +373,7 @@ test.describe("كافيتيريا الاستاف: مين أخد ومين دفع 
     expect(closed.closing_cash).toEqual({ EGP: 12 });
   });
 
-  test("الصلاحيات: مدير الحجوزات والحسابات والمدير العام مايكتبوش، والموظف مايعدّلش مبلغ استهلاك ومايمسحش، والمدير العام بيصحّح", async ({ page, env }) => {
+  test("الصلاحيات: مدير الحجوزات والحسابات والمدير العام مايكتبوش، والموظف مايعدّلش مبلغ استهلاك ومايمسحش، والحسابات بس اللي بتصحّح (المدير العام عرض بس)", async ({ page, env }) => {
     await users(env);
     await env.seedShift("ahmed");
     await page.goto("/"); await login(page, "ahmed");
@@ -399,11 +399,16 @@ test.describe("كافيتيريا الاستاف: مين أخد ومين دفع 
       const sel = await asDb(u, "GET", "/rest/v1/staff_cafeteria?select=id");
       expect(sel.body).toHaveLength(1);
     }
-    // المبلغ مقفول بالـ API حتى على الحسابات (التصحيح من محرر SQL)، لكن الوصف مش فلوس والحسابات تقدر تعدّله؛ والمدير العام يمسح
+    // المبلغ مقفول بالـ API حتى على الحسابات (التصحيح من محرر SQL)، لكن الوصف مش فلوس والحسابات تقدر تعدّله؛ والمدير العام عرض بس
     expect(denied(await asDb("mona", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { amount: 25 }))).toBe(true);
     expect(Number((await env.q("select amount from staff_cafeteria"))[0].amount)).toBe(30);
     expect(denied(await asDb("mona", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { description: "قهوة وكيك" }))).toBe(false);
-    expect(denied(await asDb("boss", "DELETE", `/rest/v1/staff_cafeteria?id=eq.${e.id}`))).toBe(false);
+    // المدير العام: عرض بس - مايعدّلش ولا يمسح
+    await asDb("boss", "PATCH", `/rest/v1/staff_cafeteria?id=eq.${e.id}`, { description: "x" });
+    await asDb("boss", "DELETE", `/rest/v1/staff_cafeteria?id=eq.${e.id}`);
+    expect((await env.q("select description from staff_cafeteria"))[0].description).toBe("قهوة وكيك");
+    // الحسابات تقدر تمسح غلطة
+    expect(denied(await asDb("mona", "DELETE", `/rest/v1/staff_cafeteria?id=eq.${e.id}`))).toBe(false);
     expect(await env.q("select 1 from staff_cafeteria")).toHaveLength(0);
     // قيم غلط ممنوعة من القاعدة نفسها (مبلغ صفر/سالب، عملة غريبة)
     for (const bad of [{ amount: 0 }, { amount: -5 }, { amount: 5, currency: "XYZ" }]) {

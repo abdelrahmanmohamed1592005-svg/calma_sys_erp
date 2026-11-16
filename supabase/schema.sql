@@ -2122,6 +2122,14 @@ alter table staff_cafeteria add column if not exists hotel_id integer not null d
 create index if not exists staff_cafeteria_day_idx on staff_cafeteria (day desc);
 create index if not exists staff_cafeteria_consumer_idx on staff_cafeteria (consumer_name);
 
+-- تصحيح/مسح استهلاك الاستاف: الحسابات والمطوّر بس (المدير العام اتشالت منه - عرض بس)
+create or replace function can_fix_staff_cafeteria()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and role in ('accounts','dev') and active = true);
+$$;
+revoke all on function can_fix_staff_cafeteria() from public, anon;
+grant execute on function can_fix_staff_cafeteria() to authenticated;
+
 create or replace function staff_cafeteria_guard()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare v_username text;
@@ -2132,10 +2140,10 @@ begin
     new.created_at := now();
     return new;
   end if;
-  -- تعديل: المدير العام/الحسابات بس يقدروا يغيّروا أي حاجة. موظف الشيفت بيسدّد
+  -- تعديل: الحسابات/المطوّر بس يقدروا يغيّروا أي حاجة. موظف الشيفت بيسدّد
   -- بس (يزوّد paid_amount ويضيف في payments) - مايقدرش يعدّل المبلغ أو الاسم أو
   -- يقلّل المدفوع.
-  if not can_manage_financials() then
+  if not can_fix_staff_cafeteria() then
     if new.consumer_name is distinct from old.consumer_name
        or new.consumer_username is distinct from old.consumer_username
        or new.description is distinct from old.description
@@ -2144,7 +2152,7 @@ begin
        or new.day is distinct from old.day
        or new.shift_key is distinct from old.shift_key
        or new.recorded_by is distinct from old.recorded_by then
-      raise exception 'تعديل بيانات استهلاك الاستاف من المدير العام أو الحسابات بس - موظف الشيفت يسجّل السداد بس';
+      raise exception 'تعديل بيانات استهلاك الاستاف من الحسابات بس - موظف الشيفت يسجّل السداد بس';
     end if;
     if new.paid_amount < old.paid_amount
        or jsonb_array_length(new.payments) < jsonb_array_length(old.payments) then
@@ -2166,9 +2174,9 @@ create policy "staff cafeteria select" on staff_cafeteria for select using (is_a
 drop policy if exists "staff cafeteria insert" on staff_cafeteria;
 create policy "staff cafeteria insert" on staff_cafeteria for insert with check (is_staff());
 drop policy if exists "staff cafeteria update" on staff_cafeteria;
-create policy "staff cafeteria update" on staff_cafeteria for update using (is_staff() or can_manage_financials()) with check (is_staff() or can_manage_financials());
+create policy "staff cafeteria update" on staff_cafeteria for update using (is_staff() or can_fix_staff_cafeteria()) with check (is_staff() or can_fix_staff_cafeteria());
 drop policy if exists "staff cafeteria delete" on staff_cafeteria;
-create policy "staff cafeteria delete" on staff_cafeteria for delete using (can_manage_financials());
+create policy "staff cafeteria delete" on staff_cafeteria for delete using (can_fix_staff_cafeteria());
 
 revoke all on staff_cafeteria from anon, authenticated;
 grant select, insert, update, delete on staff_cafeteria to authenticated;
@@ -4180,7 +4188,7 @@ $$;
 revoke all on function dev_settle_staff_cafeteria(int, text, text, text, numeric, text, jsonb) from public, anon;
 grant execute on function dev_settle_staff_cafeteria(int, text, text, text, numeric, text, jsonb) to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 47 $$;
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 48 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

@@ -47,10 +47,12 @@ select t.reject('H5 اسم فاضي مرفوض', t.maint_sql($q$insert into staf
 select t.reject('H5 مدفوع أكبر من المبلغ مرفوض', t.maint_sql($q$insert into staff_cafeteria(consumer_name, amount, paid_amount) values ('x', 5, 9)$q$), 'check');
 select t.reject('H5 موظف مايسدّدش بتحديث مباشر (لازم سداد الاستاف في اليومية)', t.dml('st2', $q$update staff_cafeteria set paid_amount = 15, payments = '[{"amount":15}]'::jsonb where consumer_name = 'مروة'$q$), 'السداد بس');
 select t.reject('H5 موظف مايغيّرش المبلغ', t.dml('st1', $q$update staff_cafeteria set amount = 1 where consumer_name = 'مروة'$q$), 'السداد بس');
-select t.reject('H5 موظف مايغيّرش الاسم', t.dml('st1', $q$update staff_cafeteria set consumer_name = 'حد تاني' where consumer_name = 'مروة'$q$), 'المدير العام أو الحسابات');
+select t.reject('H5 موظف مايغيّرش الاسم', t.dml('st1', $q$update staff_cafeteria set consumer_name = 'حد تاني' where consumer_name = 'مروة'$q$), 'من الحسابات بس');
 select t.reject('H5 موظف مايمسحش', t.dml('st1', $q$delete from staff_cafeteria where consumer_name = 'مروة'$q$), 'NO_ROWS');
 select t.reject('H5 مدير الحجوزات مايعدّلش', t.dml('res1', $q$update staff_cafeteria set paid_amount = 40 where consumer_name = 'مروة'$q$), 'NO_ROWS');
 select t.eq('H5 مدير الحجوزات بيشوف السجل (قراءة)', (select (t.try('res1', 'select 1 from staff_cafeteria')) is null)::text, 'true');
 select t.reject('H5 حتى الحسابات مابتغيّرش المبلغ من الـ API (التصحيح من محرر SQL)', t.dml('acc1', $q$update staff_cafeteria set amount = 45 where consumer_name = 'مروة'$q$), 'السداد بس');
 select t.pass('H5 الحسابات تغيّر وصف الاستهلاك (مش فلوس)', t.dml('acc1', $q$update staff_cafeteria set description = 'قهوة وكيك' where consumer_name = 'مروة'$q$));
-select t.pass('H5 المدير العام يمسح', t.dml('gm1', $q$delete from staff_cafeteria where consumer_name = 'مروة'$q$));
+select t.reject('H5 المدير العام مايعدّلش (عرض بس)', t.dml('gm1', $q$update staff_cafeteria set description = 'x' where consumer_name = 'مروة'$q$), 'NO_ROWS');
+select t.reject('H5 المدير العام مايمسحش (عرض بس)', t.dml('gm1', $q$delete from staff_cafeteria where consumer_name = 'مروة'$q$), 'NO_ROWS');
+select t.pass('H5 الحسابات تمسح غلطة', t.dml('acc1', $q$delete from staff_cafeteria where consumer_name = 'مروة'$q$));
