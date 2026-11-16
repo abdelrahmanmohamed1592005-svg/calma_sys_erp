@@ -73,9 +73,9 @@ describe.skipIf(!enabled)("مصفوفة الصلاحيات", () => {
     ["staff_cafeteria: إضافة مباشرة (ممنوعة - من record_staff_cafeteria)", "insert into staff_cafeteria(consumer_name, amount) values ('n', 5)", []],
     ["staff_cafeteria: سداد مباشر (ممنوع - من settle_staff_cafeteria)", "update staff_cafeteria set paid_amount = 5, payments = '[{\"amount\":5}]'::jsonb", []],
     ["staff_cafeteria: تغيير المبلغ مباشرة (ممنوع)", "update staff_cafeteria set amount = 99", []],
-    ["staff_cafeteria: تعديل الوصف (مش فلوس)", "update staff_cafeteria set description = 'x'", ["gm1", "acc1"]],
+    ["staff_cafeteria: تعديل الوصف (مش فلوس)", "update staff_cafeteria set description = 'x'", ["acc1"]],   // المدير العام عرض بس
     ["bookings: كتابة المدفوع مباشرة (ممنوعة - من record_booking_payment/decide_booking_refund)", "update bookings set amount_paid = amount_paid + 1", []],
-    ["staff_cafeteria: مسح", "delete from staff_cafeteria", ["gm1", "acc1"]],
+    ["staff_cafeteria: مسح", "delete from staff_cafeteria", ["acc1"]],   // المدير العام عرض بس
     ["booking_guests: قراءة", "select count(*) n from booking_guests", ALL, "read"],
     ["booking_guests: إضافة", "insert into booking_guests(booking_id, room, seq, code) values ((select id from bookings limit 1), 601, 9, 'zz')", []],
     ["booking_code_counters: قراءة", "select count(*) n from booking_code_counters", [], "read"],
