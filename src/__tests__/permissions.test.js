@@ -69,8 +69,7 @@ describe("booking sources are a fixed list of 5", () => {
 });
 
 describe("refund decision permission", () => {
-  it("only the reservations manager can decide refunds", () => {
-    expect(PERMISSIONS.reservations.decideRefund).toBe(true);
-    ["staff", "accounts", "gm"].forEach((r) => expect(PERMISSIONS[r].decideRefund).toBeFalsy());
+  it("رد الفلوس مقفول: مفيش دور معاه صلاحية قرار رد", () => {
+    Object.values(PERMISSIONS).forEach((p) => expect(p.decideRefund).toBeUndefined());
   });
 });
