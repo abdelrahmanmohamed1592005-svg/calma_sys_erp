@@ -147,7 +147,7 @@ export async function getBookingLedgerRows(booking) {
   if (!recs) return null;
   const out = [];
   recs.forEach((r) => ["rows", "cafeteriaRows"].forEach((list) => (r[list] || []).forEach((x, idx) => {
-    if (x.bookingId !== booking.id || !(Number(x.collectionAmt) || 0)) return;
+    if (x.bookingId !== booking.id) return;   // حتى الصف اللي مبلغه اتمسح (صفر) بيظهر عشان يترجع
     out.push({ date: r.date, shiftKey: r.shiftKey, hotelId: r.hotelId, closed: r.closed, list, idx, row: x });
   })));
   return out;
