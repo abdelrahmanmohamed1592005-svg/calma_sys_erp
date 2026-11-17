@@ -27,3 +27,17 @@ export async function listStaffCafeteria(hotelId) {
   return data.map(fromRow);
 }
 
+
+/* المطوّر (والحسابات): تصحيح أو مسح استهلاك استاف (القاعدة بتسمح لـ can_fix_staff_cafeteria بس) */
+export async function updateStaffCafeteriaEntry(id, { description, amount }) {
+  const { data, error } = await supabase.from("staff_cafeteria").update({ description, amount }).eq("id", id).select("id");
+  if (error) return { error: error.message };
+  if (!data?.length) return { error: "مالقيتش الاستهلاك ده أو مش مسموحلك تعدّله" };
+  return { success: true };
+}
+export async function deleteStaffCafeteriaEntry(id) {
+  const { data, error } = await supabase.from("staff_cafeteria").delete().eq("id", id).select("id");
+  if (error) return { error: error.message };
+  if (!data?.length) return { error: "مالقيتش الاستهلاك ده أو مش مسموحلك تمسحه" };
+  return { success: true };
+}

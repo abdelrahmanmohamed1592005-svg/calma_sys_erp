@@ -1,7 +1,7 @@
 // مدير الشيفت + حساب المطوّر المخفي + تصحيح يومية قديمة (والمدفوع والعهدة بيتحدّثوا لوحدهم) + مدفوع قبل السيستم
 // + التقرير بيحسب عهدة الفيزا المكتوبة بالإيد + كروت تحصيل اليوم مفصّلة.
 import { test, expect } from "../fixtures";
-import { login, goTab, toast, addBooking, claimShift, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
+import { login, logout, goTab, toast, addBooking, claimShift, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
 import { readFileSync } from "node:fs";
 
 // الإجراءات الثانوية في كارت الحجز (مدفوع قبل السيستم وأدوات المطوّر) تحت "⋯ المزيد"
@@ -121,10 +121,23 @@ test("مدفوع قبل السيستم: بيتحسب في المدفوع وال�
   await users(env);
   const b = await env.seedBooking({ room: 603, guest: "Paper Guest", start: -1, nights: 3, price: 400, paid: 0, currency: "EGP" });
   await page.goto("/");
-  await login(page, "ahmed");                                      // موظف الشيفت هو اللي بيحدده
+  await login(page, "ahmed");
   await claimShift(page);
   await goTab(page, "الحجوزات");
   await expect(page.getByTestId("prior-paid-open")).toHaveCount(0);  // مفيش زرار على الكارت - بيتكتب من فورم الحجز
+  // موظف الشيفت مايعدّلوش على حجز موجود (بيكتبه مع الحجز الجديد بس) - لا في الفورم ولا من القاعدة
+  await page.getByTestId("edit-price").first().click();
+  await expect(page.getByTestId("new-prior-amount")).toHaveCount(0);
+  await env.qRaw(`set session_replication_role = replica; update bookings set created_at = now() - interval '2 hours' where id = '${b}'; set session_replication_role = origin;`);   // حجز قديم (مش لسه متعمل)
+  const staffTry = await env.api("ahmed", "POST", "/rest/v1/rpc/set_booking_prior_paid", { p_booking: b, p_amount: 100, p_note: null, p_expected: null });
+  expect(staffTry.status).toBeGreaterThanOrEqual(400);
+  expect(JSON.stringify(staffTry.body)).toContain("مدير الشيفت");
+  // مدير الشيفت هو اللي بيعدّله (بياخد نفس الشيفت بدل الموظف)
+  await env.qRaw("delete from shift_records; delete from shift_claims;");
+  await logout(page);
+  await login(page, "mona");
+  await claimShift(page);
+  await goTab(page, "الحجوزات");
   await page.getByTestId("edit-price").first().click();
   await page.getByTestId("new-prior-amount").fill("700");
   await page.getByTestId("new-prior-note").fill("دفع كاش يوم 10/11");
@@ -356,6 +369,29 @@ test("المطوّر بكل الصلاحيات: بيشتغل على الشيفت
   await page.getByTestId("staff-cafe-add").click();
   await expect(toast(page)).toContainText("سارة");
   expect((await env.q("select consumer_username, amount::float from staff_cafeteria"))[0]).toEqual({ consumer_username: "sara", amount: 40 });
+  // المطوّر بيعدّل استهلاك الاستاف (المبلغ والبيان) ويمسحه
+  await page.getByTestId("staff-cafe-entry").first().getByTestId("staff-cafe-fix").click();
+  await page.getByTestId("staff-cafe-fix-amount").fill("35");
+  await page.getByTestId("staff-cafe-fix-desc").fill("قهوة");
+  await page.getByTestId("staff-cafe-fix-save").click();
+  await expect(toast(page)).toContainText("تم تعديل الاستهلاك");
+  expect((await env.q("select description, amount::float from staff_cafeteria"))[0]).toEqual({ description: "قهوة", amount: 35 });
+  // استهلاك مدفوع كاش: تحصيله في كافيتيريا اليومية بيتعدّل من المطوّر
+  await page.getByTestId("staff-cafe-who").selectOption("ahmed");
+  await page.getByTestId("staff-cafe-amount").fill("60");
+  await page.getByTestId("staff-cafe-paymode").selectOption("كاش");
+  await page.getByTestId("staff-cafe-add").click();
+  await expect(toast(page)).toContainText("السداد");
+  await page.getByTestId("cafeteria-row").first().getByTestId("cafe-row-edit").click();
+  await page.getByTestId("cafe-row-amount").fill("55");
+  await page.getByTestId("cafe-row-save").click();
+  await expect(toast(page)).toContainText("تم تعديل تحصيل الكافيتيريا");
+  expect(Number((await env.q("select cafeteria_rows from shift_records"))[0].cafeteria_rows[0].collectionAmt)).toBe(55);
+  // ومسح استهلاك مالوش سداد
+  await page.getByTestId("staff-cafe-entry").filter({ hasText: "قهوة" }).getByTestId("staff-cafe-fix").click();
+  await page.getByTestId("staff-cafe-fix-delete").click();
+  await expect(toast(page)).toContainText("اتمسح الاستهلاك");
+  expect((await env.q("select count(*)::int n from staff_cafeteria where description = 'قهوة'"))[0].n).toBe(0);
   // عربون في حجز جديد بيدخل نفس الشيفت المفتوح
   await addBooking(page, { room: 610, guest: "Dev Deposit", nights: 1, price: 300, currency: "EGP", paid: 100, prior: 50 });
   const bk = (await env.q("select amount_paid, payment_details from bookings where guest_name = 'Dev Deposit'"))[0];
@@ -387,9 +423,10 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   await expect(toast(page)).toContainText("تم الحفظ");
   const row = (await env.q("select room, price_night::float, total_room::float from bookings where id = $1", [b]))[0];
   expect(row).toEqual({ room: 612, price_night: 450, total_room: 900 });
-  // تعديل المدفوع: الدفعة 500 كاش بقت 400 فيزا
-  const card = page.locator("div", { has: page.getByTestId("edit-payments-open") }).filter({ hasText: "Full Edit" }).last();
-  await card.getByTestId("edit-payments-open").click();
+  // تعديل المدفوع: مش على الكارت - جوه فورم "تعديل الحجز". الدفعة 500 كاش بقت 400 فيزا
+  await expect(page.getByTestId("booking-card").getByTestId("edit-payments-open")).toHaveCount(0);
+  await page.getByTestId("edit-price").first().click();
+  await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   await page.getByTestId("edit-payment-amount").fill("400");
   await page.getByTestId("edit-payment-method").selectOption("فيزا");
   await page.getByTestId("edit-payment-last4").fill("5555");
@@ -398,6 +435,10 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   expect(Number((await booking(env, b)).amount_paid)).toBe(400);
   const r = (await rec(env, day, key)).rows.find((x) => x.bookingId === b);
   expect(r).toMatchObject({ collectionAmt: 400, collectionMethod: "فيزا" });
+  // الفورم لسه مفتوح وبيتحفظ عادي بعد تعديل المدفوع (من غير "اتحدّث من مكان تاني")
+  await page.getByRole("button", { name: /حفظ الحجز/ }).click();
+  await expect(toast(page)).toContainText("تم الحفظ");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(400);
   const res = await env.pool.query(readFileSync(new URL("../../supabase/ops/reconcile.sql", import.meta.url), "utf8"));
   const rows = (Array.isArray(res) ? res : [res]).flatMap((x) => x.rows || []);
   expect(rows.filter((x) => x.level === "خطأ")).toEqual([]);
@@ -411,8 +452,8 @@ test("دفعة اتمسح مبلغها من اليومية: بتظهر في 'ت�
   await page.goto("/");
   await login(page, "devo");
   await goTab(page, "الحجوزات");
-  const card = page.locator("div", { has: page.getByTestId("edit-payments-open") }).filter({ hasText: "Erased Pay" }).last();
-  await card.getByTestId("edit-payments-open").click();
+  await page.getByRole("button", { name: "تعديل الحجز", exact: true }).first().click();
+  await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   await page.getByTestId("edit-payment-amount").fill("3000");
   await page.getByTestId("edit-payment-save").click();
   await expect(toast(page)).toContainText("اتعدّلت الدفعة");
