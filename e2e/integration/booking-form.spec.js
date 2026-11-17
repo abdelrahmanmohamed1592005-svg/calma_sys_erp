@@ -221,6 +221,18 @@ test.describe("الرسوم وطرق الدفع", () => {
 });
 
 test.describe("البحث والتصفية في قائمة الحجوزات", () => {
+  test("قايمة كبيرة بتتعرض ٥٠ ٥٠ وزرار 'عرض حجوزات أقدم' بيكمّل", async ({ page, env }) => {
+    test.setTimeout(90_000);
+    await users(env);
+    for (let i = 0; i < 55; i++) await env.seedBooking({ room: 601 + (i % 16), guest: `Old ${i}`, start: -400 + i * 7, nights: 1 });
+    await page.goto("/");
+    await login(page, "rawan");
+    await goTab(page, "الحجوزات");
+    await expect(page.getByTestId("booking-card")).toHaveCount(50);
+    await page.getByTestId("bookings-more").click();
+    await expect(page.getByTestId("booking-card")).toHaveCount(55);
+    await expect(page.getByTestId("bookings-more")).toHaveCount(0);
+  });
   test("بحث بالاسم (من غير حساسية لحالة الحروف) والغرفة والكود، وتصفية بالتاريخ", async ({ page, env }) => {
     await users(env);
     await env.seedBooking({ room: 601, guest: "Ali Hassan", start: 0, nights: 2 });

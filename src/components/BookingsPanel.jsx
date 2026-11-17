@@ -218,12 +218,6 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   // eslint-disable-next-line react-hooks/exhaustive-deps -- بيشتغل مرة لما يوصل طلب تعديل (pendingEditId) - إضافة bookings كانت هتعيد فتح الفورم مع كل تحديث
   }, [pendingEditId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => { const idx = await getPaymentsIndex(bookings); if (!cancelled && idx) setPayIndex(idx); })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataVersion, bookings.length, JSON.stringify(bookings.map((b) => b.amountPaid))]);
 
   // الفورم بيفتح فوق القايمة: أول ما يفتح (حجز جديد أو تعديل) الصفحة بتنزل/تطلع عليه لوحدها
   const formRef = useRef(null);
@@ -505,6 +499,19 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     if (dateTo && b.checkin > dateTo) return false;
     return true;
   }).sort((a, b) => b.checkin.localeCompare(a.checkin));
+  // القايمة بتتعرض على دفعات (٥٠ حجز) - مع سنين شغل الحجوزات بالآلاف، وعرضها كلها مرة واحدة كان هيبطّأ الشاشة
+  const PAGE = 50;
+  const [shownCount, setShownCount] = useState(PAGE);
+  useEffect(() => { setShownCount(PAGE); }, [statusFilter, q, dateFrom, dateTo]);
+  const visible = list.slice(0, shownCount);
+  // تفاصيل الدفع بالوسيلة (من اليوميات) للحجوزات الظاهرة بس - قبل كده كانت بتحمّل يوميات كل الأيام من أول حجز اتعمل مع كل تحديث
+  const visibleKey = visible.map((b) => b.id + ":" + b.amountPaid).join(",");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => { const idx = await getPaymentsIndex(visible); if (!cancelled && idx) setPayIndex(idx); })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion, visibleKey]);
 
   return (
     <div className="cx-page">
@@ -771,7 +778,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {list.length === 0 && <EmptyState icon={SearchX} title="لا يوجد حجوزات مطابقة" hint={bookings.length ? "غيّر كلمة البحث أو التواريخ أو الفلتر اللي فوق." : "لسه مفيش حجوزات متسجلة."} />}
-        {list.map((b) => { const cancelled = b.status === "ملغي"; return (
+        {visible.map((b) => { const cancelled = b.status === "ملغي"; return (
           <div key={b.id} data-testid={cancelled ? "booking-cancelled" : "booking-card"} className="cx-card cx-bk" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, borderInlineStartWidth: 4, borderInlineStartColor: cancelled ? "var(--rust)" : bookingAmountDue(b) > 0 ? "#E0A33A" : "var(--sage)", ...(cancelled ? { background: "#FCF6F4" } : {}) }}>
             <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
               <div>
@@ -825,6 +832,11 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
             <RefundBox b={b} />
           </div>
         ); })}
+        {list.length > visible.length && (
+          <button type="button" className="cx-btn cx-btn-outline cx-no-print" data-testid="bookings-more" style={{ alignSelf: "center" }} onClick={() => setShownCount((n) => n + PAGE)}>
+            عرض حجوزات أقدم (باقي {list.length - visible.length})
+          </button>
+        )}
       </div>
 
       <div className="cx-print-only cx-print-footer">
