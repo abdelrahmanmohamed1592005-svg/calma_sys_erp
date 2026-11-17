@@ -67,6 +67,21 @@ test.describe("الأوفر تايم", () => {
   });
 });
 
+test("غادر مبكرًا بعد نص الليل (00:30): الزرار ظاهر لموظف المسائي والنزيل بيتحاسب على الليالي اللي قعدها", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 602, guest: "Night Leaver", start: -1, nights: 3, price: 100, currency: "EGP" });
+  await env.seedShift("ahmed", { key: "evening", day: yesterday() });
+  await setCairoTime(page, 0, 30);
+  await page.goto("/");
+  await login(page, "ahmed");
+  await goTab(page, "لوحة الغرف");
+  await openRoom(page, 602);
+  await page.getByTestId("early-leave").getByRole("button").first().click();
+  await page.getByTestId("early-leave").getByRole("button", { name: /تأكيد/ }).click();
+  await expect(toast(page)).toContainText("اتحاسب على 1 ليلة من 3");
+  expect((await env.q("select checkout::text, left_early from bookings where id = $1", [b]))[0]).toEqual({ checkout: today(), left_early: true });
+});
+
 test.describe("تبديل الشيفتات والشيفت الليلي", () => {
   test("الموظف المسائي يبدأ 17:00: الصباحي (لسه مفتوح) بيتقفل تلقائي وعهدته بتتنقل", async ({ page, env }) => {
     await users(env);
