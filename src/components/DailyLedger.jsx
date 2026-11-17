@@ -695,7 +695,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
             <LedgerBar sections={LEDGER_SECTIONS} totals={totals} record={record} canClose={!record.closed && perms.closeShift} onClose={closeShift} />
-            <div id="led-rooms" className="cx-anchor"><LedgerTable record={record} rooms={rooms} locked={locked} lockLinked onUpdateRow={updateRow} /></div>
+            <div id="led-rooms" className="cx-anchor"><LedgerTable record={record} rooms={rooms} locked={locked} lockLinked={!perms.devTools} onUpdateRow={updateRow} /></div>
             <div id="led-cafe" className="cx-anchor">
             <CafeteriaSection record={record} rooms={rooms} bookings={bookings} onUpdateCafeteria={updateCafeteria} locked={locked} readOnly={!perms.editLedger} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={flushNow} reloadRecord={reloadRecord} onLog={onLog} showToast={showToast} />
             </div>

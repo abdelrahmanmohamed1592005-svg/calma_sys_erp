@@ -4256,6 +4256,7 @@ returns trigger language plpgsql as $$
 begin
   -- دوال السيستم (security definer) بتشتغل بصلاحية صاحبها، فالقيد ده على التعديل المباشر من الشاشة/الـ API بس
   if current_user not in ('authenticated', 'anon') then return new; end if;
+  if is_dev() then return new; end if;            -- المطوّر: كل الصلاحيات (حتى الصفوف المربوطة بحجز)
   if calma_ledger_linked_sig(new.rows, new.cafeteria_rows) is distinct from calma_ledger_linked_sig(old.rows, old.cafeteria_rows) then
     raise exception 'الدفعة المسجّلة على حجز في اليومية ماتتعدّلش بالإيد (المدفوع على الحجز مش هيتظبط) - التعديل من "تعديل المدفوع" على كارت الحجز أو تصحيح اليومية، ودفعة جديدة من "تسجيل دفعة"';
   end if;

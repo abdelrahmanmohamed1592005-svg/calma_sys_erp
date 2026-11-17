@@ -49,4 +49,17 @@ test("الدفعة المسجّلة على حجز في اليومية ماتتع
   const row = page.locator("tr[data-linked='true']", { hasText: "603" }).first();
   await expect(row.getByTestId("ledger-linked-note")).toBeVisible();
   await expect(row.locator("input[type='number']").first()).toBeDisabled();
+  // المطوّر: كل الصلاحيات - الصف المربوط مفتوح له في الشاشة والقاعدة
+  await env.seedUser("devo", "dev", "المطوّر");
+  await logout(page);
+  await login(page, "devo");
+  await goTab(page, "اليومية");
+  await expect(page.locator("tr[data-linked='true']")).toHaveCount(0);
+  const devRow = page.locator("tr", { hasText: "Linked Guest" }).first();
+  await expect(devRow.locator("input[type='number']").first()).toBeEnabled();
+  await expect(devRow.getByTestId("ledger-linked-note")).toHaveCount(0);
+  const rec2 = (await env.q("select rows from shift_records"))[0];
+  const devFix = await env.api("devo", "PATCH", `/rest/v1/shift_records?date=eq.${shiftDay()}&shift_key=eq.${myShiftKey()}`, { rows: rec2.rows.map((r) => (r.bookingId === b ? { ...r, collectionDesc: "تعديل المطوّر" } : r)) });
+  expect(devFix.status, JSON.stringify(devFix.body)).toBeLessThan(300);
+  expect((await env.q("select rows from shift_records"))[0].rows.find((r) => r.bookingId === b).collectionDesc).toBe("تعديل المطوّر");
 });

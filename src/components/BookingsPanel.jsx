@@ -226,7 +226,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   function onRoomChange(roomNum) { setForm((f) => ({ ...f, room: Number(roomNum) })); }
 
   const nights = form ? nightsBetween(form.checkin, form.checkout) : 0;
-  const autoTotalRoom = form ? (Number(form.priceNight) || 0) * nights : 0;
+  const autoTotalRoom = form ? Math.round((Number(form.priceNight) || 0) * nights * 100) / 100 : 0;   // لأقرب قرش (سعر ليلة بكسور مايطلّعش 0.002 متبقي)
   // لما مدير الحجوزات يعدّل تواريخ حجز موجود (تمديد/تقصير)، إجمالي الغرفة بيتحرك
   // تلقائيًا بنفس سعر الليلة المتفق عليه - من غير ما يحتاج يفتح قفل الأسعار
   // (القفل لسه موجود على السعر نفسه). null = مفيش إعادة حساب (حجز جديد).
@@ -241,7 +241,8 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   // مدفوع قبل السيستم بيتكتب من الفورم (حجز جديد أو تعديل): في التعديل المدفوع الحالي فيه القديم، فبنحسب الفرق بس
   const priorOld = isExistingBooking ? Number(originalBooking?.paymentDetails?.priorPaid) || 0 : 0;
   const priorNow = form && perms.priorPaid && !form.paymentDetails?.onlinePaid ? Math.max(0, Number(form.prior?.amount) || 0) - priorOld : 0;
-  const balanceDue = form ? Math.max(0, grandTotal - paidBefore - advanceNow - priorNow) : 0;
+  const balanceRaw = form ? Math.round((grandTotal - paidBefore - advanceNow - priorNow) * 100) / 100 : 0;
+  const balanceDue = balanceRaw > 0.004 ? balanceRaw : 0;
   // كل الحجوزات الفعلية المتعارضة مع الغرفة/التواريخ دي، والخطة اللي هتتنفذ
   // لو تأكّد "تسكين مكرر" - بتتحسب لحظيًا عشان الموظف يشوف قبل ما يحفظ إيه اللي
   // هيحصل بالظبط للحجز القديم (أو ليه مرفوض وليه).
@@ -311,7 +312,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     // البيانات وتطلّع رسالة تقنية، ونصوص الحقول الحرة بتتنظّف وتتحدد بطول أقصى.
     const pd = form.paymentDetails || {};
     const priceNightNum = Math.max(0, Number(form.priceNight) || 0);
-    const totalRoomNum = form.totalRoom !== "" ? Number(form.totalRoom) : autoTotalRoom;
+    const totalRoomNum = form.totalRoom !== "" ? Math.round(Number(form.totalRoom) * 100) / 100 : autoTotalRoom;
     if (!Number.isFinite(totalRoomNum) || totalRoomNum < 0) { showToast("إجمالي الغرفة لازم يكون رقم صحيح مش سالب"); return; }
     // الدفعة المقدّمة (حجز جديد بس، وموظف الشيفت بس): ليها وسيلتها وتفاصيلها
     // المخصوصة (فيزا = آخر ٤ أرقام، تحويل = اسم + رقم) وبتتسجّل في اليومية بيهم.
