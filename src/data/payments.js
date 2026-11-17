@@ -6,12 +6,13 @@ import { isMissingFunctionError, OUTDATED_SCHEMA_MESSAGE } from "./schemaCheck";
    انظر قسم ٣٣ في schema.sql. */
 
 // خطأ شبكة (مفيش كود من الـ API): ممكن العملية تكون اتسجّلت فعلًا والرد بس هو اللي ضاع
-const isNetworkError = (e) => !e.code && /fetch|network|timeout|load failed|aborted/i.test(e.message || "");
+import { isNetworkError, reportDbError } from "../lib/errorReport";
 const UNCERTAIN_NOTE = " - مش متأكدين إن العملية اتسجّلت (النت قطع): راجع المدفوع/اليومية قبل ما تعيد التسجيل عشان ما يتكرّرش";
 
 async function rpc(name, args) {
   const { data, error } = await supabase.rpc(name, args);
   if (error) {
+    reportDbError(name, error);
     if (isMissingFunctionError(error)) return { error: OUTDATED_SCHEMA_MESSAGE + " (" + name + ")" };
     if (isNetworkError(error)) return { error: error.message + UNCERTAIN_NOTE, uncertain: true };
     return { error: error.message };

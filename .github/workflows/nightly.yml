@@ -1,0 +1,56 @@
+# فحص الليل: نسخة احتياطية مشفّرة + فحص تطابق الفلوس + أخطاء المستخدمين في آخر ٢٤ ساعة.
+# لو أي حاجة غلط الفحص بيفشل، وGitHub بيبعت إيميل لصاحب الـ repo (ده التنبيه).
+#
+# محتاج سرّين في GitHub (Settings -> Secrets and variables -> Actions):
+#   SUPABASE_DB_URL   : Supabase -> Connect -> Session pooler (الرابط كامل بباسورد قاعدة البيانات)
+#   BACKUP_PASSPHRASE : عبارة سر طويلة لتشفير النسخة (احفظها - من غيرها النسخة ماتتفتحش)
+# من غير SUPABASE_DB_URL الفحص بيقف من غير ما يفشل.
+name: Nightly check
+
+on:
+  schedule:
+    - cron: "0 1 * * *"   # ٣ الفجر بتوقيت القاهرة (١ بتوقيت UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-check
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check secrets
+        id: secrets
+        run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::warning::فحص الليل متوقف: ضيف السر SUPABASE_DB_URL (و BACKUP_PASSPHRASE) في Settings -> Secrets and variables -> Actions"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install PostgreSQL client 17
+        if: steps.secrets.outputs.skip != 'true'
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+      - name: Backup + money reconcile + user errors
+        if: steps.secrets.outputs.skip != 'true'
+        run: OUT_DIR=nightly-out bash scripts/nightly-check.sh
+      - name: Keep the encrypted backup (30 days)
+        if: always() && steps.secrets.outputs.skip != 'true' && env.BACKUP_PASSPHRASE != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: calma-backup-${{ github.run_id }}
+          path: nightly-out/*.gpg
+          retention-days: 30
+          if-no-files-found: warn
