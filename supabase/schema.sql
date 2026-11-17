@@ -4231,7 +4231,42 @@ $$;
 revoke all on function log_client_error(text, text, text, text, text) from public, anon;
 grant execute on function log_client_error(text, text, text, text, text) to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 50 $$;
+-- ======================================================================
+-- ٤٨) الدفعة المسجّلة على حجز في اليومية ماتتعدّلش بالإيد: تعديل مبلغها/عملتها/وسيلتها أو مسحها من الشاشة (تحديث مباشر للجدول)
+--     كان بيغيّر اليومية والخزينة من غير ما الحجز يعرف، فالمدفوع على الحجز يبقى غلط. دلوقتي ده بيتعمل بس من دوال
+--     السيستم (تسجيل دفعة / تصحيح اليومية / تعديل المدفوع)، وهي اللي بتظبط الحجز واليومية مع بعض.
+-- ======================================================================
+create or replace function calma_ledger_linked_sig(p_rows jsonb, p_caf jsonb)
+returns jsonb language sql immutable as $$
+  select coalesce(jsonb_agg(sig order by sig::text), '[]'::jsonb)
+  from (
+    select jsonb_build_array(x ->> 'bookingId', calma_num(x ->> 'collectionAmt'), coalesce(x ->> 'collectionCurrency', ''),
+                             coalesce(x ->> 'collectionMethod', ''), calma_num(x ->> 'fxCovered'), caf) as sig
+    from (select e as x, false as caf from jsonb_array_elements(case when jsonb_typeof(p_rows) = 'array' then p_rows else '[]'::jsonb end) e
+          union all
+          select e, true from jsonb_array_elements(case when jsonb_typeof(p_caf) = 'array' then p_caf else '[]'::jsonb end) e) t
+    where coalesce(x ->> 'bookingId', '') <> ''
+  ) q
+$$;
+revoke all on function calma_ledger_linked_sig(jsonb, jsonb) from public, anon;
+grant execute on function calma_ledger_linked_sig(jsonb, jsonb) to authenticated;   -- القيد بيشتغل بصلاحية المستخدم نفسه
+
+create or replace function shift_records_linked_guard()
+returns trigger language plpgsql as $$
+begin
+  -- دوال السيستم (security definer) بتشتغل بصلاحية صاحبها، فالقيد ده على التعديل المباشر من الشاشة/الـ API بس
+  if current_user not in ('authenticated', 'anon') then return new; end if;
+  if calma_ledger_linked_sig(new.rows, new.cafeteria_rows) is distinct from calma_ledger_linked_sig(old.rows, old.cafeteria_rows) then
+    raise exception 'الدفعة المسجّلة على حجز في اليومية ماتتعدّلش بالإيد (المدفوع على الحجز مش هيتظبط) - التعديل من "تعديل المدفوع" على كارت الحجز أو تصحيح اليومية، ودفعة جديدة من "تسجيل دفعة"';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists shift_records_linked_guard_trg on shift_records;
+create trigger shift_records_linked_guard_trg before update on shift_records
+  for each row execute function shift_records_linked_guard();
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 51 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

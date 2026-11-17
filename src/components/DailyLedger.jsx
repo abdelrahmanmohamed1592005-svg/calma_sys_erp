@@ -34,7 +34,9 @@ function NumField({ value, onChange, ...rest }) {
 // (عشان اليومية ماتبقاش ١٦ صف فاضي) ويتضافوا بالاختيار من القايمة أو "عرض كل الغرف".
 const rowHasData = (r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collectionAmt) || 0) !== 0 || !!r.expenseDesc || !!r.collectionDesc || !!r.notes || !!r.bookingId;
 
-function LedgerTable({ record, rooms, locked, onUpdateRow }) {
+/* lockLinked (يومية الشيفت المفتوح): صف عليه دفعة متسجّلة على حجز (bookingId) مايتعدّلش بالإيد - المبلغ والعملة والوسيلة والبيان
+   متقفولين، لأن تعديلهم هنا مابيوصلش للحجز (المدفوع والمتبقي بيبقوا غلط). التعديل من "تعديل المدفوع" على كارت الحجز أو من تصحيح اليومية. */
+function LedgerTable({ record, rooms, locked, onUpdateRow, lockLinked = false }) {
   const [shown, setShown] = useState(() => new Set());
   const [all, setAll] = useState(false);
   const visible = (r) => all || shown.has(r.room) || rowHasData(r);
@@ -60,26 +62,27 @@ function LedgerTable({ record, rooms, locked, onUpdateRow }) {
       <table className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 680 }}>
         <thead><tr><th className="cx-th" style={{ width: 60 }}>الغرفة</th><th className="cx-th">التحصيل</th><th className="cx-th">تفاصيل الدفع (فيزا / تحويل)</th><th className="cx-th">ملاحظات</th></tr></thead>
         <tbody>
-          {record.rows.map((row, idx) => (!visible(row) ? null : (
-            <tr key={row.room + "-" + idx}>
+          {record.rows.map((row, idx) => { const rl = locked || (lockLinked && !!row.bookingId); return (!visible(row) ? null : (
+            <tr key={row.room + "-" + idx} data-linked={rl && !locked ? "true" : undefined}>
               {/* ممكن يكون لنفس الغرفة أكتر من صف (لو اتحصّل عليها بوسيلتين دفع أو
                   عملتين مختلفتين، أو اتردّ ليها فلوس) - الصف الإضافي بيتعلّم. */}
               <td data-label="الغرفة" style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}><RoomName rooms={rooms} number={row.room} />{record.rows.findIndex((r) => r.room === row.room) !== idx && <div style={{ fontSize: 11.5, fontWeight: 400, color: "var(--muted)" }}>صف إضافي</div>}</td>
               <td data-label="التحصيل">
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <select className="cx-select" disabled={locked} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                  <AutoText className="cx-input" placeholder="بيان التحصيل" disabled={locked} value={row.collectionDesc} onChange={(e) => updateRow(idx, { collectionDesc: e.target.value })} />
+                  <select className="cx-select" disabled={rl} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                  <AutoText className="cx-input" placeholder="بيان التحصيل" disabled={rl} value={row.collectionDesc} onChange={(e) => updateRow(idx, { collectionDesc: e.target.value })} />
                   <div style={{ display: "flex", gap: 3 }}>
-                    <input className="cx-input" type="number" placeholder="المبلغ" disabled={locked} value={row.collectionAmt} onChange={(e) => updateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
-                    <CurrencyPicker value={row.collectionCurrency} disabled={locked} onChange={(v) => updateRow(idx, { collectionCurrency: v })} />
+                    <input className="cx-input" type="number" placeholder="المبلغ" disabled={rl} value={row.collectionAmt} onChange={(e) => updateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
+                    <CurrencyPicker value={row.collectionCurrency} disabled={rl} onChange={(v) => updateRow(idx, { collectionCurrency: v })} />
                   </div>
+                  {rl && !locked && <div data-testid="ledger-linked-note" style={{ fontSize: 11.5, color: "var(--muted)", display: "flex", gap: 4, alignItems: "center" }}><Lock size={10} aria-hidden="true" /> دفعة مسجّلة على حجز - تتعدّل من "تعديل المدفوع" (مدير الشيفت)، ودفعة جديدة من "تسجيل دفعة"</div>}
                   {(Number(row.expenseAmt) || 0) !== 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>مصروف قديم مسجّل على الغرفة: {row.expenseDesc || row.expenseCategory} - {fmt(row.expenseAmt)} {row.expenseCurrency}</div>}
                 </div>
               </td>
-              <td data-label="تفاصيل الدفع"><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={locked} onChange={(d) => updateRow(idx, { paymentDetails: d })} /></td>
+              <td data-label="تفاصيل الدفع"><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={rl} onChange={(d) => updateRow(idx, { paymentDetails: d })} /></td>
               <td data-label="ملاحظات"><AutoText className="cx-input" disabled={locked} value={row.notes} onChange={(e) => updateRow(idx, { notes: e.target.value })} /></td>
             </tr>
-          )))}
+          )); })}
         </tbody>
       </table>
     </div>
@@ -692,7 +695,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
             <LedgerBar sections={LEDGER_SECTIONS} totals={totals} record={record} canClose={!record.closed && perms.closeShift} onClose={closeShift} />
-            <div id="led-rooms" className="cx-anchor"><LedgerTable record={record} rooms={rooms} locked={locked} onUpdateRow={updateRow} /></div>
+            <div id="led-rooms" className="cx-anchor"><LedgerTable record={record} rooms={rooms} locked={locked} lockLinked onUpdateRow={updateRow} /></div>
             <div id="led-cafe" className="cx-anchor">
             <CafeteriaSection record={record} rooms={rooms} bookings={bookings} onUpdateCafeteria={updateCafeteria} locked={locked} readOnly={!perms.editLedger} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={flushNow} reloadRecord={reloadRecord} onLog={onLog} showToast={showToast} />
             </div>

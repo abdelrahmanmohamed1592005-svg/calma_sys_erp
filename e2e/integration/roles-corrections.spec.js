@@ -403,6 +403,23 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   expect(rows.filter((x) => x.level === "خطأ")).toEqual([]);
 });
 
+test("دفعة اتمسح مبلغها من اليومية: بتظهر في 'تعديل المدفوع' عند المطوّر وبترجع للحجز واليومية مع بعض", async ({ page, env }) => {
+  await users(env);
+  const d1 = cairoDate(-1);
+  const b = await env.seedBooking({ room: 612, guest: "Erased Pay", start: -1, nights: 3, price: 1000, paid: 0, currency: "EGP" });
+  await env.seedShift("ahmed", { day: d1, key: "morning", closed: true, handover: { EGP: 0 }, closingCash: { EGP: 0 }, collections: [{ room: 612, amount: "", currency: "EGP", method: "كاش", bookingId: b, desc: "تحصيل حجز جديد - Erased Pay (+3000 EGP)" }] });
+  await page.goto("/");
+  await login(page, "devo");
+  await goTab(page, "الحجوزات");
+  const card = page.locator("div", { has: page.getByTestId("edit-payments-open") }).filter({ hasText: "Erased Pay" }).last();
+  await card.getByTestId("edit-payments-open").click();
+  await page.getByTestId("edit-payment-amount").fill("3000");
+  await page.getByTestId("edit-payment-save").click();
+  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(3000);
+  expect(Number((await rec(env, d1, "morning")).rows.find((x) => x.bookingId === b).collectionAmt)).toBe(3000);
+});
+
 test("المطوّر: زرار إرجاع حجز اتلغى بالغلط، وزرار إلغاء مغادرة مبكرة اتسجّلت بالغلط (بيرجع تاريخ الخروج والإجمالي الأصليين)", async ({ page, env }) => {
   await users(env);
   const c = await env.seedBooking({ room: 605, guest: "Cancelled By Mistake", start: 0, nights: 2, price: 300, currency: "EGP", status: "ملغي" });

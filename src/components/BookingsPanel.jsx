@@ -812,7 +812,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                   )}
                 </>)}
                 {perms.priorPaid && !cancelled && !b.paymentDetails?.onlinePaid && <PriorPaid booking={b} onDone={onRefresh} showToast={showToast} />}
-                {perms.correctLedger && (Number(b.amountPaid) || 0) > 0 && <EditPayments booking={b} scope={perms.correctLedger} onDone={onRefresh} showToast={showToast} onLog={onLog} />}
+                {perms.correctLedger && <EditPayments booking={b} scope={perms.correctLedger} onDone={onRefresh} showToast={showToast} onLog={onLog} />}
                 {perms.devTools && (
                   <details className="cx-more" data-testid="booking-more">
                     <summary className="cx-btn cx-btn-outline" aria-label="خيارات أخرى">⋯ المزيد</summary>
