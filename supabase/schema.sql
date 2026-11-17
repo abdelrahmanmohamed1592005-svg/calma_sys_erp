@@ -4304,7 +4304,72 @@ drop trigger if exists bookings_guests_sync on bookings;
 create trigger bookings_guests_sync after insert or update of pax, room, guest_codes, checkin, status, hotel_id on bookings
   for each row execute function bookings_sync_guests();
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 52 $$;
+-- --------------------------------------------------------------------------
+-- 50) مدفوع قبل السيستم: موظف الشيفت بيكتبه مع الحجز الجديد بس، والتعديل بعد كده لمدير الشيفت والمطوّر
+-- --------------------------------------------------------------------------
+create or replace function set_booking_prior_paid(p_booking uuid, p_amount numeric, p_note text default null, p_expected timestamptz default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare b bookings%rowtype; amt numeric := round(coalesce(p_amount, 0), 2); old_prior numeric; new_paid numeric; pd jsonb;
+        note text := left(regexp_replace(coalesce(p_note, ''), '[[:cntrl:]]', ' ', 'g'), 200);
+begin
+  -- اللي قدام النزيل هو اللي عارف: موظف الشيفت ومدير الشيفت، والمطوّر للتصحيح
+  if not (is_staff() or is_dev()) then raise exception 'تسجيل مدفوع قبل السيستم من صلاحية موظف الشيفت بس'; end if;
+  if amt < 0 then raise exception 'المبلغ لازم يكون صفر أو أكتر'; end if;
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if p_expected is not null and b.updated_at is distinct from p_expected then raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني'; end if;
+  old_prior := calma_num(b.payment_details ->> 'priorPaid');
+  -- تعديل مدفوع قبل السيستم على حجز موجود: مدير الشيفت والمطوّر بس. موظف الشيفت بيكتبه وهو بيعمل الحجز (أول نص ساعة)
+  if is_staff() and not is_shift_manager() and not is_dev()
+     and (old_prior <> 0 or b.created_at < now() - interval '30 minutes') then
+    raise exception 'تعديل المدفوع قبل السيستم على حجز موجود من صلاحية مدير الشيفت - موظف الشيفت بيكتبه وهو بيعمل الحجز بس';
+  end if;
+  new_paid := greatest(0, coalesce(b.amount_paid, 0) - old_prior + amt);
+  if new_paid > booking_hotel_total(b) + 0.005 then
+    raise exception 'المبلغ أكبر من المطلوب على الحجز (المتبقي من غيره %)', trim_scale(greatest(0, booking_hotel_total(b) - (coalesce(b.amount_paid, 0) - old_prior)));
+  end if;
+  pd := coalesce(b.payment_details, '{}'::jsonb) - 'priorPaid' - 'priorPaidNote';
+  if amt > 0 then
+    pd := pd || jsonb_build_object('priorPaid', amt);
+    if btrim(note) <> '' then pd := pd || jsonb_build_object('priorPaidNote', btrim(note)); end if;
+  end if;
+  perform set_config('calma.pay_rpc', '1', true);
+  perform set_config('calma.refund_rpc', '1', true);
+  perform set_config('calma.correct_rpc', '1', true);
+  perform set_config('calma.currency_rpc', '1', true);      -- موظف الشيفت مابيعدّلش بيانات الحجز الأساسية غير من الدوال (العملة نفسها مابتتغيّرش هنا)
+  update bookings set amount_paid = new_paid, payment_details = pd where id = p_booking;
+  perform set_config('calma.currency_rpc', '', true);
+  perform set_config('calma.pay_rpc', '', true);
+  perform set_config('calma.refund_rpc', '', true);
+  perform set_config('calma.correct_rpc', '', true);
+  insert into activity_log(action, hotel_id) values ('مدفوع قبل السيستم على حجز ' || coalesce(b.guest_name, '') || ' (غرفة ' || b.room || '): ' || trim_scale(amt) || ' ' || b.currency
+    || case when btrim(note) <> '' then ' - ' || btrim(note) else '' end, b.hotel_id);
+  return jsonb_build_object('priorPaid', amt, 'amountPaid', new_paid);
+end;
+$$;
+revoke all on function set_booking_prior_paid(uuid, numeric, text, timestamptz) from public, anon;
+grant execute on function set_booking_prior_paid(uuid, numeric, text, timestamptz) to authenticated;
+
+-- المطوّر (كل الصلاحيات): يصحّح مبلغ استهلاك استاف مباشرة (التحصيل نفسه في اليومية بيتصحّح من تصحيح اليومية)
+create or replace function lock_staff_cafeteria_money()
+returns trigger language plpgsql as $$
+begin
+  if auth.uid() is null or coalesce(current_setting('calma.staff_rpc', true), '') = '1' then
+    return new;
+  end if;
+  if TG_OP = 'UPDATE' and is_dev() then return new; end if;
+  if TG_OP = 'INSERT' then
+    raise exception 'استهلاك الاستاف بيتسجّل من خانة كافيتيريا الاستاف في اليومية (مش بإضافة مباشرة)';
+  elsif new.amount is distinct from old.amount
+     or new.paid_amount is distinct from old.paid_amount
+     or new.payments is distinct from old.payments then
+    raise exception 'مبلغ ومدفوع ودفعات كافيتيريا الاستاف بتتغيّر من تسجيل الاستهلاك أو السداد بس';
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 53 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

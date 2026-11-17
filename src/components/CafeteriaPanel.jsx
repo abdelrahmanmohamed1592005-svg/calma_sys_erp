@@ -3,7 +3,8 @@ import { Plus, Check, Coffee } from "lucide-react";
 import { PaymentDetailsInline, SectionHead, RoomName } from "./shared";
 import { COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstandingLines, fmt } from "../domain/money";
 import { roomLabel } from "../domain/constants";
-import { staffOwed } from "../data/staffCafeteria";
+import { staffOwed, updateStaffCafeteriaEntry, deleteStaffCafeteriaEntry } from "../data/staffCafeteria";
+import { editLedgerPaymentRow } from "../data/shifts";
 import { recordStaffCafeteria, settleStaffCafeteria } from "../data/payments";
 import { sanitizeText } from "../domain/security";
 import { guarded } from "../lib/busy";
@@ -14,12 +15,17 @@ const keyOf = (name, username) => (username || String(name || "").trim().toLower
 /* تحصيل الكافيتيريا التلقائي (خدمات نزلاء اتحصّلت + سداد استاف) + خدمات
    النزلاء اللي لسه عليهم فلوس + كافيتيريا الاستاف (مين أخد ومين دفع ومين عليه فلوس). */
 export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, locked, readOnly, profile, profiles, staffEntries, onReload, flushNow, reloadRecord, onLog, showToast }) {
-  const rows = (record.cafeteriaRows || []).filter((r) => (Number(r.collectionAmt) || 0) !== 0);
+  const isDev = profile?.role === "dev";
+  // المطوّر بيعدّل تحصيل الكافيتيريا (نزلاء واستاف) في اليومية المفتوحة، حتى الصفوف اللي مبلغها اتمسح (صفر) عشان ترجع
+  const devRows = isDev && !readOnly;
+  const rows = (record.cafeteriaRows || []).map((r, idx) => ({ ...r, _idx: idx })).filter((r) => devRows ? (Number(r.collectionAmt) || 0) !== 0 || !!r.bookingId || r.kind === "staff" : (Number(r.collectionAmt) || 0) !== 0);
   const guestOutstanding = (bookings || []).filter((b) => b.status !== "ملغي" && cafeteriaOutstandingLines(b).length > 0);
   const entries = staffEntries || [];
   const open = entries.filter((e) => staffOwed(e) > 0);
   const thisShift = entries.filter((e) => e.day === record.date && e.shiftKey === record.shiftKey);
   const canWrite = !readOnly && !locked;
+  // المطوّر بيشوف (ويصحّح) استهلاك الشيفت ده + أي استهلاك لسه عليه فلوس من شيفتات قبل كده
+  const shownEntries = profile?.role === "dev" ? [...thisShift, ...open.filter((e) => !thisShift.some((t) => t.id === e.id))] : thisShift;
 
   // ---- نموذج تسجيل استهلاك
   const staffList = (profiles || []).filter((p) => p.active !== false);
@@ -88,6 +94,46 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
     });
   }
 
+  // ---- المطوّر: تعديل صف تحصيل كافيتيريا (بنفس آلية تصحيح اليومية: المدفوع على الحجز والعهدة بيتظبطوا)
+  const [rowEdit, setRowEdit] = useState(null);   // { idx, amount, method }
+  async function saveRow(r) {
+    return guarded("cafe-row-edit", async () => {
+      const amt = Math.round((Number(rowEdit.amount) || 0) * 100) / 100;
+      if (!Number.isFinite(amt) || amt < 0) { showToast("اكتب مبلغ صحيح (صفر = الدفعة اتشالت)"); return; }
+      await flushNow();
+      const { _idx, ...row } = r;
+      const res = await editLedgerPaymentRow({ date: record.date, shiftKey: record.shiftKey, hotelId: record.hotelId, list: "cafeteriaRows", idx: _idx, row }, { collectionAmt: amt, collectionMethod: rowEdit.method });
+      if (res.error) { showToast(res.error); return; }
+      onLog(`تعديل تحصيل كافيتيريا (${r.kind === "staff" ? "استاف" : "نزيل"} - ${r.who || "—"}): ${fmt(r.collectionAmt)} ← ${fmt(amt)} ${r.collectionCurrency} (${rowEdit.method})`);
+      setRowEdit(null);
+      await reloadRecord();
+      await onReload();
+      showToast("تم تعديل تحصيل الكافيتيريا" + (r.kind === "staff" ? " - لو عايز المديونية على الموظف تتظبط عدّل استهلاكه تحت" : ""));
+    });
+  }
+  // ---- المطوّر: تصحيح/مسح استهلاك استاف
+  const [entryEdit, setEntryEdit] = useState(null);   // { id, description, amount }
+  async function saveEntry(e) {
+    return guarded("staff-cafe-fix", async () => {
+      const amt = Math.round((Number(entryEdit.amount) || 0) * 100) / 100;
+      if (!(amt > 0)) { showToast("المبلغ لازم يكون أكبر من صفر (أو امسح الاستهلاك)"); return; }
+      if (amt < (Number(e.paidAmount) || 0)) { showToast(`المبلغ مايقلّش عن اللي اتدفع (${fmt(e.paidAmount)} ${e.currency})`); return; }
+      const r = await updateStaffCafeteriaEntry(e.id, { description: sanitizeText(entryEdit.description, 300), amount: amt });
+      if (r.error) { showToast(r.error); return; }
+      onLog(`تصحيح كافيتيريا استاف - ${e.consumerName}: ${fmt(e.amount)} ← ${fmt(amt)} ${e.currency}`);
+      setEntryEdit(null); await onReload(); showToast("تم تعديل الاستهلاك");
+    });
+  }
+  async function removeEntry(e) {
+    return guarded("staff-cafe-del", async () => {
+      if ((Number(e.paidAmount) || 0) > 0) { showToast("الاستهلاك ده عليه سداد متسجّل في اليومية - عدّل مبلغ السداد في تحصيل الكافيتيريا الأول"); return; }
+      const r = await deleteStaffCafeteriaEntry(e.id);
+      if (r.error) { showToast(r.error); return; }
+      onLog(`مسح استهلاك كافيتيريا استاف - ${e.consumerName}: ${fmt(e.amount)} ${e.currency}`);
+      setEntryEdit(null); await onReload(); showToast("اتمسح الاستهلاك");
+    });
+  }
+
   const dc = record.cafeteria || {};
   const directHasData = (Number(dc.expenseAmt) || 0) !== 0 || (Number(dc.collectionAmt) || 0) !== 0 || !!dc.expenseDesc || !!dc.collectionDesc || !!dc.notes;
   const hasAnything = directHasData || rows.length > 0 || guestOutstanding.length > 0 || open.length > 0 || thisShift.length > 0 || canWrite;
@@ -111,15 +157,27 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       {rows.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 10 }}>
           <table className="cx-table" data-testid="cafeteria-rows" style={{ fontSize: 13, minWidth: 620 }}>
-            <thead><tr><th className="cx-th">النوع</th><th className="cx-th">الجهة</th><th className="cx-th">الوسيلة</th><th className="cx-th">تفاصيل الدفع</th><th className="cx-th">المبلغ</th></tr></thead>
+            <thead><tr><th className="cx-th">النوع</th><th className="cx-th">الجهة</th><th className="cx-th">الوسيلة</th><th className="cx-th">تفاصيل الدفع</th><th className="cx-th">المبلغ</th>{devRows && <th className="cx-th cx-no-print">تعديل (المطوّر)</th>}</tr></thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={i}>
+                <tr key={i} data-testid="cafeteria-row">
                   <td>{r.kind === "staff" ? "استاف" : `نزيل${r.guestRoom ? " - " + roomLabel(rooms, r.guestRoom) : ""}`}</td>
                   <td>{r.who || "—"}</td>
                   <td>{r.collectionMethod}</td>
                   <td dir="ltr" style={{ textAlign: "right" }}>{describePaymentDetails(r.collectionMethod, r.paymentDetails) || "—"}</td>
                   <td style={{ fontWeight: 700 }}>{fmt(r.collectionAmt)} {r.collectionCurrency}</td>
+                  {devRows && (
+                    <td className="cx-no-print">
+                      {rowEdit?.idx === r._idx ? (
+                        <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          <input className="cx-input" data-testid="cafe-row-amount" type="number" min="0" style={{ width: 90 }} value={rowEdit.amount} onChange={(e) => setRowEdit({ ...rowEdit, amount: e.target.value })} />
+                          <select className="cx-select" style={{ width: 90 }} value={rowEdit.method} onChange={(e) => setRowEdit({ ...rowEdit, method: e.target.value })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                          <button className="cx-btn cx-btn-gold" data-testid="cafe-row-save" style={{ fontSize: 12.5, padding: "3px 8px" }} onClick={() => saveRow(r)}>حفظ</button>
+                          <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5, padding: "3px 8px" }} onClick={() => setRowEdit(null)}>إلغاء</button>
+                        </span>
+                      ) : <button className="cx-btn cx-btn-outline" data-testid="cafe-row-edit" style={{ fontSize: 12.5, padding: "3px 8px" }} onClick={() => setRowEdit({ idx: r._idx, amount: String(Number(r.collectionAmt) || 0), method: r.collectionMethod || "كاش" })}>تعديل</button>}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -155,12 +213,27 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
         </div>
       )}
 
-      {thisShift.length > 0 && (
+      {shownEntries.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 10 }}>
           <table className="cx-table" data-testid="staff-cafe-shift" style={{ fontSize: 13, minWidth: 520 }}>
-            <thead><tr><th className="cx-th">الموظف</th><th className="cx-th">البيان</th><th className="cx-th">المبلغ</th><th className="cx-th">اتدفع</th><th className="cx-th">الباقي عليه</th></tr></thead>
-            <tbody>{thisShift.map((e) => (
-              <tr key={e.id}><td>{e.consumerName}</td><td>{e.description || "—"}</td><td>{fmt(e.amount)} {e.currency}</td><td>{fmt(e.paidAmount)}</td><td style={{ fontWeight: 700, color: staffOwed(e) > 0 ? "var(--rust)" : "var(--sage)" }}>{staffOwed(e) > 0 ? `${fmt(staffOwed(e))} ${e.currency}` : "مسدّد"}</td></tr>
+            <thead><tr><th className="cx-th">الموظف</th><th className="cx-th">البيان</th><th className="cx-th">المبلغ</th><th className="cx-th">اتدفع</th><th className="cx-th">الباقي عليه</th>{isDev && <th className="cx-th cx-no-print">تعديل (المطوّر)</th>}</tr></thead>
+            <tbody>{shownEntries.map((e) => (
+              <tr key={e.id} data-testid="staff-cafe-entry"><td>{e.consumerName}{isDev && e.day !== record.date ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}> ({e.day})</span> : null}</td>
+                <td>{entryEdit?.id === e.id ? <input className="cx-input" data-testid="staff-cafe-fix-desc" style={{ width: 140 }} value={entryEdit.description} onChange={(ev) => setEntryEdit({ ...entryEdit, description: ev.target.value })} /> : (e.description || "—")}</td>
+                <td>{entryEdit?.id === e.id ? <input className="cx-input" data-testid="staff-cafe-fix-amount" type="number" min="0" style={{ width: 90 }} value={entryEdit.amount} onChange={(ev) => setEntryEdit({ ...entryEdit, amount: ev.target.value })} /> : <>{fmt(e.amount)} {e.currency}</>}</td>
+                <td>{fmt(e.paidAmount)}</td><td style={{ fontWeight: 700, color: staffOwed(e) > 0 ? "var(--rust)" : "var(--sage)" }}>{staffOwed(e) > 0 ? `${fmt(staffOwed(e))} ${e.currency}` : "مسدّد"}</td>
+                {isDev && (
+                  <td className="cx-no-print">
+                    {entryEdit?.id === e.id ? (
+                      <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        <button className="cx-btn cx-btn-gold" data-testid="staff-cafe-fix-save" style={{ fontSize: 12.5, padding: "3px 8px" }} onClick={() => saveEntry(e)}>حفظ</button>
+                        {!(Number(e.paidAmount) > 0) && <button className="cx-btn cx-btn-outline" data-testid="staff-cafe-fix-delete" style={{ fontSize: 12.5, padding: "3px 8px", color: "var(--rust)" }} onClick={() => removeEntry(e)}>مسح</button>}
+                        <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5, padding: "3px 8px" }} onClick={() => setEntryEdit(null)}>إلغاء</button>
+                      </span>
+                    ) : <button className="cx-btn cx-btn-outline" data-testid="staff-cafe-fix" style={{ fontSize: 12.5, padding: "3px 8px" }} onClick={() => setEntryEdit({ id: e.id, description: e.description || "", amount: String(e.amount) })}>تعديل</button>}
+                  </td>
+                )}
+              </tr>
             ))}</tbody>
           </table>
         </div>

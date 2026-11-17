@@ -202,7 +202,9 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   // الخانات الرقمية اللي قيمتها صفر بتتعرض فاضية (مش "0" لازم يتمسح بالإيد قبل الكتابة)
   const blankZeros = (o, keys) => { const out = { ...o }; keys.forEach((k) => { if ((Number(out[k]) || 0) === 0) out[k] = ""; }); return out; };
   function formFromBooking(b) { return { ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: blankZeros(b.extras || {}, ["laundry", "cafeteria", "tours", "pickup"]), earlyCheckin: blankZeros(b.earlyCheckin || { applied: false, fee: "", note: "" }, ["fee"]), paymentDetails: b.paymentDetails || emptyPaymentDetails(), payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } }; }
-  function startEdit(b) { const f = { ...formFromBooking(b), prior: { amount: Number(b.paymentDetails?.priorPaid) ? String(b.paymentDetails.priorPaid) : "", note: b.paymentDetails?.priorPaidNote || "" } }; formBaseRef.current = f; setForm(f); }
+  // فورم التعديل = الحجز + خانة "مدفوع قبل السيستم" بقيمتها الحالية
+  const formForEdit = (b) => ({ ...formFromBooking(b), prior: { amount: Number(b.paymentDetails?.priorPaid) ? String(b.paymentDetails.priorPaid) : "", note: b.paymentDetails?.priorPaidNote || "" } });
+  function startEdit(b) { const f = formForEdit(b); formBaseRef.current = f; setForm(f); }
 
   const isExistingBooking = form ? bookings.some((b) => b.id === form.id) : false;
   const originalBooking = form && isExistingBooking ? bookings.find((b) => b.id === form.id) : null;
@@ -240,7 +242,9 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   const advanceNow = form && !isExistingBooking ? Math.max(0, Number(form.payNow?.amount) || 0) + (form.payMore || []).reduce((t, l) => t + extraLineCovered(l), 0) : 0;
   // مدفوع قبل السيستم بيتكتب من الفورم (حجز جديد أو تعديل): في التعديل المدفوع الحالي فيه القديم، فبنحسب الفرق بس
   const priorOld = isExistingBooking ? Number(originalBooking?.paymentDetails?.priorPaid) || 0 : 0;
-  const priorNow = form && perms.priorPaid && !form.paymentDetails?.onlinePaid ? Math.max(0, Number(form.prior?.amount) || 0) - priorOld : 0;
+  // مدفوع قبل السيستم: موظف الشيفت بيكتبه مع الحجز الجديد، والتعديل على حجز موجود لمدير الشيفت والمطوّر
+  const canPrior = isExistingBooking ? !!perms.editPriorPaid : !!perms.priorPaid;
+  const priorNow = form && canPrior && !form.paymentDetails?.onlinePaid ? Math.max(0, Number(form.prior?.amount) || 0) - priorOld : 0;
   const balanceRaw = form ? Math.round((grandTotal - paidBefore - advanceNow - priorNow) * 100) / 100 : 0;
   const balanceDue = balanceRaw > 0.004 ? balanceRaw : 0;
   // كل الحجوزات الفعلية المتعارضة مع الغرفة/التواريخ دي، والخطة اللي هتتنفذ
@@ -270,6 +274,25 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     return allOk;
   }
 
+  // دمج ثلاثي: آخر نسخة من الحجز + الخانات اللي انت غيّرتها بنفسك (مقارنة بالنسخة اللي فتحت عليها)
+  function mergeWithFresh(f) {
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const fresh = formForEdit(originalBooking), base = formBaseRef.current || {}, merged = { ...fresh };
+    Object.keys(f).forEach((k) => {
+      if (k === "updatedAt" || k === "amountPaid" || same(f[k], base[k])) return;
+      if (["extras", "earlyCheckin", "paymentDetails", "prior"].includes(k) && f[k] && base[k] && typeof f[k] === "object") {
+        merged[k] = { ...fresh[k] };
+        Object.keys(f[k]).forEach((kk) => { if (!same(f[k][kk], base[k][kk])) merged[k][kk] = f[k][kk]; });
+      } else merged[k] = f[k];
+    });
+    formBaseRef.current = fresh;
+    return merged;
+  }
+  // تعديل المدفوع من جوه الفورم: الحجز بيتحدّث، فالفورم بياخد آخر نسخة لوحده (من غير ما يضيّع تعديلاتك ولا يطلب حفظ تاني)
+  const payEditedRef = useRef(false);
+  useEffect(() => {
+    if (payEditedRef.current && form && originalBooking?.updatedAt && form.updatedAt !== originalBooking.updatedAt) { payEditedRef.current = false; setForm(mergeWithFresh(form)); }
+  }, [originalBooking?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
   async function saveBooking() { return guarded("save-booking", saveBookingInner); }
   async function saveBookingInner() {
     if (perms.roomStatusRestricted && offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم المدير العام أو مدير الحجوزات يفتحوه تاني عشان تقدر تضيف أو تعدّل حجز" : "مش شيفتك دلوقتي - الحجوزات بتتضاف/تتعدل وقت شيفتك اللي حاجزه بس"); return; }
@@ -280,17 +303,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     if (isExistingBooking && originalBooking && form.updatedAt && originalBooking.updatedAt && form.updatedAt !== originalBooking.updatedAt) {
       // دمج ثلاثي: الحجز اتحدّث من مكان تاني (تمديد/تحصيل/رسوم)، فنحمّل آخر نسخة كاملة ونفضّل بس على الخانات اللي انت غيّرتها
       // بنفسك (مقارنة بالنسخة اللي فتحت عليها) - الحفظة الجاية ما بترجّعش تغيير حد تاني ولا بتضيّع تعديلك.
-      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-      const fresh = formFromBooking(originalBooking), base = formBaseRef.current || {}, merged = { ...fresh };
-      Object.keys(form).forEach((k) => {
-        if (k === "updatedAt" || k === "amountPaid" || same(form[k], base[k])) return;
-        if (["extras", "earlyCheckin", "paymentDetails"].includes(k) && form[k] && base[k] && typeof form[k] === "object") {
-          merged[k] = { ...fresh[k] };
-          Object.keys(form[k]).forEach((kk) => { if (!same(form[k][kk], base[k][kk])) merged[k][kk] = form[k][kk]; });
-        } else merged[k] = form[k];
-      });
-      formBaseRef.current = fresh;
-      setForm(merged);
+      setForm(mergeWithFresh(form));
       showToast("الحجز ده اتحدّث من مكان تاني وانت بتعدّل فيه - حمّلنا آخر نسخة وحافظنا على تعديلاتك، راجع القيم واضغط حفظ تاني");
       return;
     }
@@ -348,9 +361,9 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       extras: clampedExtras, earlyCheckin: { ...clampedEarlyCheckin, note: sanitizeText(clampedEarlyCheckin.note, 300) }, paymentMethod: payMethod, paymentDetails: cleanPaymentDetails, needsRoomReview: false, approvalStatus: "approved",
     };
     delete cleaned.payNow; delete cleaned.payMore; delete cleaned.prior;
-    const prior = perms.priorPaid && !online ? Math.round((Number(form.prior?.amount) || 0) * 100) / 100 : 0;
+    const prior = canPrior && !online ? Math.round((Number(form.prior?.amount) || 0) * 100) / 100 : 0;
     const priorNote = sanitizeText(form.prior?.note, 200);
-    const priorChanged = isExistingBooking ? perms.priorPaid && !online && (prior !== priorOld || priorNote !== (originalBooking?.paymentDetails?.priorPaidNote || "")) : prior > 0;
+    const priorChanged = isExistingBooking ? canPrior && !online && (prior !== priorOld || priorNote !== (originalBooking?.paymentDetails?.priorPaidNote || "")) : prior > 0;
     if (!Number.isFinite(prior) || prior < 0) { showToast("المدفوع قبل السيستم لازم يكون رقم صحيح مش سالب"); return; }
     const visaFee = advance > 0 && payNow.method === "فيزا" ? Math.round((Number(payNow.fee) || 0) * 100) / 100 : 0;
     if (!Number.isFinite(visaFee) || visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
@@ -626,6 +639,11 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                 {isExistingBooking && <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المدفوع حتى الآن</label><div style={{ fontWeight: 800, fontSize: 15, padding: "6px 0" }}>{fmt(paidBefore)} {form.currency}</div></div>}
                 <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المتبقي على النزيل</label><div data-testid="balance-due" style={{ fontWeight: 800, fontSize: 15, padding: "6px 0", color: balanceDue > 0 ? "var(--rust)" : "var(--sage)" }}>{fmt(balanceDue)} {form.currency}</div></div>
               </div>
+              {isExistingBooking && perms.correctLedger && originalBooking && (
+                <div data-testid="form-edit-payments" style={{ marginTop: 8 }}>
+                  <EditPayments booking={originalBooking} scope={perms.correctLedger} onDone={async () => { payEditedRef.current = true; if (onRefresh) await onRefresh(); }} showToast={showToast} onLog={onLog} />
+                </div>
+              )}
               {!isExistingBooking && !collectionLocked && (
                 <div data-testid="advance-payment" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>المدفوع حتى الآن (اختياري) - بيتسجّل في اليومية بوسيلته وتفاصيله</div>
@@ -652,7 +670,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                   <button type="button" className="cx-btn cx-btn-outline" data-testid="advance-add-line" style={{ marginTop: 8, fontSize: 13 }} onClick={() => setForm({ ...form, payMore: [...(form.payMore || []), { amount: "", currency: form.currency, rate: "", method: "كاش", details: emptyPaymentDetails() }] })}><Plus size={13} /> دفعة تانية بوسيلة أو عملة مختلفة</button>
                 </div>
               )}
-              {perms.priorPaid && !form.paymentDetails?.onlinePaid && (
+              {canPrior && !form.paymentDetails?.onlinePaid && (
                 <div data-testid="new-prior-paid" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>مدفوع قبل السيستم (اختياري) - بيتكتب على الحجز ومش بيدخل اليومية ولا الخزينة</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
@@ -788,7 +806,6 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                     <span data-testid="cancel-booking"><TwoStepButton label="إلغاء الحجز" confirmLabel={`تأكيد الإلغاء؟ ${(Number(b.amountPaid) || 0) > 0 ? `(عليه ${fmt(b.amountPaid)} ${b.currency} متحصّل - بتفضل في الفندق، مفيش رد)` : "(مفيش فلوس متحصّلة)"}`} icon={<Ban size={13} />} onConfirm={() => cancelBooking(b)} /></span>
                   )}
                 </>)}
-                {perms.correctLedger && <EditPayments booking={b} scope={perms.correctLedger} onDone={onRefresh} showToast={showToast} onLog={onLog} />}
                 {perms.devTools && (
                   <details className="cx-more" data-testid="booking-more">
                     <summary className="cx-btn cx-btn-outline" aria-label="خيارات أخرى">⋯ المزيد</summary>
