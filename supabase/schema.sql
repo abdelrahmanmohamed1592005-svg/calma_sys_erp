@@ -4403,7 +4403,21 @@ drop trigger if exists bookings_zzz_no_overpay on bookings;
 create trigger bookings_zzz_no_overpay before insert or update on bookings
   for each row execute function bookings_no_overpay();
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 54 $$;
+-- --------------------------------------------------------------------------
+-- 52) مفيش قفل الساعة ١٢ بالليل: "يوم الشيفت" بيتغيّر الساعة ٨ الصبح (زي الشاشة)، مش نص الليل.
+--     مدير الشيفت بيصحّح يوميات يوم الشيفت الحالي واللي قبله - بعد نص الليل امبارح لسه "النهارده".
+-- --------------------------------------------------------------------------
+create or replace function calma_shift_day()
+returns date language sql stable as $$
+  select ((now() at time zone 'Africa/Cairo') - interval '8 hours')::date;
+$$;
+grant execute on function calma_shift_day() to authenticated;
+create or replace function calma_can_correct_shift(p_date date)
+returns boolean language sql security definer stable set search_path = public as $$
+  select is_dev() or (is_shift_manager() and p_date >= least(hotel_today(), calma_shift_day()) - 1);
+$$;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 55 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

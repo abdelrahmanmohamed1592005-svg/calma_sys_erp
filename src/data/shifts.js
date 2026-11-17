@@ -290,7 +290,8 @@ export async function resolveMyShift(username, now = new Date()) {
   const base = shiftDayNow(now);
   // اختيار الموظف ممكن يكون في أي فندق (شيفت واحد في اليوم): بندوّر في كل الفنادق ونرجّع فندقه
   const mine = await getMyClaims(base, username);
-  const hit = mine.find((c) => isShiftActiveNow(c.shiftKey, undefined, now));
+  // شيفت الموظف النهارده (يوم الشيفت): وقته الحالي الأول، وإلا أي شيفت متاخد في نفس اليوم (مفيش قفل بالساعة)
+  const hit = mine.find((c) => isShiftActiveNow(c.shiftKey, undefined, now)) || mine.find((c) => !c.helper) || mine[0];
   if (hit) return { date: base, key: hit.shiftKey, hotelId: hit.hotelId, claims: await getClaimsForDate(base, hit.hotelId) };
   const h = now.getHours();
   if (h >= 8 && h < 10) {

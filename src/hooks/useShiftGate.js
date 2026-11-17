@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { isShiftActiveNow } from "../domain/dates";
 import { getShiftRecord, resolveMyShift } from "../data/shifts";
 import { getActiveHotelId } from "../data/hotels";
 
@@ -33,7 +32,7 @@ export function useShiftGate(profile, perms, dataVersion) {
 
   // الشيفت لازم يفضل "نشط" لحظيًا (مش بس وقت آخر تحميل): نعيد التحقق من الوقت هنا.
   // شيفت الموظف ماينفعش يتحسب "نشط" وهو فاتح فندق تاني غير فندق شيفته
-  const myActiveShiftKey = (perms.roomStatusRestricted && state.claims && profile && state.key && state.hotelId === getActiveHotelId() && isShiftActiveNow(state.key)) ? state.key : null;
+  const myActiveShiftKey = (perms.roomStatusRestricted && state.claims && profile && state.key && state.hotelId === getActiveHotelId()) ? state.key : null;   // مفيش قفل بالساعة: شيفتك شغّال لحد ما يتقفل
   const myActiveShiftDate = myActiveShiftKey ? state.date : null;
   const isMyShiftNow = !!myActiveShiftKey;
   const shiftClosed = !!state.record?.closed;
