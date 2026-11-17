@@ -134,7 +134,7 @@ export function LogoutReportScreen({ user, actions, onExportAndLogout, onCancel 
         </div>
 
         <div className="cx-no-print" style={{ textAlign: "center", marginBottom: 12 }}><Logo /></div>
-        <div className="cx-no-print" style={{ fontWeight: 800, fontSize: 16, marginBottom: 6, textAlign: "center" }}>لازم تطبع تقرير تعديلاتك قبل الخروج</div>
+        <div className="cx-no-print" style={{ fontWeight: 800, fontSize: 16, marginBottom: 6, textAlign: "center" }}>تقرير تعديلاتك النهارده (الطباعة اختيارية)</div>
         <div className="cx-no-print" style={{ fontSize: 13.5, color: "var(--muted)", marginBottom: 14, textAlign: "center" }}>عملت {actions.length} تعديل/إجراء النهارده ({arabicWeekday(date)} · <bdi dir="ltr" className="cx-rn">{date}</bdi>) — دوس "طباعة وتسجيل الخروج" عشان تاخد ورقة بكل حاجة عملتها.</div>
         <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--hair)", borderRadius: 8, marginBottom: 14 }}>
           {actions.map((a) => (
@@ -144,6 +144,7 @@ export function LogoutReportScreen({ user, actions, onExportAndLogout, onCancel 
           ))}
         </div>
         <button className="cx-btn cx-btn-gold cx-no-print" style={{ width: "100%", justifyContent: "center" }} onClick={handlePrintAndLogout}><Printer size={14} /> طباعة التقرير وتسجيل الخروج</button>
+        <button className="cx-btn cx-btn-outline cx-no-print" data-testid="logout-no-print" style={{ width: "100%", justifyContent: "center", marginTop: 8 }} onClick={onExportAndLogout}>تسجيل خروج من غير طباعة</button>
         {onCancel && <button className="cx-btn cx-btn-outline cx-no-print" style={{ width: "100%", justifyContent: "center", marginTop: 8 }} onClick={onCancel}>رجوع للنظام (من غير تسجيل خروج)</button>}
 
         <div className="cx-print-only cx-print-footer">

@@ -58,7 +58,9 @@ test.describe("التحقق من المدخلات", () => {
     await expect(field(page, "تاريخ الخروج")).toHaveValue(cairoDate(6));
     await field(page, "تاريخ الخروج").fill(cairoDate(8));
     await priceInput(page).fill("70");
-    expect(digits(await page.locator(".cx-card[data-calma-editing]").innerText())).toContain("الإجماليالكلي(غرفة+رسوم)210USD");
+    expect(digits(await page.locator(".cx-card[data-calma-editing]").innerText())).toContain("الإجماليالكلي(غرفة+رسوم)210EGP");
+    // الحجز الجديد بيبدأ بالجنيه المصري (العملة الافتراضية)
+    await expect(page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//select")).toHaveValue("EGP");
   });
 
   test("أرقام وحقول حرة: العدد بيتصحّح، والنصوص بتتنضّف وتتقصّ بطول أقصى", async ({ page, env }) => {
@@ -102,13 +104,13 @@ test.describe("الرسوم وطرق الدفع", () => {
     await page.getByRole("checkbox", { name: /دخول مبكر قبل معاد الحجز الأصلي/ }).check();
     await field(page, "رسم الدخول المبكر").fill("30");
     await field(page, "ملاحظة الدخول المبكر").fill("وصل الفجر");
-    expect(digits(await form.innerText())).toContain("الإجماليالكلي(غرفة+رسوم)230USD");
+    expect(digits(await form.innerText())).toContain("الإجماليالكلي(غرفة+رسوم)230EGP");
     await save(page);
     await expect(toast(page)).toContainText("تم الحفظ");
     expect(await bk(env, "Early Bird")).toMatchObject({ total_room: 200, early_checkin: { applied: true, fee: 30, note: "وصل الفجر" } });
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 604);
-    expect(digits(await roomCard(page).innerText())).toMatch(/المتبقي230USD/);
+    expect(digits(await roomCard(page).innerText())).toMatch(/المتبقي230EGP/);
     await expect(roomCard(page)).toContainText("ملاحظة الدخول المبكر: وصل الفجر");
     await payOnBoard(page);
     await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
@@ -130,7 +132,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     await expect(page.locator("xpath=//label[contains(.,'طريقة الدفع')]")).toHaveCount(0);       // وسيلة الدفع اتشالت
     await expect(page.getByText(/عمولة/)).toHaveCount(0);                                           // ولا فيه عمولة
     await field(page, "رقم تأكيد الحجز على المنصة / ملاحظة (اختياري)").fill("BK-777");
-    expect(digits(await form.innerText())).toContain("إجماليالحجزالأونلاين200USD");
+    expect(digits(await form.innerText())).toContain("إجماليالحجزالأونلاين200EGP");
     await save(page);
     await expect(toast(page)).toContainText("تم الحفظ");
     const b = await bk(env, "Booking Guest");
@@ -147,7 +149,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     await page.locator('input[type="date"]').first().fill(cairoDate(0));
     await expect(page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last()).toContainText("BK-777");
     const online = digits(await page.locator(".cx-card", { hasText: "الحجوزات الأونلاين" }).last().innerText());
-    expect(online).toContain("إجماليالحجوزاتالأونلاين200$");
+    expect(online).toContain("إجماليالحجوزاتالأونلاين200ج");
     expect(online).not.toContain("العمولة");
     expect(online).toContain("BK-777");
   });
@@ -166,7 +168,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     await expect(page.getByPlaceholder("رقم العملية / ملاحظة")).toHaveCount(0);
     await page.getByTestId("advance-last4").fill("4242");
     await page.getByTestId("advance-amount").fill("120");
-    expect(digits(await form.innerText())).toContain("المتبقيعلىالنزيل80USD");
+    expect(digits(await form.innerText())).toContain("المتبقيعلىالنزيل80EGP");
     await save(page);
     await expect(toast(page)).toContainText("تم الحفظ");
     const b = await bk(env, "Visa Guest");
@@ -175,7 +177,7 @@ test.describe("الرسوم وطرق الدفع", () => {
     const [rec] = await env.q("select rows, booking_collections from shift_records");
     const row = rec.rows.find((r) => r.room === 606);
     // المدفوع بالفيزا راح لصف فيزا بآخر 4 أرقام - مش كاش
-    expect(row).toMatchObject({ collectionAmt: 120, collectionMethod: "فيزا", collectionCurrency: "USD" });
+    expect(row).toMatchObject({ collectionAmt: 120, collectionMethod: "فيزا", collectionCurrency: "EGP" });
     expect(row.paymentDetails).toMatchObject({ senderNumber: "4242" });
     expect(rec.rows.filter((r) => r.collectionMethod === "كاش" && Number(r.collectionAmt) !== 0)).toHaveLength(0);
     expect(rec.booking_collections).toHaveLength(1);

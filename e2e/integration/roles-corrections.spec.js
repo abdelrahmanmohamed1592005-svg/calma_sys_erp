@@ -367,6 +367,42 @@ test("المطوّر بكل الصلاحيات: بيشتغل على الشيفت
   await expect.poll(async () => (await env.q("select closed from shift_records"))[0].closed).toBe(true);
 });
 
+test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرفة والدخول والسعر) والمدفوع: الدفعة بتتعدّل في اليومية والمدفوع والخزينة بيتظبطوا", async ({ page, env }) => {
+  await users(env);
+  const day = shiftDay(), key = myShiftKey();
+  const b = await env.seedBooking({ room: 611, guest: "Full Edit", start: 0, nights: 2, price: 500, paid: 500, currency: "EGP", anchor: "shift" });
+  await env.seedShift("mona", { day, key, handover: { EGP: 0 }, collections: [{ room: 611, amount: 500, currency: "EGP", bookingId: b, method: "كاش" }] });
+  // الموظف العادي لسه مايقدرش يغيّر الغرفة أو الدخول من غير "نقل النزيل"
+  const denied = await env.api("ahmed", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { checkin: cairoDate(-1) });
+  expect(denied.status).toBeGreaterThanOrEqual(400);
+  await page.goto("/");
+  await login(page, "mona");
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("edit-price").first().click();
+  const form = page.locator(".cx-card[data-calma-editing]");
+  await expect(form).toBeInViewport();                                     // الفورم بيظهر قدامك لوحده
+  await form.locator("select.cx-select").first().selectOption("612");      // الغرفة مش مقفولة على مدير الشيفت
+  await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//input[@type='number']").fill("450");
+  await form.getByRole("button", { name: /حفظ الحجز/ }).click();
+  await expect(toast(page)).toContainText("تم الحفظ");
+  const row = (await env.q("select room, price_night::float, total_room::float from bookings where id = $1", [b]))[0];
+  expect(row).toEqual({ room: 612, price_night: 450, total_room: 900 });
+  // تعديل المدفوع: الدفعة 500 كاش بقت 400 فيزا
+  const card = page.locator("div", { has: page.getByTestId("edit-payments-open") }).filter({ hasText: "Full Edit" }).last();
+  await card.getByTestId("edit-payments-open").click();
+  await page.getByTestId("edit-payment-amount").fill("400");
+  await page.getByTestId("edit-payment-method").selectOption("فيزا");
+  await page.getByTestId("edit-payment-last4").fill("5555");
+  await page.getByTestId("edit-payment-save").click();
+  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(400);
+  const r = (await rec(env, day, key)).rows.find((x) => x.bookingId === b);
+  expect(r).toMatchObject({ collectionAmt: 400, collectionMethod: "فيزا" });
+  const res = await env.pool.query(readFileSync(new URL("../../supabase/ops/reconcile.sql", import.meta.url), "utf8"));
+  const rows = (Array.isArray(res) ? res : [res]).flatMap((x) => x.rows || []);
+  expect(rows.filter((x) => x.level === "خطأ")).toEqual([]);
+});
+
 test("المطوّر: زرار إرجاع حجز اتلغى بالغلط، وزرار إلغاء مغادرة مبكرة اتسجّلت بالغلط (بيرجع تاريخ الخروج والإجمالي الأصليين)", async ({ page, env }) => {
   await users(env);
   const c = await env.seedBooking({ room: 605, guest: "Cancelled By Mistake", start: 0, nights: 2, price: 300, currency: "EGP", status: "ملغي" });
