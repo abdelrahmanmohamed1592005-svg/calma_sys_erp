@@ -82,34 +82,6 @@ function QuickPay({ booking, onDone, showToast }) {
   );
 }
 
-/* مدفوع قبل استلام السيستم: نزيل دفع (كله أو جزء) قبل ما السيستم يشتغل، أو في يوم تاني برّه السيستم.
-   المبلغ بيتكتب على الحجز وبيتحسب في المدفوع والمتبقي، لكن **مابيدخلش يومية ولا خزينة أي شيفت**. */
-function PriorPaid({ booking, onDone, showToast }) {
-  const current = Number(booking.paymentDetails?.priorPaid) || 0;
-  const [open, setOpen] = useState(false);
-  const [val, setVal] = useState("");
-  const [note, setNote] = useState("");
-  const save = () => guarded("booking-priorPaid", async () => {
-    const amt = Number(val || 0);
-    if (!Number.isFinite(amt) || amt < 0) { showToast("اكتب مبلغ صحيح (صفر أو أكتر)"); return; }
-    const res = await setBookingPriorPaid({ bookingId: booking.id, amount: amt, note, expectedUpdatedAt: booking.updatedAt });
-    if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
-    setOpen(false);
-    showToast(amt > 0 ? `تم تسجيل ${fmt(amt)} ${booking.currency} مدفوع قبل السيستم على ${booking.guestName} (من غير ما يدخل الخزينة)` : "اتشال المدفوع قبل السيستم من الحجز");
-    if (onDone) await onDone();
-  });
-  if (!open) return <button className="cx-btn cx-btn-outline" data-testid="prior-paid-open" style={{ fontSize: 12.5 }} onClick={() => { setVal(current ? String(current) : ""); setNote(booking.paymentDetails?.priorPaidNote || ""); setOpen(true); }}>مدفوع قبل السيستم{current ? <>: <bdi dir="ltr">{fmt(current)} {booking.currency}</bdi></> : ""}</button>;
-  return (
-    <div data-testid="prior-paid" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", background: "var(--paper2)", borderRadius: 8, padding: 8 }}>
-      <span style={{ fontSize: 12.5, color: "var(--muted)" }}>مدفوع قبل السيستم ({booking.currency}) - مش هيدخل الخزينة:</span>
-      <input className="cx-input" data-testid="prior-paid-amount" type="number" min="0" placeholder="المبلغ" style={{ width: 110 }} value={val} onChange={(e) => setVal(e.target.value)} />
-      <AutoText className="cx-input" data-testid="prior-paid-note" placeholder="ملاحظة (اتدفع إمتى / إزاي)" style={{ width: 200 }} value={note} onChange={(e) => setNote(e.target.value)} />
-      <button className="cx-btn cx-btn-gold" data-testid="prior-paid-save" style={{ fontSize: 12.5 }} onClick={save}>حفظ</button>
-      <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5 }} onClick={() => setOpen(false)}>إلغاء</button>
-    </div>
-  );
-}
-
 /* تعديل المدفوع (مدير الشيفت: يوميات النهارده وامبارح - المطوّر: أي يوم): كل دفعة متسجّلة على الحجز في اليومية
    بتتعدّل في مكانها (المبلغ/الوسيلة/التفاصيل)، فالمدفوع على الحجز والخزينة والعهدة والتقارير بيتحدّثوا مع بعض.
    صفر = الدفعة اتشالت. */
@@ -230,7 +202,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   // الخانات الرقمية اللي قيمتها صفر بتتعرض فاضية (مش "0" لازم يتمسح بالإيد قبل الكتابة)
   const blankZeros = (o, keys) => { const out = { ...o }; keys.forEach((k) => { if ((Number(out[k]) || 0) === 0) out[k] = ""; }); return out; };
   function formFromBooking(b) { return { ...b, guestCodes: normalizeGuestCodes(b.guestCodes, b.pax), extras: blankZeros(b.extras || {}, ["laundry", "cafeteria", "tours", "pickup"]), earlyCheckin: blankZeros(b.earlyCheckin || { applied: false, fee: "", note: "" }, ["fee"]), paymentDetails: b.paymentDetails || emptyPaymentDetails(), payNow: { amount: "", method: "كاش", details: emptyPaymentDetails() } }; }
-  function startEdit(b) { const f = formFromBooking(b); formBaseRef.current = f; setForm(f); }
+  function startEdit(b) { const f = { ...formFromBooking(b), prior: { amount: Number(b.paymentDetails?.priorPaid) ? String(b.paymentDetails.priorPaid) : "", note: b.paymentDetails?.priorPaidNote || "" } }; formBaseRef.current = f; setForm(f); }
 
   const isExistingBooking = form ? bookings.some((b) => b.id === form.id) : false;
   const originalBooking = form && isExistingBooking ? bookings.find((b) => b.id === form.id) : null;
@@ -266,7 +238,9 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   const paidBefore = isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : 0;
   const extraLineCovered = (l) => { const amt = Number(l.amount) || 0; if (amt <= 0) return 0; if (!form || l.currency === form.currency) return amt; const r = Number(l.rate); return r > 0 ? Math.round((amt / r) * 100) / 100 : 0; };
   const advanceNow = form && !isExistingBooking ? Math.max(0, Number(form.payNow?.amount) || 0) + (form.payMore || []).reduce((t, l) => t + extraLineCovered(l), 0) : 0;
-  const priorNow = form && !isExistingBooking && perms.priorPaid ? Math.max(0, Number(form.prior?.amount) || 0) : 0;
+  // مدفوع قبل السيستم بيتكتب من الفورم (حجز جديد أو تعديل): في التعديل المدفوع الحالي فيه القديم، فبنحسب الفرق بس
+  const priorOld = isExistingBooking ? Number(originalBooking?.paymentDetails?.priorPaid) || 0 : 0;
+  const priorNow = form && perms.priorPaid && !form.paymentDetails?.onlinePaid ? Math.max(0, Number(form.prior?.amount) || 0) - priorOld : 0;
   const balanceDue = form ? Math.max(0, grandTotal - paidBefore - advanceNow - priorNow) : 0;
   // كل الحجوزات الفعلية المتعارضة مع الغرفة/التواريخ دي، والخطة اللي هتتنفذ
   // لو تأكّد "تسكين مكرر" - بتتحسب لحظيًا عشان الموظف يشوف قبل ما يحفظ إيه اللي
@@ -373,7 +347,9 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       extras: clampedExtras, earlyCheckin: { ...clampedEarlyCheckin, note: sanitizeText(clampedEarlyCheckin.note, 300) }, paymentMethod: payMethod, paymentDetails: cleanPaymentDetails, needsRoomReview: false, approvalStatus: "approved",
     };
     delete cleaned.payNow; delete cleaned.payMore; delete cleaned.prior;
-    const prior = !isExistingBooking && perms.priorPaid ? Math.round((Number(form.prior?.amount) || 0) * 100) / 100 : 0;
+    const prior = perms.priorPaid && !online ? Math.round((Number(form.prior?.amount) || 0) * 100) / 100 : 0;
+    const priorNote = sanitizeText(form.prior?.note, 200);
+    const priorChanged = isExistingBooking ? perms.priorPaid && !online && (prior !== priorOld || priorNote !== (originalBooking?.paymentDetails?.priorPaidNote || "")) : prior > 0;
     if (!Number.isFinite(prior) || prior < 0) { showToast("المدفوع قبل السيستم لازم يكون رقم صحيح مش سالب"); return; }
     const visaFee = advance > 0 && payNow.method === "فيزا" ? Math.round((Number(payNow.fee) || 0) * 100) / 100 : 0;
     if (!Number.isFinite(visaFee) || visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
@@ -390,7 +366,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: lockedRepricedTotal, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin?.applied ? originalBooking.earlyCheckin : cleaned.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails };
     }
     // الدفعة المقدّمة ماتزيدش عن اللي الفندق مطلوب يحصّله
-    if ((prior + advance + moreLines.reduce((t, l) => t + extraLineCovered(l), 0)) > bookingHotelTotal(cleaned) + 0.01) { showToast(`المدفوع (${fmt(prior + advance + moreLines.reduce((t, l) => t + extraLineCovered(l), 0))}) أكبر من الإجمالي (${fmt(bookingHotelTotal(cleaned))} ${cleaned.currency})`); return; }
+    if (!isExistingBooking && (prior + advance + moreLines.reduce((t, l) => t + extraLineCovered(l), 0)) > bookingHotelTotal(cleaned) + 0.01) { showToast(`المدفوع (${fmt(prior + advance + moreLines.reduce((t, l) => t + extraLineCovered(l), 0))}) أكبر من الإجمالي (${fmt(bookingHotelTotal(cleaned))} ${cleaned.currency})`); return; }
     // "تسكين مكرر" (الخطة اتأكدت فوق إنها سليمة): لكل حجز قديم متعارض -
     // - بدأ قبل الجديد: نقصّر تاريخ خروجه لتاريخ دخول الجديد ونعلّمه "غادر مبكرًا"
     //   (مش "ملغي"؛ بيتحاسب على الليالي اللي قعدها، وأي زيادة مدفوعة بتفضل في الفندق).
@@ -460,12 +436,12 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       else note += ` — رسوم فيزا ${fmt(visaFee)} ${cleaned.currency}`;
     }
     // مدفوع قبل السيستم: على الحجز بس - مابيدخلش اليومية ولا الخزينة
-    if (prior > 0) {
-      const pr = await setBookingPriorPaid({ bookingId: savedId, amount: prior, note: sanitizeText(form.prior?.note, 200) });
-      if (pr.error) payFailed += `${payFailed ? " | " : "⚠ "}المدفوع قبل السيستم (${fmt(prior)} ${cleaned.currency}) ماتسجّلش: ${pr.error} - سجّله من زرار "مدفوع قبل السيستم" على الحجز`;
-      else note += ` — ${fmt(prior)} ${cleaned.currency} مدفوع قبل السيستم (مادخلش الخزينة)`;
+    if (priorChanged) {
+      const pr = await setBookingPriorPaid({ bookingId: savedId, amount: prior, note: priorNote });
+      if (pr.error) payFailed += `${payFailed ? " | " : "⚠ "}المدفوع قبل السيستم (${fmt(prior)} ${cleaned.currency}) ماتسجّلش: ${pr.error} - افتح "تعديل الحجز" واكتبه تاني`;
+      else note += prior > 0 ? ` — ${fmt(prior)} ${cleaned.currency} مدفوع قبل السيستم (مادخلش الخزينة)` : " — اتشال المدفوع قبل السيستم";
     }
-    if ((moreLines.length || visaFee > 0 || prior > 0) && onRefresh) await onRefresh();
+    if ((moreLines.length || visaFee > 0 || priorChanged) && onRefresh) await onRefresh();
     refundRequests.forEach((c) => { note += ` — ${c.guestName} غادر مبكرًا: اتحاسب على الليالي اللي قعدها، والـ ${fmt((Number(c.amountPaid) || 0) - bookingGrandTotal(c))} ${c.currency} الزيادة المدفوعة فضلت في الفندق`; });
     const paidAfter = Number(cleaned.amountPaid) || 0;
     if (!cleaned.paymentDetails?.onlinePaid && isExistingBooking && paidAfter > bookingGrandTotal(cleaned) && cleaned.status !== "ملغي") note += ` — المدفوع (${fmt(paidAfter)}) بقى أكبر من الإجمالي الجديد بـ ${fmt(paidAfter - bookingGrandTotal(cleaned))} ${cleaned.currency} - الزيادة بتفضل في الفندق`;
@@ -675,7 +651,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                   <button type="button" className="cx-btn cx-btn-outline" data-testid="advance-add-line" style={{ marginTop: 8, fontSize: 13 }} onClick={() => setForm({ ...form, payMore: [...(form.payMore || []), { amount: "", currency: form.currency, rate: "", method: "كاش", details: emptyPaymentDetails() }] })}><Plus size={13} /> دفعة تانية بوسيلة أو عملة مختلفة</button>
                 </div>
               )}
-              {!isExistingBooking && perms.priorPaid && !form.paymentDetails?.onlinePaid && (
+              {perms.priorPaid && !form.paymentDetails?.onlinePaid && (
                 <div data-testid="new-prior-paid" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>مدفوع قبل السيستم (اختياري) - بيتكتب على الحجز ومش بيدخل اليومية ولا الخزينة</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
@@ -811,7 +787,6 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                     <span data-testid="cancel-booking"><TwoStepButton label="إلغاء الحجز" confirmLabel={`تأكيد الإلغاء؟ ${(Number(b.amountPaid) || 0) > 0 ? `(عليه ${fmt(b.amountPaid)} ${b.currency} متحصّل - بتفضل في الفندق، مفيش رد)` : "(مفيش فلوس متحصّلة)"}`} icon={<Ban size={13} />} onConfirm={() => cancelBooking(b)} /></span>
                   )}
                 </>)}
-                {perms.priorPaid && !cancelled && !b.paymentDetails?.onlinePaid && <PriorPaid booking={b} onDone={onRefresh} showToast={showToast} />}
                 {perms.correctLedger && <EditPayments booking={b} scope={perms.correctLedger} onDone={onRefresh} showToast={showToast} onLog={onLog} />}
                 {perms.devTools && (
                   <details className="cx-more" data-testid="booking-more">

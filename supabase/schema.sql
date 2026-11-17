@@ -4266,7 +4266,44 @@ drop trigger if exists shift_records_linked_guard_trg on shift_records;
 create trigger shift_records_linked_guard_trg before update on shift_records
   for each row execute function shift_records_linked_guard();
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 51 $$;
+-- --------------------------------------------------------------------------
+-- 49) كود الفرد (أكواد النزلاء) خاص بكل فندق: نفس الكود ينفع يتكرر في فندقين مختلفين في نفس الشهر،
+--     التكرار الممنوع بس جوه نفس الفندق.
+-- --------------------------------------------------------------------------
+create or replace function bookings_sync_guests()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare codes jsonb; n int; i int; c text; seen text[] := '{}'; ym_v text; clash record;
+begin
+  codes := coalesce(new.guest_codes, '[]'::jsonb);
+  n := least(greatest(coalesce(new.pax, 1), 1), jsonb_array_length(codes));
+  ym_v := to_char(new.checkin, 'YYMM');
+  delete from booking_guests where booking_id = new.id;
+  for i in 0 .. n - 1 loop
+    if jsonb_typeof(codes -> i) is distinct from 'string' then continue; end if;
+    c := btrim(codes ->> i);
+    if c = '' then continue; end if;
+    if char_length(c) > 40 then raise exception 'كود الفرد % أطول من ٤٠ حرف', i + 1; end if;
+    if upper(c) = any(seen) then raise exception 'الكود % مكرر جوه نفس الحجز', c; end if;
+    seen := seen || upper(c);
+    if new.status is distinct from 'ملغي' then
+      select g.room, b.guest_name into clash from booking_guests g join bookings b on b.id = g.booking_id
+        where g.ym = ym_v and upper(g.code) = upper(c) and g.booking_id <> new.id and b.status is distinct from 'ملغي'
+          and b.hotel_id = new.hotel_id limit 1;
+      if found then
+        raise exception 'الكود % مستخدم الشهر ده بالفعل في نفس الفندق (غرفة % - %) - اختار كود تاني أو استنى الشهر الجاي', c, clash.room, clash.guest_name;
+      end if;
+    end if;
+    insert into booking_guests(booking_id, room, seq, code, ym) values (new.id, new.room, i + 1, c, ym_v);
+  end loop;
+  return null;
+end;
+$$;
+revoke all on function bookings_sync_guests() from public, anon, authenticated;
+drop trigger if exists bookings_guests_sync on bookings;
+create trigger bookings_guests_sync after insert or update of pax, room, guest_codes, checkin, status, hotel_id on bookings
+  for each row execute function bookings_sync_guests();
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 52 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart
