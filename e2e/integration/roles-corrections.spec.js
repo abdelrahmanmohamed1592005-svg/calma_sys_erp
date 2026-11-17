@@ -528,3 +528,21 @@ test("المطوّر يعدّل سعر حجز موجود من الفورم (مش
   expect(Number((await env.q("select price_night from bookings where id = $1", [b]))[0].price_night)).toBe(450);
   await expect(page.getByTestId("advance-amount")).toHaveCount(0);
 });
+
+test("مدير الشيفت بيعدّل حجز نزيل مشي (غادر مبكرًا / تم تسجيل الخروج) ومدفوعه - مفيش قفل بعد ما النزيل يخرج", async ({ page, env }) => {
+  await users(env);
+  const day = shiftDay(), key = myShiftKey();
+  const b = await env.seedBooking({ room: 613, guest: "Gone Guest", start: -3, nights: 3, price: 200, paid: 600, currency: "EGP", status: "تم تسجيل الخروج", anchor: "shift" });
+  await env.q("update bookings set left_early = true where id = $1", [b]);
+  await env.seedShift("mona", { day, key, handover: { EGP: 0 }, collections: [{ room: 613, amount: 600, currency: "EGP", bookingId: b, method: "كاش", desc: "تحصيل - Gone Guest (+600 EGP)" }] });
+  await page.goto("/");
+  await login(page, "mona");
+  await goTab(page, "الحجوزات");
+  const card = page.getByTestId("booking-card").filter({ hasText: "Gone Guest" });
+  await card.getByTestId("edit-price").click();
+  await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
+  await page.getByTestId("edit-payment-amount").fill("550");
+  await page.getByTestId("edit-payment-save").click();
+  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(550);
+});

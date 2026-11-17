@@ -9,7 +9,7 @@ import { listStaffCafeteria } from "../data/staffCafeteria";
 import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, blankShiftRecord } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
-import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, SHIFT_OVERTIME_GRACE_HOURS } from "../domain/dates";
+import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
 import { resolveMyShift, getShiftRecordsInRange, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection } from "../data/shifts";
 
@@ -356,16 +356,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
             }
           }
         }
-        // انتهى هامش الأوفر تايم (ساعتين بعد نهاية معاد الشيفت) ولسه مقفول
-        // لحد دلوقتي - نقفله تلقائيًا بنفس بيانات لحظة الدخول دي، عشان الشيفت
-        // ميفضلش مفتوح وبيعطّل تقرير النهارده، ومديرة الحجوزات/المدير العام
-        // يقدروا يفتحوه تاني من هنا لو الموظف لسه محتاج يكمل فيه.
-        if (rec && !rec.closed && !isShiftActiveNow(sk)) {
-          const t = computeShiftTotals(rec);
-          const autoClosed = { ...rec, closed: true, closedBy: `${rec.staffName} (إقفال تلقائي - انتهى هامش الأوفر تايم)`, closedAt: Date.now(), ...t };
-          const res = await updateShiftRecordIfUnchanged(day, sk, rec.updatedAt, autoClosed);
-          if (res.data) { rec = res.data; onLog(`إقفال تلقائي لشيفت ${SHIFTS.find((s) => s.key === sk)?.label} ليوم ${day} بعد انتهاء هامش الأوفر تايم (${SHIFT_OVERTIME_GRACE_HOURS} ساعة)`); }
-        }
+        // مفيش إقفال تلقائي بالوقت (قرار المالك): الشيفت بيفضل مفتوح لحد ما صاحبه يقفله أو الشيفت اللي بعده يبدأ
         if (cancelled) return;
         setMyShiftKey(sk); setRecord(rec); setPrevClosing(prev.data?.cash || null); setPrevMethodClosing(prev.data?.method || null);
       } else { setMyShiftKey(null); setRecord(null); }
@@ -547,7 +538,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // الشيفت يتقفل (يبقى غير قابل للتعديل من موظف الشيفت) لو اتقفل فعليًا، أو
   // لو انتهى هامش الأوفر تايم بتاعه (ساعتين بعد نهاية معاده) - في الحالة
   // التانية هيتقفل تلقائيًا فعليًا عند أول تحميل للشاشة (انظر الإيفكت فوق).
-  const locked = !record || record.closed || !perms.editLedger || (!perms.devTools && !!myShiftKey && !isShiftActiveNow(myShiftKey));
+  const locked = !record || record.closed || !perms.editLedger;   // مفيش قفل بالساعة - اليومية مفتوحة لحد ما تتقفل
 
   async function closeShift() { return guarded("ledger-closeShift", () => closeShiftInner()); }
   async function closeShiftInner() {
@@ -595,7 +586,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
       : "تم إعادة فتح الشيفت، لكن وقته (وهامش الأوفر تايم) انتهى - هيتقفل تاني تلقائيًا أول ما الموظف يفتح اليومية. لتصحيح الأرقام: المدير العام أو الحسابات يعدّلوا اليومية المقفولة مباشرة");
   }
   // الموظف يقدر يكمل في شيفت اتفتح تاني بس لو الشيفت لسه في وقته (أو في هامش الأوفر تايم)؛ غير كده بيتقفل تلقائيًا عند فتح اليومية
-  function staffCanContinue(date, shiftKey) { return date === shiftDayNow() && isShiftActiveNow(shiftKey); }
+  function staffCanContinue(date) { return date >= addDays(shiftDayNow(), -1); }
 
   const canCorrect = (rec) => !!rec && (perms.correctLedger === "any" || (perms.correctLedger === "today" && rec.date >= addDays(todayStr(), -1)));
   function corrUpdateRow(idx, patch) {
@@ -732,7 +723,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
                       <button className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} onClick={reopenHistoryShift}><LockOpen size={13} /> إعادة فتح الشيفت</button>
                     </>
                   ) : (
-                    <span style={{ fontSize: 13, color: "var(--sage)" }}><Unlock size={12} style={{ verticalAlign: -1 }} /> {staffCanContinue(histDate, histShift) ? "الشيفت ده مفتوح لسه (أو اتفتح تاني) - الموظف يقدر يكمل فيه" : "الشيفت ده مفتوح لكن وقته انتهى - هيتقفل تلقائيًا أول ما الموظف يفتح اليومية"}</span>
+                    <span style={{ fontSize: 13, color: "var(--sage)" }}><Unlock size={12} style={{ verticalAlign: -1 }} /> {staffCanContinue(histDate, histShift) ? "الشيفت ده مفتوح لسه (أو اتفتح تاني) - الموظف يقدر يكمل فيه" : "الشيفت ده لسه مفتوح - هيتقفل لما صاحبه يقفله أو الشيفت اللي بعده يبدأ"}</span>
                   )}
                 </div>
               )}

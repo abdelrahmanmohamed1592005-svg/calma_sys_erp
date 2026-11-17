@@ -13,12 +13,12 @@ const today = () => cairoDate(0);
 const yesterday = () => cairoDate(-1);
 
 test.describe("الأوفر تايم", () => {
-  test("بعد نهاية الشيفت بساعة ونص: لسه شغّال ويقدر يعدّل ويحصّل، وبعد ساعتين بيتقفل تلقائي ويتقفل عليه كل حاجة", async ({ page, env }) => {
+  test("مفيش قفل بالساعة: بعد معاد الشيفت بكتير (حتى بعد نص الليل) الشيفت فاضل مفتوح والموظف بيعدّل ويحصّل لحد ما يقفله بنفسه", async ({ page, env }) => {
     await users(env);
     await env.seedBooking({ room: 601, guest: "Overtime Guest", nights: 1, price: 100 });
     await env.seedShift("ahmed", { key: "morning", day: today() });
 
-    // 17:30 (الصباحي بيخلص 16:00 + ساعتين أوفر تايم)
+    // 17:30 (بعد نهاية الصباحي)
     await setCairoTime(page, 17, 30);
     await page.goto("/");
     await login(page, "ahmed");
@@ -26,27 +26,21 @@ test.describe("الأوفر تايم", () => {
     await page.locator("table.cx-table tbody tr", { hasText: "602" }).first().getByPlaceholder("المبلغ").fill("15");
     await waitLedgerSaved(page);
     expect(Number((await rec(env, "ahmed")).rows.find((r) => r.room === 602).collectionAmt)).toBe(15);
+
+    // 23:30: لسه مفتوح ومفيش إقفال تلقائي
+    await setCairoTime(page, 23, 30);
+    await page.reload();
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 601);
     await payOnBoard(page);
     await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
-    expect((await env.q("select closed from shift_records"))[0].closed).toBe(false);
-
-    // 18:30: الأوفر تايم خلص
-    await setCairoTime(page, 18, 30);
-    await page.reload();
-    await goTab(page, "اليومية"); await showAllRooms(page);
-    await expect(page.getByText(/مقفول|أُقفل بواسطة/).first()).toBeVisible();
     const r = await rec(env, "ahmed");
-    expect(r.closed).toBe(true);
-    expect(r.closed_by).toContain("إقفال تلقائي - انتهى هامش الأوفر تايم");
-    expect(r.closing_cash).toMatchObject({ EGP: 15, USD: 100 });
-    await expect(page.locator("table.cx-table tbody tr").first().locator("input").first()).toBeDisabled();
-    // مفيش حجز جديد ولا تحصيل بعد انتهاء الشيفت
+    expect(r.closed).toBe(false);
+    await goTab(page, "اليومية"); await showAllRooms(page);
+    await expect(page.locator("table.cx-table tbody tr", { hasText: "603" }).first().getByPlaceholder("المبلغ")).toBeEnabled();
     await goTab(page, "الحجوزات");
-    await expect(page.getByRole("button", { name: /حجز جديد/ })).toHaveCount(0);
-    const log = await env.q("select action from activity_log where action like '%إقفال تلقائي%'");
-    expect(log.length).toBe(1);
+    await expect(page.getByRole("button", { name: /حجز جديد/ })).toHaveCount(1);
+    expect((await env.q("select count(*)::int n from activity_log where action like '%إقفال تلقائي%'"))[0].n).toBe(0);
   });
 
   test("الشيفت المسائي بعد منتصف الليل (00:30): لسه أوفر تايم على يوم الشيفت اللي قبل نص الليل، والتحصيل بيتسجّل عليه", async ({ page, env }) => {
@@ -63,12 +57,13 @@ test.describe("الأوفر تايم", () => {
     const r = await rec(env, "ahmed");
     expect(r).toMatchObject({ date: yesterday(), shift_key: "evening", closed: false });
     expect(Number(r.rows.find((x) => x.room === 602).collectionAmt)).toBe(100);
-    // 02:30: الأوفر تايم خلص
+    // 02:30: مفيش قفل بالساعة - لسه شغّال على نفس الشيفت
     await setCairoTime(page, 2, 30);
     await page.reload();
     await goTab(page, "لوحة الغرف");
     await openRoom(page, 603);
-    await expect(page.getByText(/مش شيفتك دلوقتي/).first()).toBeVisible();
+    await expect(page.getByText(/مش شيفتك دلوقتي/)).toHaveCount(0);
+    expect((await rec(env, "ahmed")).closed).toBe(false);
   });
 });
 
