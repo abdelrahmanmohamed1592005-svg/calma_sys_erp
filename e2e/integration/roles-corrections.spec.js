@@ -407,7 +407,7 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   await users(env);
   const day = shiftDay(), key = myShiftKey();
   const b = await env.seedBooking({ room: 611, guest: "Full Edit", start: 0, nights: 2, price: 500, paid: 500, currency: "EGP", anchor: "shift" });
-  await env.seedShift("mona", { day, key, handover: { EGP: 0 }, collections: [{ room: 611, amount: 500, currency: "EGP", bookingId: b, method: "كاش" }] });
+  await env.seedShift("mona", { day, key, handover: { EGP: 0 }, collections: [{ room: 611, amount: 500, currency: "EGP", bookingId: b, method: "كاش", desc: "تحصيل حجز جديد - Full Edit (+500 EGP)" }] });
   // الموظف العادي لسه مايقدرش يغيّر الغرفة أو الدخول من غير "نقل النزيل"
   const denied = await env.api("ahmed", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { checkin: cairoDate(-1) });
   expect(denied.status).toBeGreaterThanOrEqual(400);
@@ -427,6 +427,12 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   await expect(page.getByTestId("booking-card").getByTestId("edit-payments-open")).toHaveCount(0);
   await page.getByTestId("edit-price").first().click();
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
+  // محدش يدفع فوق الإجمالي (900): تعديل الدفعة لـ 1000 بيترفض والمدفوع واليومية مابيتغيّروش
+  await page.getByTestId("edit-payment-amount").fill("1000");
+  await page.getByTestId("edit-payment-save").click();
+  await expect(toast(page)).toContainText("أكتر من الإجمالي");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(500);
+  expect(Number((await rec(env, day, key)).rows.find((x) => x.bookingId === b).collectionAmt)).toBe(500);
   await page.getByTestId("edit-payment-amount").fill("400");
   await page.getByTestId("edit-payment-method").selectOption("فيزا");
   await page.getByTestId("edit-payment-last4").fill("5555");
@@ -434,7 +440,7 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   await expect(toast(page)).toContainText("اتعدّلت الدفعة");
   expect(Number((await booking(env, b)).amount_paid)).toBe(400);
   const r = (await rec(env, day, key)).rows.find((x) => x.bookingId === b);
-  expect(r).toMatchObject({ collectionAmt: 400, collectionMethod: "فيزا" });
+  expect(r).toMatchObject({ collectionAmt: 400, collectionMethod: "فيزا", collectionDesc: "تحصيل حجز جديد - Full Edit (+400 EGP)" });   // البيان اتعدّل مع المبلغ
   // الفورم لسه مفتوح وبيتحفظ عادي بعد تعديل المدفوع (من غير "اتحدّث من مكان تاني")
   await page.getByRole("button", { name: /حفظ الحجز/ }).click();
   await expect(toast(page)).toContainText("تم الحفظ");

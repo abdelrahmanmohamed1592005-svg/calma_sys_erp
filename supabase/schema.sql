@@ -4369,7 +4369,41 @@ begin
 end;
 $$;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 53 $$;
+-- --------------------------------------------------------------------------
+-- 51) محدش (أيًا كان دوره، حتى المطوّر) يدفع فوق الإجمالي: أي زيادة في المدفوع على الحجز (تحصيل، تصحيح يومية،
+--     تعديل المدفوع، مدفوع قبل السيستم، كافيتيريا) تترفض لو هتعدّي المطلوب. نفس الشيء لكل عملة تانية.
+--     المدفوع لو قلّ أو الإجمالي نفسه قلّ (مغادرة مبكرة / تسكين مكرر) مش بيتمنع - ده مش دفع جديد.
+-- --------------------------------------------------------------------------
+create or replace function bookings_no_overpay()
+returns trigger language plpgsql as $$
+declare tot numeric; k text; cap numeric; paid_new numeric; paid_old numeric;
+begin
+  if auth.uid() is null then return new; end if;        -- صيانة / سكريبتات السيرفر
+  if coalesce(new.amount_paid, 0) > coalesce(case when TG_OP = 'UPDATE' then old.amount_paid end, 0) + 0.004 then
+    tot := booking_hotel_total(new);
+    if new.amount_paid > tot + 0.005 then
+      raise exception 'مينفعش المدفوع (% %) يبقى أكتر من الإجمالي (% %) - محدش يدفع فوق اللي عليه', trim_scale(round(new.amount_paid, 2)), new.currency, trim_scale(round(tot, 2)), new.currency;
+    end if;
+  end if;
+  for k in select jsonb_object_keys(coalesce(new.other_paid, '{}'::jsonb)) loop
+    paid_new := calma_num(new.other_paid ->> k);
+    paid_old := case when TG_OP = 'UPDATE' then calma_num(old.other_paid ->> k) else 0 end;
+    if paid_new > paid_old + 0.004 then
+      cap := calma_other_total(coalesce(new.other_charges -> k, '{}'::jsonb));
+      if paid_new > cap + 0.005 then
+        raise exception 'مينفعش المدفوع بالـ % (%) يبقى أكتر من المطلوب بالعملة دي (%) - محدش يدفع فوق اللي عليه', k, trim_scale(round(paid_new, 2)), trim_scale(round(cap, 2));
+      end if;
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+revoke all on function bookings_no_overpay() from public, anon, authenticated;
+drop trigger if exists bookings_zzz_no_overpay on bookings;
+create trigger bookings_zzz_no_overpay before insert or update on bookings
+  for each row execute function bookings_no_overpay();
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 54 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart
