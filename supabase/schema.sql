@@ -1002,7 +1002,9 @@ declare
 begin
   -- نقل النزيل لغرفة تانية من دالة move_booking_room (بتغيّر الغرفة بس، وبتتأكد من الصلاحية والتعارض)
   if coalesce(current_setting('calma.move_rpc', true), '') = '1' or coalesce(current_setting('calma.currency_rpc', true), '') = '1' then return new; end if;
-  if is_staff() and TG_OP = 'UPDATE' then
+  -- مدير الشيفت بيعدّل كل تفاصيل الحجز (الغرفة، التواريخ، السعر، الرسوم...) - القيود دي لموظف الشيفت بس.
+  -- (المدفوع نفسه بيتعدّل من تصحيح صف الدفع في اليومية - قيد lock_booking_payments - والإلغاء لمدير الحجوزات.)
+  if is_staff() and not is_shift_manager() and TG_OP = 'UPDATE' then
     -- الخروج المبكر / التسكين المكرر مسموح بس لنزيل بدأ إقامته فعلاً (دخوله
     -- النهارده أو قبله) - مفيش تقصير ولا تعليم لحجز مستقبلي، وده كان هيبقى
     -- إلغاء مقنّع (الإلغاء من مدير الحجوزات بس).
@@ -4188,7 +4190,10 @@ $$;
 revoke all on function dev_settle_staff_cafeteria(int, text, text, text, numeric, text, jsonb) from public, anon;
 grant execute on function dev_settle_staff_cafeteria(int, text, text, text, numeric, text, jsonb) to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 48 $$;
+-- العملة الافتراضية للحجز: جنيه مصري (قرار المالك)
+alter table bookings alter column currency set default 'EGP';
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 49 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

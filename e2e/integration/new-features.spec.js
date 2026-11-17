@@ -75,7 +75,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     // بلوك الغرفة من بره: اسم النزيل الجديد + سعر الليلة + علامة التسكين المكرر
     const tile = boardTile(page, 611);
     await expect(tile).toContainText("New Guest");
-    await expect(page.getByTestId("tile-price-611")).toContainText("150 USD / ليلة".replace("150", "150"));
+    await expect(page.getByTestId("tile-price-611")).toContainText("150 EGP / ليلة".replace("150", "150"));
     await expect(tile).toContainText("تسكين مكرر");
     // التفاصيل بتظهر لما أفتح الغرفة
     await tile.click();

@@ -138,6 +138,33 @@ export async function devChangeCurrencyAcrossLedgers(booking, change) {
   return res;
 }
 
+/* كل صفوف الدفع بتاعة حجز في اليوميات (صف صف، مش متجمّعة) - لتعديل المدفوع من مدير الشيفت/المطوّر.
+   كل صف معاه مكانه (يومية + نوع الصف + رقمه) عشان يتصحّح بنفس آلية تصحيح اليومية. */
+export async function getBookingLedgerRows(booking) {
+  const from = booking.createdAt ? new Date(booking.createdAt).toISOString().slice(0, 10) : booking.checkin;
+  const start = (from < booking.checkin ? from : booking.checkin);
+  const recs = await getShiftRecordsInRange(addDays(start < "2000-01-02" ? "2000-01-02" : start, -1), addDays(shiftDayNow(), 1), booking.hotelId ?? getActiveHotelId());
+  if (!recs) return null;
+  const out = [];
+  recs.forEach((r) => ["rows", "cafeteriaRows"].forEach((list) => (r[list] || []).forEach((x, idx) => {
+    if (x.bookingId !== booking.id || !(Number(x.collectionAmt) || 0)) return;
+    out.push({ date: r.date, shiftKey: r.shiftKey, hotelId: r.hotelId, closed: r.closed, list, idx, row: x });
+  })));
+  return out;
+}
+
+/* تعديل صف دفع واحد في يومية (المبلغ/الوسيلة/التفاصيل) - المدفوع على الحجز والعهدة بيتظبطوا لوحدهم (تصحيح) */
+export async function editLedgerPaymentRow(entry, patch) {
+  const old = await getShiftRecord(entry.date, entry.shiftKey, entry.hotelId);
+  if (!old) return { error: "تعذر قراءة اليومية (مشكلة اتصال) - جرّب تاني" };
+  const cur = (old[entry.list] || [])[entry.idx];
+  if (!cur || cur.bookingId !== entry.row.bookingId) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
+  const next = { ...old, [entry.list]: old[entry.list].map((x, i) => (i === entry.idx ? { ...x, ...patch } : x)) };
+  const res = await applyCorrection(old, next);
+  if (res.conflict) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
+  return res;
+}
+
 /* كل سجلات اليومية في فترة (استعلام واحد بدل استعلام لكل شيفت في كل يوم -
    تقرير فترة سنة كان بيبعت أكتر من ١٠٠٠ طلب). بترجع null لو القراءة فشلت. */
 export async function getShiftRecordsInRange(fromDate, toDate, hotelId) {

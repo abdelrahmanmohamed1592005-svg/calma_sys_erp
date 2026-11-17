@@ -107,9 +107,12 @@ test.describe("موظف الشيفت", () => {
     expect(rows[0].action).toContain("تغيير حالة");
     // بوابة تقرير الجلسة قبل الخروج
     await page.getByTitle("تسجيل خروج").click();
-    await expect(page.getByText("لازم تطبع تقرير تعديلاتك قبل الخروج")).toBeVisible();
+    await expect(page.getByText("تقرير تعديلاتك النهارده (الطباعة اختيارية)")).toBeVisible();
     await page.getByRole("button", { name: /رجوع للنظام/ }).click();
-    await expect(page.locator(".cx-tab").first()).toBeVisible();
+    await expect(page.locator(".cx-tab").first()).toBeVisible();    // الطباعة اختيارية: خروج على طول من غير طباعة
+    await page.getByTitle("تسجيل خروج").click();
+    await page.getByTestId("logout-no-print").click();
+    await expect(page.getByRole("button", { name: "دخول" })).toBeVisible();
   });
 });
 

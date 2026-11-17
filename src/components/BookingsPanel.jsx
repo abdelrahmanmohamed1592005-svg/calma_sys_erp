@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock, Search, CalendarDays, Moon, Users, CreditCard, Globe, BedDouble, ClipboardList, Wallet, SearchX } from "lucide-react";
 import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHasDue, bookingDueLines, formatMoneyLines, bookingHotelTotal, refundStatusOf } from "../domain/money";
-import { todayStr, addDays, nightsBetween, uid, arabicDateLong } from "../domain/dates";
-import { sourceOptionsFor, BOOKING_STATUSES, roomLabel } from "../domain/constants";
+import { todayStr, addDays, nightsBetween, uid, arabicDateLong, shiftDayNow } from "../domain/dates";
+import { sourceOptionsFor, BOOKING_STATUSES, roomLabel, SHIFTS } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
-import { getPaymentsIndex } from "../data/shifts";
+import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow } from "../data/shifts";
 import { recordBookingPayment, recordBookingPaymentOther, recordBookingPaymentFx, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
 import { guarded } from "../lib/busy";
@@ -24,7 +24,7 @@ function StepHead({ n, title, hint, done, optional }) {
 }
 
 function emptyBooking() {
-  return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, guestCodes: [""], checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "USD", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", notes: "", imported: false, needsRoomReview: false,
+  return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, guestCodes: [""], checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "EGP", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", notes: "", imported: false, needsRoomReview: false,
     // دفعة مقدّمة (اختيارية) وقت إضافة الحجز - كل دفعة ليها وسيلتها وتفاصيلها (آخر ٤ أرقام الفيزا / اسم ورقم المحوِّل) وبتتسجّل في اليومية بيهم
     payNow: { amount: "", method: "كاش", details: emptyPaymentDetails(), fee: "" }, payMore: [],
     // مدفوع قبل السيستم (اختياري): اتدفع برّه السيستم - بيتكتب على الحجز ومابيدخلش اليومية ولا الخزينة
@@ -110,6 +110,62 @@ function PriorPaid({ booking, onDone, showToast }) {
   );
 }
 
+/* تعديل المدفوع (مدير الشيفت: يوميات النهارده وامبارح - المطوّر: أي يوم): كل دفعة متسجّلة على الحجز في اليومية
+   بتتعدّل في مكانها (المبلغ/الوسيلة/التفاصيل)، فالمدفوع على الحجز والخزينة والعهدة والتقارير بيتحدّثوا مع بعض.
+   صفر = الدفعة اتشالت. */
+function EditPayments({ booking, scope, onDone, showToast, onLog }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState(null);
+  const [drafts, setDrafts] = useState({});
+  const load = async () => { setRows(null); const r = await getBookingLedgerRows(booking); if (!r) { showToast("تعذر تحميل الدفعات (مشكلة اتصال)"); setOpen(false); return; } setRows(r); setDrafts({}); };
+  const minDate = scope === "any" ? "0000-00-00" : addDays(shiftDayNow(), -1);
+  const keyOf = (e) => `${e.date}|${e.shiftKey}|${e.list}|${e.idx}`;
+  const save = (e) => guarded("edit-pay:" + keyOf(e), async () => {
+    const d = drafts[keyOf(e)] || {};
+    const method = d.method ?? e.row.collectionMethod;
+    const amount = d.amount === undefined ? Number(e.row.collectionAmt) : Math.round((Number(d.amount) || 0) * 100) / 100;
+    if (!Number.isFinite(amount) || amount < 0) { showToast("اكتب مبلغ صحيح (صفر = تشيل الدفعة)"); return; }
+    const details = d.details ?? e.row.paymentDetails ?? emptyPaymentDetails();
+    if (amount > 0) { const err = validatePaymentDetailsFor(method, details); if (err) { showToast(err); return; } }
+    const res = await editLedgerPaymentRow(e, { collectionAmt: amount, collectionMethod: method, paymentDetails: cleanPaymentDetailsFor(method, details) });
+    if (res.error) { showToast(res.error); await load(); return; }
+    onLog(`تعديل دفعة على حجز ${booking.guestName} (غرفة ${booking.room}) في يومية ${e.date}: ${fmt(e.row.collectionAmt)} ${e.row.collectionMethod} ← ${fmt(amount)} ${method}`);
+    showToast(`اتعدّلت الدفعة - المدفوع على الحجز والخزينة اتظبطوا${res.moved ? ` (والعهدة اتنقلت لـ ${res.moved} شيفت بعده)` : ""}`);
+    if (onDone) await onDone();
+    await load();
+  });
+  if (!open) return <button className="cx-btn cx-btn-outline" data-testid="edit-payments-open" style={{ fontSize: 12.5 }} onClick={() => { setOpen(true); load(); }}>تعديل المدفوع</button>;
+  return (
+    <div data-testid="edit-payments" style={{ width: "100%", background: "var(--paper2)", borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ fontSize: 13, fontWeight: 700 }}>الدفعات المتسجّلة على الحجز <span style={{ fontWeight: 400, color: "var(--muted)" }}>(عدّل المبلغ أو الوسيلة واضغط حفظ - صفر = تشيل الدفعة)</span></div>
+      {!rows && <div style={{ fontSize: 13, color: "var(--muted)" }}>جارِ التحميل...</div>}
+      {rows && rows.length === 0 && <div style={{ fontSize: 13, color: "var(--muted)" }}>مفيش دفعات متسجّلة على الحجز ده في اليوميات.</div>}
+      {rows && rows.map((e) => {
+        const k = keyOf(e), d = drafts[k] || {};
+        const fx = e.row.fxCovered != null && e.row.fxBookingCurrency;
+        const allowed = e.date >= minDate && !fx;
+        const method = d.method ?? e.row.collectionMethod;
+        const set = (patch) => setDrafts({ ...drafts, [k]: { ...d, ...patch } });
+        return (
+          <div key={k} data-testid="edit-payment-row" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderTop: "1px dashed var(--hair)", paddingTop: 6 }}>
+            <span style={{ fontSize: 12.5, minWidth: 150 }}><bdi dir="ltr">{e.date}</bdi> · {SHIFTS.find((x) => x.key === e.shiftKey)?.label}{e.list === "cafeteriaRows" ? " · كافيتيريا" : ""}{e.row.visaFee ? " · رسوم فيزا" : ""}</span>
+            {allowed ? (<>
+              <input className="cx-input" type="number" min="0" data-testid="edit-payment-amount" style={{ width: 110 }} value={d.amount ?? e.row.collectionAmt} onChange={(ev) => set({ amount: ev.target.value })} />
+              <span style={{ fontSize: 12.5 }}>{e.row.collectionCurrency}</span>
+              {!e.row.visaFee && <select className="cx-select" data-testid="edit-payment-method" style={{ width: 150 }} value={method} onChange={(ev) => set({ method: ev.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>}
+              <PaymentDetailsInline method={method} details={d.details ?? e.row.paymentDetails} onChange={(det) => set({ details: det })} testid="edit-payment" />
+              <button className="cx-btn cx-btn-gold" data-testid="edit-payment-save" style={{ fontSize: 12.5 }} onClick={() => save(e)}>حفظ</button>
+            </>) : (
+              <span style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(e.row.collectionAmt)} {e.row.collectionCurrency}</bdi> · {e.row.collectionMethod} - {fx ? "دفعة بسعر صرف (تتصحّح من اليومية)" : "يوم قديم - تصحيحه من الإدارة"}</span>
+            )}
+          </div>
+        );
+      })}
+      <div><button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5 }} onClick={() => setOpen(false)}>قفل</button></div>
+    </div>
+  );
+}
+
 /* المطوّر: يرجّع حجز اتلغى بالغلط، أو نزيل اتسجّل "غادر مبكرًا" بالغلط (بيرجع لتاريخ خروجه وإجماليه الأصليين) */
 function DevRestore({ booking, onDone, showToast }) {
   const cancelled = booking.status === "ملغي", early = !!booking.leftEarly;
@@ -169,6 +225,13 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataVersion, bookings.length, JSON.stringify(bookings.map((b) => b.amountPaid))]);
 
+  // الفورم بيفتح فوق القايمة: أول ما يفتح (حجز جديد أو تعديل) الصفحة بتنزل/تطلع عليه لوحدها
+  const formRef = useRef(null);
+  const formOpenId = form?.id;
+  useEffect(() => {
+    if (!formOpenId) return;
+    requestAnimationFrame(() => { try { formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch { /* متصفح قديم */ } });
+  }, [formOpenId]);
   function startNew() { setForm(emptyBooking()); }
   // الخانات الرقمية اللي قيمتها صفر بتتعرض فاضية (مش "0" لازم يتمسح بالإيد قبل الكتابة)
   const blankZeros = (o, keys) => { const out = { ...o }; keys.forEach((k) => { if ((Number(out[k]) || 0) === 0) out[k] = ""; }); return out; };
@@ -187,7 +250,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   const collectionLocked = role === "reservations";
   const chargeLocked = moneyLocked;
   // موظف الشيفت بيعدّل بيانات النزيل والسعر والتمديد؛ الغرفة بتتغيّر من "نقل النزيل" وتاريخ الدخول ثابت (القاعدة بتفرض ده)
-  const staffEdit = isExistingBooking && !perms.editBookings;
+  const staffEdit = isExistingBooking && !perms.editBookings && !perms.editBookingFull;
   // الدخول المبكر ممكن يتسجّل على حجز موجود لسه ماتسجّلش عليه (حتى لو التسعير مقفول)؛ لو اتسجّل قبل كده بيتقفل زي باقي الرسوم.
   const earlyLocked = chargeLocked && !(isExistingBooking && !originalBooking?.earlyCheckin?.applied);
 
@@ -486,7 +549,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       </div>
 
       {form && (
-        <div className="cx-card cx-no-print cx-form" data-calma-editing="booking" style={{ padding: 18, marginBottom: 16, borderColor: "#E3D3A6", boxShadow: "0 0 0 4px var(--gold-soft), var(--sh)" }}>
+        <div ref={formRef} className="cx-card cx-no-print cx-form" data-calma-editing="booking" style={{ padding: 18, marginBottom: 16, borderColor: "#E3D3A6", boxShadow: "0 0 0 4px var(--gold-soft), var(--sh)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}><span className="cx-ico ic-indigo" aria-hidden="true"><BedDouble size={19} /></span><div><div className="cx-section-title" style={{ fontSize: 18 }}>{isExistingBooking ? `تعديل حجز - ${originalBooking?.guestName || ""}` : "حجز جديد"}</div><div className="cx-hint">اتبع الخطوات بالترتيب - الخطوات الاختيارية ممكن تسيبها فاضية</div></div></div>
             {form.code && <div style={{ fontSize: 13, color: "var(--muted)" }}>كود الحجز: <span dir="ltr" data-testid="booking-code" style={{ fontFamily: "monospace", fontWeight: 700 }}>{form.code}</span></div>}
@@ -526,7 +589,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>تاريخ الدخول</label><input className="cx-input" type="date" disabled={staffEdit} value={form.checkin} onChange={(e) => { const newCheckin = e.target.value; setForm((f) => ({ ...f, checkin: newCheckin, checkout: f.checkout && f.checkout > newCheckin ? f.checkout : addDays(newCheckin, 1) })); }} /></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>تاريخ الخروج</label><input className="cx-input" type="date" min={form.checkin ? addDays(form.checkin, 1) : undefined} value={form.checkout} onChange={(e) => setForm({ ...form, checkout: e.target.value })} /></div>
-            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>السعر لليلة {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={chargeLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value })} /><select className="cx-select" disabled={chargeLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 90 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div></div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>السعر لليلة {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={chargeLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value, ...(form.totalRoom !== "" && Math.abs((Number(form.totalRoom) || 0) - (Number(form.priceNight) || 0) * nights) < 0.005 ? { totalRoom: "" } : {}) })} /><select className="cx-select" disabled={chargeLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 90 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={chargeLocked} placeholder={String(autoTotalRoom)} value={lockedRepricedTotal != null ? lockedRepricedTotal : form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
 
             {/* الحالة (ومعاها "ملغي") من صلاحية مدير الحجوزات بس - موظف
@@ -742,6 +805,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                   )}
                 </>)}
                 {perms.priorPaid && !cancelled && !b.paymentDetails?.onlinePaid && <PriorPaid booking={b} onDone={onRefresh} showToast={showToast} />}
+                {perms.correctLedger && (Number(b.amountPaid) || 0) > 0 && <EditPayments booking={b} scope={perms.correctLedger} onDone={onRefresh} showToast={showToast} onLog={onLog} />}
                 {perms.devTools && (
                   <details className="cx-more" data-testid="booking-more">
                     <summary className="cx-btn cx-btn-outline" aria-label="خيارات أخرى">⋯ المزيد</summary>

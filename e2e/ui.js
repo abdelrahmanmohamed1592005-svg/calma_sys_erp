@@ -61,7 +61,7 @@ export const toast = (page) => page.locator(".cx-toast");
 /* بيضيف حجز من شاشة الحجوزات: بيدخل غرفة، اسم، تواريخ (بالفرق من النهارده)، سعر الليلة،
    والمدفوع/الوسيلة لو متحددين (الموظف بس بيقدر يكتب المدفوع). */
 export async function addBooking(page, o) {
-  const { room, guest, price = 100, nights = 1, startOffset = 0, paid, method, currency, dup = false, expectSaved = true, last4, senderName, phone, visaFee, prior, priorNote } = o;
+  const { room, guest, price = 100, nights = 1, startOffset = 0, paid, method, currency = "USD", dup = false, expectSaved = true, last4, senderName, phone, visaFee, prior, priorNote } = o;
   await goTab(page, "الحجوزات");
   await page.getByRole("button", { name: /حجز جديد/ }).click();
   const form = page.locator(".cx-card[data-calma-editing]");

@@ -32,7 +32,7 @@ export function buildImportDraft(row, idx, rooms, existingBookings) {
   if (checkin && checkout && !nights) nights = nightsBetween(checkin, checkout);
   const paymentMethod = mapPaymentMethod(getField(row, ["Payment Options", "Payment"]));
   const onlineRef = getField(row, ["Online Payment"]);
-  const currency = getField(row, ["Currency"]) || "USD";
+  const currency = getField(row, ["Currency"]) || "EGP";
   const laundry = Number(getField(row, ["Laundry ($)", "Laundry"])) || 0;
   const cafeteria = Number(getField(row, ["Cafeteria ($)", "Cafeteria"])) || 0;
   const tours = Number(getField(row, ["Tours ($)", "Tours"])) || 0;
