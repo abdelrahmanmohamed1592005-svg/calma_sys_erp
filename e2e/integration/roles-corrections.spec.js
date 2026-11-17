@@ -1,7 +1,7 @@
 // مدير الشيفت + حساب المطوّر المخفي + تصحيح يومية قديمة (والمدفوع والعهدة بيتحدّثوا لوحدهم) + مدفوع قبل السيستم
 // + التقرير بيحسب عهدة الفيزا المكتوبة بالإيد + كروت تحصيل اليوم مفصّلة.
 import { test, expect } from "../fixtures";
-import { login, goTab, toast, addBooking, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
+import { login, goTab, toast, addBooking, claimShift, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
 import { readFileSync } from "node:fs";
 
 // الإجراءات الثانوية في كارت الحجز (مدفوع قبل السيستم وأدوات المطوّر) تحت "⋯ المزيد"
@@ -122,19 +122,19 @@ test("مدفوع قبل السيستم: بيتحسب في المدفوع وال�
   const b = await env.seedBooking({ room: 603, guest: "Paper Guest", start: -1, nights: 3, price: 400, paid: 0, currency: "EGP" });
   await page.goto("/");
   await login(page, "ahmed");                                      // موظف الشيفت هو اللي بيحدده
+  await claimShift(page);
   await goTab(page, "الحجوزات");
-  await expect(page.getByTestId("booking-more")).toHaveCount(0);   // الزرار ظاهر على الكارت على طول - مش جوه "المزيد"
-  const card = page.locator("div", { has: page.getByTestId("prior-paid-open") }).filter({ hasText: "Paper Guest" }).last();
-  await card.getByTestId("prior-paid-open").click();
-  await page.getByTestId("prior-paid-amount").fill("700");
-  await page.getByTestId("prior-paid-note").fill("دفع كاش يوم 10/11");
-  await page.getByTestId("prior-paid-save").click();
+  await expect(page.getByTestId("prior-paid-open")).toHaveCount(0);  // مفيش زرار على الكارت - بيتكتب من فورم الحجز
+  await page.getByTestId("edit-price").first().click();
+  await page.getByTestId("new-prior-amount").fill("700");
+  await page.getByTestId("new-prior-note").fill("دفع كاش يوم 10/11");
+  await page.getByRole("button", { name: /حفظ الحجز/ }).click();
   await expect(toast(page)).toContainText("مدفوع قبل السيستم");
   const row = await booking(env, b);
   expect(Number(row.amount_paid)).toBe(700);
   expect(Number(row.payment_details.priorPaid)).toBe(700);
   expect(row.payment_details.priorPaidNote).toBe("دفع كاش يوم 10/11");
-  expect((await env.q("select count(*)::int n from shift_records"))[0].n).toBe(0);
+  expect((await env.q("select count(*)::int n from shift_records, jsonb_array_elements(rows) r where calma_num(r ->> 'collectionAmt') <> 0 or coalesce(r ->> 'bookingId', '') <> ''"))[0].n).toBe(0);   // مادخلش أي يومية
   await expect(page.getByText("منها قبل السيستم").first()).toBeVisible();
   // تعديل الحجز من الـ API مايمسحش المبلغ ده
   await env.seedUser("rawan", "reservations", "روان");
