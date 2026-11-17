@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
+import { descWithAmount } from "../domain/ledgerDesc";
 import { fetchAll } from "./page";
 import { friendlyDbError } from "./schemaCheck";
 import { shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
@@ -159,7 +160,10 @@ export async function editLedgerPaymentRow(entry, patch) {
   if (!old) return { error: "تعذر قراءة اليومية (مشكلة اتصال) - جرّب تاني" };
   const cur = (old[entry.list] || [])[entry.idx];
   if (!cur || cur.bookingId !== entry.row.bookingId) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
-  const next = { ...old, [entry.list]: old[entry.list].map((x, i) => (i === entry.idx ? { ...x, ...patch } : x)) };
+  const fixed = { ...patch };
+  // بيان الصف فيه المبلغ "(+4000 EGP)": لما المبلغ يتعدّل البيان بيتعدّل معاه عشان اليومية تبان صح
+  if (patch.collectionAmt !== undefined && Number(patch.collectionAmt) !== Number(cur.collectionAmt)) fixed.collectionDesc = descWithAmount(cur.collectionDesc, cur.collectionAmt, patch.collectionAmt, cur.collectionCurrency || "EGP");
+  const next = { ...old, [entry.list]: old[entry.list].map((x, i) => (i === entry.idx ? { ...x, ...fixed } : x)) };
   const res = await applyCorrection(old, next);
   if (res.conflict) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
   return res;
