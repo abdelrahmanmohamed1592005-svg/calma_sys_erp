@@ -3,8 +3,10 @@ import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import { registerSW } from "virtual:pwa-register";
 import { installPrintFit } from "./lib/printFit";
+import { installGlobalErrorReporting, reportError } from "./lib/errorReport";
 
 installPrintFit();
+installGlobalErrorReporting();
 
 /*
   من غير الـ Error Boundary ده، أي خطأ برمجي غير متوقع في أي جزء من الواجهة
@@ -21,6 +23,7 @@ class ErrorBoundary extends React.Component {
   }
   componentDidCatch(error, info) {
     console.error("[Calma] خطأ غير متوقع:", error, info);
+    reportError("crash", error?.message || String(error), `${error?.stack || ""}\n${info?.componentStack || ""}`.slice(0, 2000));
   }
   render() {
     if (this.state.hasError) {

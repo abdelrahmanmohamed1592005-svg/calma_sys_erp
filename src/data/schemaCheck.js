@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
+import { reportDbError } from "../lib/errorReport";
 
 export { REQUIRED_SCHEMA_VERSION } from "./schemaVersion";
 import { REQUIRED_SCHEMA_VERSION } from "./schemaVersion";
@@ -12,7 +13,7 @@ export const isMissingSchemaObjectError = (e) => !!e && (isMissingFunctionError(
 export const OUTDATED_SCHEMA_MESSAGE = "قاعدة البيانات لسه ماتحدّثتش لآخر نسخة (لازم يتشغّل supabase/schema.sql كامل) - بلّغ المدير العام";
 
 // رسالة الخطأ اللي بتتعرض للمستخدم: لو السبب قاعدة قديمة نقول ده بدل رسالة تقنية بالإنجليزي
-export const friendlyDbError = (e) => (isMissingSchemaObjectError(e) ? OUTDATED_SCHEMA_MESSAGE : (e?.message || String(e)));
+export const friendlyDbError = (e) => { reportDbError("db", e); return isMissingSchemaObjectError(e) ? OUTDATED_SCHEMA_MESSAGE : (e?.message || String(e)); };
 
 /* بترجّع { ok: true } لو القاعدة على النسخة المطلوبة (أو أحدث)، { ok: false, version } لو أقدم، { ok: null } لو الفحص نفسه ماقدرش
    يتم (نت وقع مثلًا - مانحذّرش على أساسه). */

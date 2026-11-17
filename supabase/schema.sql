@@ -4193,7 +4193,45 @@ grant execute on function dev_settle_staff_cafeteria(int, text, text, text, nume
 -- العملة الافتراضية للحجز: جنيه مصري (قرار المالك)
 alter table bookings alter column currency set default 'EGP';
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 49 $$;
+-- ======================================================================
+-- ٤٧) سجل أخطاء السيستم: أي خطأ غير متوقع عند أي مستخدم بيتسجّل هنا (المدير العام والمطوّر بيشوفوه في سجل الحركة،
+--     وفحص الليل على GitHub بيبعت إيميل لو فيه أخطاء). بيتمسح لوحده بعد ٩٠ يوم.
+-- ======================================================================
+create table if not exists client_errors (
+  id bigint generated always as identity primary key,
+  at timestamptz not null default now(),
+  username text,
+  user_role text,
+  kind text not null default 'error',
+  message text not null,
+  detail text,
+  page text,
+  user_agent text
+);
+create index if not exists client_errors_at_idx on client_errors (at desc);
+alter table client_errors enable row level security;
+revoke all on client_errors from anon, authenticated;
+grant select on client_errors to authenticated;
+drop policy if exists "client errors select" on client_errors;
+create policy "client errors select" on client_errors for select using (is_gm());   -- is_gm = المدير العام + المطوّر
+
+create or replace function log_client_error(p_kind text, p_message text, p_detail text default null, p_page text default null, p_agent text default null)
+returns void language plpgsql security definer set search_path = public as $$
+declare u text; r text;
+begin
+  if auth.uid() is null or coalesce(btrim(p_message), '') = '' then return; end if;
+  select username, role into u, r from profiles where id = auth.uid();
+  -- حد أقصى ٦٠ خطأ في الساعة لكل مستخدم (جهاز فيه مشكلة متكررة مايملاش الجدول)
+  if (select count(*) from client_errors where username is not distinct from u and at > now() - interval '1 hour') >= 60 then return; end if;
+  insert into client_errors(username, user_role, kind, message, detail, page, user_agent)
+  values (u, r, left(coalesce(p_kind, 'error'), 20), left(p_message, 500), left(p_detail, 2000), left(p_page, 200), left(p_agent, 300));
+  delete from client_errors where at < now() - interval '90 days';
+end;
+$$;
+revoke all on function log_client_error(text, text, text, text, text) from public, anon;
+grant execute on function log_client_error(text, text, text, text, text) to authenticated;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 50 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

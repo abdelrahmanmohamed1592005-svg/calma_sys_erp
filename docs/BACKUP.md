@@ -52,48 +52,22 @@ pg_dump "postgresql://postgres.PROJECT-REF:PASSWORD@aws-0-REGION.pooler.supabase
 
 ---
 
-## الطريقة ٣: نسخة تلقائية كل ليلة بـ GitHub Actions (اختياري)
+## الطريقة ٣: نسخة تلقائية كل ليلة بـ GitHub Actions (جاهزة في الـ repo)
 
-تخلّي GitHub هو اللي يأخد النسخة يوميًا من غير ما تفتكر. **الـ repo لازم يكون Private**، والنسخة بتتشفّر قبل ما تتخزّن.
+الملف `.github/workflows/nightly.yml` بيشتغل كل ليلة الساعة ٣ الفجر بتوقيت القاهرة، وبيعمل ٣ حاجات (السكربت `scripts/nightly-check.sh`):
+1. **نسخة احتياطية مشفّرة** من قاعدة البيانات (`public` + `auth`)، بتتحفظ ٣٠ يوم في Actions ← الـ run ← Artifacts.
+2. **فحص تطابق الفلوس** (`supabase/ops/reconcile.sql`).
+3. **أخطاء السيستم** عند المستخدمين في آخر ٢٤ ساعة (جدول `client_errors`).
 
-1. في GitHub: Settings ← Secrets and variables ← Actions ← New repository secret، وضيف:
-   - `SUPABASE_DB_URL` = رابط الاتصال (Session pooler) بالباسورد.
-   - `BACKUP_PASSPHRASE` = عبارة سر طويلة (احفظها في مدير كلمات مرور - من غيرها النسخة متتفتحش).
-2. اعمل الملف `.github/workflows/backup.yml`:
+لو الفحص لقى خطأ في الفلوس أو أخطاء عند المستخدمين أو النسخة فشلت، التشغيل بيفشل و**GitHub بيبعت إيميل لصاحب الـ repo**. الملخص بيظهر في صفحة التشغيل نفسها.
 
-```yaml
-name: Nightly DB backup
-on:
-  schedule:
-    - cron: "0 2 * * *"   # كل يوم ٢ بعد منتصف الليل بتوقيت UTC
-  workflow_dispatch: {}
-jobs:
-  backup:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install PostgreSQL client
-        run: |
-          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-          wget -qO- https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /etc/apt/trusted.gpg.d/pgdg.asc >/dev/null
-          sudo apt-get update && sudo apt-get install -y postgresql-client-17
-      - name: Dump
-        env:
-          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: |
-          pg_dump "$DB_URL" --no-owner --no-privileges --schema=public --schema=auth --format=custom --file=backup.dump
-      - name: Encrypt
-        env:
-          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
-        run: gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase "$PASS" backup.dump
-      - uses: actions/upload-artifact@v4
-        with:
-          name: calma-backup-${{ github.run_id }}
-          path: backup.dump.gpg
-          retention-days: 30
-```
-- الملفات بتتحفظ في Actions ← الـ run ← Artifacts لمدة ٣٠ يوم (غيّر `retention-days` زي ما تحب، الحد الأقصى بيتحدد من إعدادات الـ repo).
-- لو نسخة Postgres عند Supabase أعلى من ١٧، غيّر رقم `postgresql-client-17` لنفس النسخة أو أعلى (شوفها من Project Settings ← Infrastructure).
-- افتح تبويب Actions كل فترة وتأكد إن آخر تشغيل نجح. وحمّل نسخة بإيدك دوريًا وخزّنها خارج GitHub.
+**التفعيل (مرة واحدة):** في GitHub: Settings ← Secrets and variables ← Actions ← New repository secret:
+- `SUPABASE_DB_URL` = Supabase ← زرار **Connect** ← **Session pooler** ← الرابط كامل بباسورد قاعدة البيانات. (لازم Session pooler مش Direct: أجهزة GitHub مابتدعمش IPv6.)
+- `BACKUP_PASSPHRASE` = عبارة سر طويلة لتشفير النسخة. احفظها في مدير كلمات مرور - من غيرها النسخة ماتتفتحش.
+
+بعدها: Actions ← Nightly check ← **Run workflow** عشان تجرّبه على طول. الـ repo لازم يفضل **Private**.
+
+**فك النسخة:** `gpg --decrypt calma-backup-YYYY-MM-DD.dump.gpg > backup.dump` وبعدها الاسترجاع زي "الاسترجاع" تحت.
 
 ---
 

@@ -315,7 +315,7 @@ export default function App() {
           {activeTab === "ledger" && <DailyLedger rooms={hotelRooms} bookings={hotelBookings} profiles={allProfiles} perms={perms} profile={currentProfile} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
           {activeTab === "bookings" && <BookingsPanel jumpQuery={jump?.query != null ? jump : null} onJumpDone={() => setJump(null)} rooms={hotelRooms} bookings={hotelBookings} perms={perms} role={currentProfile.role} profile={currentProfile} onInsertBooking={handleInsertBooking} onUpdateBooking={handleUpdateBooking} onRefresh={refreshAll} onLog={logActivity} showToast={showToast} pendingEditId={pendingEditBookingId} onConsumeEditRequest={() => setPendingEditBookingId(null)} dataVersion={dataVersion} />}
           {activeTab === "reports" && <ReportsPanel rooms={hotelRooms} bookings={hotelBookings} allRooms={rooms} allBookings={bookings} dataVersion={dataVersion} profile={currentProfile} />}
-          {activeTab === "activity" && <ActivityPanel activity={hotelActivity} />}
+          {activeTab === "activity" && <ActivityPanel activity={hotelActivity} showErrors={!!perms.manageUsers} />}
           {activeTab === "users" && <UsersPanel allRooms={rooms} onHotelsChanged={() => setDataVersion((v) => v + 1)} users={allProfiles} onRefresh={refreshProfiles} currentUsername={currentProfile.username} readOnly={!perms.manageUsers} canManageClaims={!!perms.manageClaims} onLog={logActivity} showToast={showToast} dataVersion={dataVersion} />}
         </React.Fragment>
       )}
