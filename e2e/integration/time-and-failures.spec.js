@@ -82,6 +82,22 @@ test("غادر مبكرًا بعد نص الليل (00:30): الزرار ظاه�
   expect((await env.q("select checkout::text, left_early from bookings where id = $1", [b]))[0]).toEqual({ checkout: today(), left_early: true });
 });
 
+test("نزيل خروجه النهارده ومشي بعد نص الليل: زرار 'النزيل خرج' بيسجّل خروجه والغرفة بتفضى والحساب زي ما هو", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 608, guest: "Leaves Tonight", start: -1, nights: 1, price: 1800, paid: 1800, currency: "EGP" });
+  await env.seedShift("ahmed", { key: "evening", day: yesterday() });
+  await setCairoTime(page, 1, 0);
+  await page.goto("/");
+  await login(page, "ahmed");
+  await goTab(page, "لوحة الغرف");
+  await openRoom(page, 608);
+  await expect(page.getByTestId("early-leave")).toHaveCount(0);        // خروجه النهارده - مش "مبكر"
+  await page.getByTestId("checkout-now").getByRole("button").first().click();
+  await page.getByTestId("checkout-now").getByRole("button", { name: /تأكيد/ }).click();
+  await expect(toast(page)).toContainText("الغرفة فضيت");
+  expect((await env.q("select status, checkout::text, total_room::float, left_early from bookings where id = $1", [b]))[0]).toEqual({ status: "تم تسجيل الخروج", checkout: today(), total_room: 1800, left_early: false });
+});
+
 test.describe("تبديل الشيفتات والشيفت الليلي", () => {
   test("الموظف المسائي يبدأ 17:00: الصباحي (لسه مفتوح) بيتقفل تلقائي وعهدته بتتنقل", async ({ page, env }) => {
     await users(env);

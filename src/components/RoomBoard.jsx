@@ -234,6 +234,16 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     if (left > 0) msg += ` — لسه متبقي على النزيل ${fmt(left)} ${booking.currency}`;
     showToast(msg);
   }
+  // نزيل خروجه النهارده ومشي بدري عن 12 الضهر (حتى بعد نص الليل): تسجيل خروج دلوقتي - الحساب زي ما هو والغرفة بتفضى على طول
+  async function checkoutNow(booking) { return guarded("checkout:" + booking.id, async () => {
+    if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
+    const res = await onUpdateBooking(booking.id, { ...booking, status: "تم تسجيل الخروج" });
+    if (res?.error) { showToast(res.error); return; }
+    const saved = res?.data || { ...booking, status: "تم تسجيل الخروج" };
+    onLog(`تسجيل خروج - ${roomLabel(rooms, booking.room)} - ${booking.guestName}`);
+    const left = bookingAmountDue(saved);
+    showToast(`النزيل ${booking.guestName} خرج - الغرفة فضيت${left > 0 ? ` — لسه متبقي عليه ${fmt(left)} ${booking.currency}` : ""}`);
+  }); }
   // معاينة قبل التأكيد: هيتحاسب على كام ليلة
   function earlyLeavePreview(booking) {
     const patch = earlyLeavePatch(booking, date, "plain");
@@ -545,6 +555,9 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                 )}
                 {occupiedNow && !status.departingToday && perms.editRoomStatus && !offShift && (
                   <span data-testid="early-leave"><TwoStepButton label="غادر مبكرًا (تقصير الإقامة)" confirmLabel={`تأكيد المغادرة المبكرة؟ ${earlyLeavePreview(b)}`} onConfirm={() => earlyLeave(b)} /></span>
+                )}
+                {occupiedNow && status.departingToday && b && b.status !== "تم تسجيل الخروج" && perms.editRoomStatus && !offShift && (
+                  <span data-testid="checkout-now"><TwoStepButton label="النزيل خرج (تسجيل خروج دلوقتي)" confirmLabel={`تأكيد خروج ${b.guestName}؟ (خروجه النهارده - الحساب مش هيتغيّر والغرفة هتفضى)`} onConfirm={() => checkoutNow(b)} /></span>
                 )}
                 {(perms.editBookings || perms.editBookingPrice) && !offShift && onEditBooking && <button className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} onClick={() => onEditBooking(b.id)}><Pencil size={13} /> تعديل الحجز</button>}
                 {perms.moveGuest && b.status !== "ملغي" && b.checkout > date && (
