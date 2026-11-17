@@ -1,6 +1,6 @@
 // سجل أخطاء السيستم: خطأ غير متوقع عند موظف بيتسجّل لوحده، والمدير العام بيشوفه في سجل الحركة، والموظف مايقراش السجل.
 import { test, expect } from "../fixtures";
-import { login, goTab, logout } from "../ui";
+import { login, goTab, logout, shiftDay, myShiftKey } from "../ui";
 
 test("خطأ غير متوقع في متصفح الموظف بيتسجّل، والمدير العام بيشوفه في سجل الحركة", async ({ page, env }) => {
   await env.seedUser("boss", "gm", "المدير");
@@ -24,4 +24,29 @@ test("خطأ غير متوقع في متصفح الموظف بيتسجّل، و�
   await expect(box).toContainText("1 في آخر ٢٤ ساعة");
   await box.locator("summary").first().click();
   await expect(box.getByTestId("system-error-row").first()).toContainText("boom-e2e-test");
+});
+
+test("الدفعة المسجّلة على حجز في اليومية ماتتعدّلش بالإيد: الخانة مقفولة في الشاشة، والتعديل المباشر بيترفض من القاعدة", async ({ page, env }) => {
+  await env.seedUser("ahmed", "staff", "أحمد");
+  const b = await env.seedBooking({ room: 603, guest: "Linked Guest", start: 0, nights: 2, price: 500, paid: 0, currency: "EGP", anchor: "shift" });
+  await env.seedShift("ahmed", {});
+  const pay = await env.api("ahmed", "POST", "/rest/v1/rpc/record_booking_payment", { p_booking: b, p_amount: 800, p_method: "كاش", p_details: {}, p_note: "تحصيل", p_expected: null });
+  expect(pay.status, JSON.stringify(pay.body)).toBeLessThan(300);
+  // تعديل مباشر لمبلغ الدفعة المربوطة (زي اللي كان بيحصل من الشاشة) بيترفض والحجز واليومية فاضلين متطابقين
+  const rec = (await env.q("select rows from shift_records"))[0];
+  const tampered = rec.rows.map((r) => (r.bookingId === b ? { ...r, collectionAmt: "" } : r));
+  const bad = await env.api("ahmed", "PATCH", `/rest/v1/shift_records?date=eq.${shiftDay()}&shift_key=eq.${myShiftKey()}`, { rows: tampered });
+  expect(bad.status).toBeGreaterThanOrEqual(400);
+  expect(JSON.stringify(bad.body)).toContain("ماتتعدّلش بالإيد");
+  expect(Number((await env.q("select rows from shift_records"))[0].rows.find((r) => r.bookingId === b).collectionAmt)).toBe(800);
+  // صف غرفة تانية (مش مربوط بحجز) بيتعدّل عادي
+  const ok = await env.api("ahmed", "PATCH", `/rest/v1/shift_records?date=eq.${shiftDay()}&shift_key=eq.${myShiftKey()}`, { rows: rec.rows.map((r) => (r.room === 605 && !r.bookingId ? { ...r, collectionAmt: 50, collectionDesc: "تحصيل يدوي" } : r)) });
+  expect(ok.status, JSON.stringify(ok.body)).toBeLessThan(300);
+  // في الشاشة: خانات الدفعة المربوطة مقفولة ومعاها توضيح
+  await page.goto("/");
+  await login(page, "ahmed");
+  await goTab(page, "اليومية");
+  const row = page.locator("tr[data-linked='true']", { hasText: "603" }).first();
+  await expect(row.getByTestId("ledger-linked-note")).toBeVisible();
+  await expect(row.locator("input[type='number']").first()).toBeDisabled();
 });

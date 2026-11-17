@@ -33,7 +33,8 @@ select t.eq('H3 لسه متحصّل', t.f('H3', 'settled'), 'true');
 select t.reject('H3 مدير الحجوزات ميغيّرش المدفوع', t.upd('res1', 'H3', 'amount_paid = 10'), 'مش بتعديل مباشر');
 
 -- (ب) تحصيل الكافيتيريا في اليومية
-select t.pass('H4 عمود cafeteria_rows موجود وبيتحدّث من الموظف صاحب الشيفت', t.dml('st1', $q$update shift_records set cafeteria_rows = '[{"kind":"staff","collectionAmt":10}]'::jsonb where date = hotel_today() and shift_key = 'morning'$q$));
+select t.reject('H4 مسح دفعة كافيتيريا مربوطة بحجز من اليومية مباشرة مرفوض', t.dml('st1', $q$update shift_records set cafeteria_rows = '[{"kind":"staff","collectionAmt":10}]'::jsonb where date = hotel_today() and shift_key = 'morning'$q$), 'ماتتعدّلش بالإيد');
+select t.pass('H4 عمود cafeteria_rows موجود وبيتحدّث من الموظف صاحب الشيفت', t.dml('st1', $q$update shift_records set cafeteria_rows = coalesce(cafeteria_rows, '[]'::jsonb) || '[{"kind":"staff","collectionAmt":10}]'::jsonb where date = hotel_today() and shift_key = 'morning'$q$));
 
 -- (ج) كافيتيريا الاستاف
 select t.reject('H5 موظف مايضيفش استهلاك بالـ API مباشرة (لازم من اليومية)', t.dml('st1', $q$insert into staff_cafeteria(consumer_username, consumer_name, description, amount, currency, shift_key) values ('st2', 'مروة', 'قهوة', 40, 'EGP', 'morning')$q$), 'مش بإضافة مباشرة');
