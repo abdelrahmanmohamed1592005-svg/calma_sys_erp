@@ -1,5 +1,4 @@
 import { supabase } from "../lib/supabaseClient";
-import { payLineApiRate, payLineCovered } from "../domain/payLines";
 import { descWithAmount } from "../domain/ledgerDesc";
 import { fetchAll } from "./page";
 import { friendlyDbError } from "./schemaCheck";
@@ -163,7 +162,11 @@ export async function editLedgerPaymentRow(entry, patch, opts = {}) {
   if (!cur || cur.bookingId !== entry.row.bookingId) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
   const fixed = { ...patch };
   // بيان الصف فيه المبلغ "(+4000 EGP)": لما المبلغ يتعدّل البيان بيتعدّل معاه عشان اليومية تبان صح
-  if (patch.collectionAmt !== undefined && Number(patch.collectionAmt) !== Number(cur.collectionAmt)) fixed.collectionDesc = descWithAmount(cur.collectionDesc, cur.collectionAmt, patch.collectionAmt, cur.collectionCurrency || "EGP");
+  const newCur = patch.collectionCurrency || cur.collectionCurrency || "EGP";
+  if ((patch.collectionAmt !== undefined && Number(patch.collectionAmt) !== Number(cur.collectionAmt)) || newCur !== (cur.collectionCurrency || "EGP")) {
+    const base = newCur !== (cur.collectionCurrency || "EGP") ? String(cur.collectionDesc || "").replace(` ${cur.collectionCurrency || "EGP"})`, ` ${newCur})`) : cur.collectionDesc;
+    fixed.collectionDesc = descWithAmount(base, cur.collectionAmt, patch.collectionAmt ?? cur.collectionAmt, newCur);
+  }
   let next = { ...old, [entry.list]: old[entry.list].map((x, i) => (i === entry.idx ? { ...x, ...fixed } : x)) };
   // رسوم فيزا على الدفعة دي: صف "رسوم فيزا" في نفس اليومية - التصحيح بيزوّد إجمالي النزيل (extras.visaFee) والمدفوع مع بعض
   const fee = Math.round((Number(opts.visaFee) || 0) * 100) / 100;
@@ -180,8 +183,8 @@ export async function editLedgerPaymentRow(entry, patch, opts = {}) {
   return res;
 }
 
-/* تقسيم دفعة متسجّلة على حجز / تغيير عملتها: الصف بيتبدّل بسطور جديدة (كل سطر بمبلغه وعملته ووسيلته) في نفس اليومية.
-   العملة التانية بسعر صرف بتتسجّل صف بسعر صرف (fxCovered = اللي بيغطيه من عملة الحجز)، ورسوم الفيزا صف لوحده.
+/* تعديل دفعة متسجّلة على حجز مباشرة: الصف بيتبدّل بسطر أو أكتر (كل سطر بمبلغه ووسيلته - نفس العملة) في نفس اليومية،
+   ورسوم الفيزا صف لوحده.
    بنفس آلية التصحيح: المدفوع على الحجز والخزينة والعهدة بيتظبطوا مع بعض. */
 export async function splitLedgerPaymentRow(entry, lines, booking) {
   if (entry.list !== "rows") return { error: "الدفعة دي بتتعدّل من تعديل المبلغ بس" };
@@ -198,11 +201,10 @@ export async function splitLedgerPaymentRow(entry, lines, booking) {
     if (!(amt > 0)) continue;
     const details = cleanPaymentDetailsFor(l.method, l.details);
     const row = { ...base, collectionAmt: amt, collectionCurrency: l.currency, collectionMethod: l.method, paymentDetails: details };
-    if (l.currency === bc) row.collectionDesc = `تحصيل${who} (+${amt} ${bc})`;
-    else if (payLineApiRate(l, bc) > 0) {
-      const covered = payLineCovered(l, bc);
-      Object.assign(row, { fxCovered: covered, fxRate: payLineApiRate(l, bc), fxBookingCurrency: bc, collectionDesc: `تحصيل${who} (+${amt} ${l.currency} = ${covered} ${bc})` });
-    } else row.collectionDesc = `تحصيل${who} (+${amt} ${l.currency})`;
+    // أول جزء بنفس عملة الدفعة بيحتفظ ببيانها الأصلي (المبلغ بس بيتعدّل)، والأجزاء التانية بيان جديد
+    row.collectionDesc = !made.length && l.currency === (cur.collectionCurrency || bc) && cur.collectionDesc
+      ? descWithAmount(cur.collectionDesc, cur.collectionAmt, amt, l.currency)
+      : `تحصيل${who} (+${amt} ${l.currency})`;
     made.push(row);
     const fee = l.method === "فيزا" && l.currency === bc ? Math.round((Number(l.fee) || 0) * 100) / 100 : 0;
     if (fee > 0) fees.push({ ...base, visaFee: true, collectionAmt: fee, collectionCurrency: bc, collectionMethod: "فيزا", paymentDetails: details, collectionDesc: `رسوم فيزا${who} (+${fee} ${bc})` });

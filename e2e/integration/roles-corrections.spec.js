@@ -431,15 +431,15 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   await page.getByTestId("edit-price").first().click();
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   // محدش يدفع فوق الإجمالي (900): تعديل الدفعة لـ 1000 بيترفض والمدفوع واليومية مابيتغيّروش
-  await page.getByTestId("edit-payment-amount").fill("1000");
+  await page.getByTestId("edit-pay-0-amount-0").fill("1000");
   await page.getByTestId("edit-payment-save").click();
   await expect(toast(page)).toContainText("أكتر من الإجمالي");
   expect(Number((await booking(env, b)).amount_paid)).toBe(500);
   expect(Number((await rec(env, day, key)).rows.find((x) => x.bookingId === b).collectionAmt)).toBe(500);
-  await page.getByTestId("edit-payment-amount").fill("400");
-  await page.getByTestId("edit-payment-method").selectOption("فيزا");
-  await page.getByTestId("edit-payment-last4").fill("5555");
-  await page.getByTestId("edit-payment-visa-fee").fill("50");          // رسوم فيزا على الدفعة القديمة
+  await page.getByTestId("edit-pay-0-amount-0").fill("400");
+  await page.getByTestId("edit-pay-0-method-0").selectOption("فيزا");
+  await page.getByTestId("edit-pay-0-0-last4").fill("5555");
+  await page.getByTestId("edit-pay-0-fee-0").fill("50");          // رسوم فيزا على الدفعة القديمة
   await page.getByTestId("edit-payment-save").click();
   await expect(toast(page)).toContainText("اتضافت رسوم فيزا 50 EGP");
   const after = await env.q("select amount_paid::float, (extras ->> 'visaFee')::float fee from bookings where id = $1", [b]);
@@ -458,7 +458,7 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   expect(rows.filter((x) => x.level === "خطأ")).toEqual([]);
 });
 
-test("دفعة اتمسح مبلغها من اليومية: بتظهر في 'تعديل المدفوع' عند المطوّر وبترجع للحجز واليومية مع بعض", async ({ page, env }) => {
+test("دفعة اتمسح مبلغها من اليومية: مابتظهرش في 'تعديل المدفوع' (الممسوح مخفي)", async ({ page, env }) => {
   await users(env);
   const d1 = cairoDate(-1);
   const b = await env.seedBooking({ room: 612, guest: "Erased Pay", start: -1, nights: 3, price: 1000, paid: 0, currency: "EGP" });
@@ -468,11 +468,8 @@ test("دفعة اتمسح مبلغها من اليومية: بتظهر في 'ت�
   await goTab(page, "الحجوزات");
   await page.getByRole("button", { name: "تعديل الحجز", exact: true }).first().click();
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
-  await page.getByTestId("edit-payment-amount").fill("3000");
-  await page.getByTestId("edit-payment-save").click();
-  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
-  expect(Number((await booking(env, b)).amount_paid)).toBe(3000);
-  expect(Number((await rec(env, d1, "morning")).rows.find((x) => x.bookingId === b).collectionAmt)).toBe(3000);
+  await expect(page.getByTestId("edit-payments")).toContainText("مفيش دفعات متسجّلة");
+  await expect(page.getByTestId("edit-payment-row")).toHaveCount(0);
 });
 
 test("المطوّر: زرار إرجاع حجز اتلغى بالغلط، وزرار إلغاء مغادرة مبكرة اتسجّلت بالغلط (بيرجع تاريخ الخروج والإجمالي الأصليين)", async ({ page, env }) => {
@@ -549,7 +546,7 @@ test("مدير الشيفت بيعدّل حجز نزيل مشي (غادر مبك
   const card = page.getByTestId("booking-card").filter({ hasText: "Gone Guest" });
   await card.getByTestId("edit-price").click();
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
-  await page.getByTestId("edit-payment-amount").fill("550");
+  await page.getByTestId("edit-pay-0-amount-0").fill("550");
   await page.getByTestId("edit-payment-save").click();
   await expect(toast(page)).toContainText("اتعدّلت الدفعة");
   expect(Number((await booking(env, b)).amount_paid)).toBe(550);
@@ -571,7 +568,7 @@ test("المطوّر بيلغي تسجيل خروج اتعمل بالغلط: ا�
   expect((await env.api("ahmed", "POST", "/rest/v1/rpc/dev_restore_booking", { p_booking: b, p_what: "uncheckout" })).status).toBeGreaterThanOrEqual(400);
 });
 
-test("تعديل الحجز: مدير الشيفت بيحصّل من الفورم بأكتر من وسيلة وعملة في نفس المرة (نص كاش ونص فيزا وجزء بالدولار)", async ({ page, env }) => {
+test("تعديل الحجز: مدير الشيفت بيحصّل من الفورم بأكتر من وسيلة في نفس المرة (كاش + فيزا + انستاباي)", async ({ page, env }) => {
   await users(env);
   const b = await env.seedBooking({ room: 609, guest: "Split Edit", start: 0, nights: 2, price: 500, paid: 0, currency: "EGP", anchor: "shift" });
   await page.goto("/");
@@ -585,17 +582,18 @@ test("تعديل الحجز: مدير الشيفت بيحصّل من الفور�
   await page.getByTestId("advance-extra-method-0").selectOption("فيزا");
   await page.getByTestId("advance-extra-0-last4").fill("1111");
   await page.getByTestId("advance-add-line").click();
-  await page.getByTestId("advance-extra-amount-1").fill("6");            // 6 دولار × 50 = 300 جنيه
-  await page.getByTestId("advance-extra-currency-1").selectOption("USD");
-  await page.getByTestId("advance-extra-rate-1").fill("50");
+  await page.getByTestId("advance-extra-amount-1").fill("300");          // 300 انستاباي
+  await page.getByTestId("advance-extra-method-1").selectOption("تحويل بنكي / انستاباي");
+  await page.getByTestId("advance-extra-1-name").fill("Ali");
+  await page.getByTestId("advance-extra-1-phone").fill("01001234567");
   await page.getByRole("button", { name: /حفظ الحجز/ }).click();
   await expect(toast(page)).toContainText("تم الحفظ");
   expect(Number((await env.q("select amount_paid from bookings where id = $1", [b]))[0].amount_paid)).toBe(1000);
   const rows = await env.q("select r->>'collectionCurrency' cur, r->>'collectionMethod' m, calma_num(r->>'collectionAmt')::float amt from shift_records s, jsonb_array_elements(s.rows) r where r->>'bookingId' = $1 and calma_num(r->>'collectionAmt') > 0 order by 3", [b]);
-  expect(rows.map((r) => `${r.amt} ${r.cur} ${r.m}`)).toEqual(["6 USD كاش", "300 EGP فيزا", "400 EGP كاش"]);
+  expect(rows.map((r) => `${r.amt} ${r.cur} ${r.m}`).sort()).toEqual(["300 EGP فيزا", "300 EGP تحويل بنكي / انستاباي", "400 EGP كاش"].sort());
 });
 
-test("تعديل المدفوع: مدير الشيفت بيقسّم دفعة متسجّلة غلط (3600 كاش) لجزء بالدولار وجزء فيزا بالجنيه - المدفوع والخزينة بيتظبطوا", async ({ page, env }) => {
+test("تعديل المدفوع مباشر: مدير الشيفت بيعدّل دفعة متسجّلة غلط (3600 كاش) لـ 2500 كاش + جزء تاني 1100 فيزا - المدفوع والخزينة بيتظبطوا", async ({ page, env }) => {
   await users(env);
   const day = shiftDay(), key = myShiftKey();
   const b = await env.seedBooking({ room: 614, guest: "Split Fix", start: 0, nights: 2, price: 1800, paid: 3600, currency: "EGP", anchor: "shift" });
@@ -605,23 +603,90 @@ test("تعديل المدفوع: مدير الشيفت بيقسّم دفعة م�
   await goTab(page, "الحجوزات");
   await page.getByTestId("edit-price").first().click();
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
-  await page.getByTestId("edit-payment-split").first().click();
-  // السطر الأول بيبدأ بالدفعة زي ما هي: نغيّره لـ 50 دولار كاش بسعر 50 (= 2500 جنيه)
-  await page.getByTestId("split-pay-currency-0").selectOption("USD");
-  await page.getByTestId("split-pay-amount-0").fill("50");
-  await page.getByTestId("split-pay-rate-0").fill("50");
-  // والباقي 1100 جنيه فيزا
-  await page.getByTestId("split-pay-add").click();
-  await page.getByTestId("split-pay-amount-1").fill("1100");
-  await page.getByTestId("split-pay-method-1").selectOption("فيزا");
-  await page.getByTestId("split-pay-1-last4").fill("7777");
-  await page.getByTestId("edit-payment-split-save").click();
+  // تعديل مباشر: الدفعة (3600 كاش) بقت 2500 كاش + جزء تاني 1100 فيزا
+  await page.getByTestId("edit-pay-0-amount-0").fill("2500");
+  await page.getByTestId("edit-pay-0-add").click();
+  await page.getByTestId("edit-pay-0-amount-1").fill("1100");
+  await page.getByTestId("edit-pay-0-method-1").selectOption("فيزا");
+  await page.getByTestId("edit-pay-0-1-last4").fill("7777");
+  await page.getByTestId("edit-payment-save").click();
   await expect(toast(page)).toContainText("اتعدّلت الدفعة");
   expect(Number((await booking(env, b)).amount_paid)).toBe(3600);
   const r = await rec(env, day, key);
   const mine = r.rows.filter((x) => x.bookingId === b && Number(x.collectionAmt) > 0).map((x) => `${x.collectionAmt} ${x.collectionCurrency} ${x.collectionMethod}${x.fxCovered != null ? " =" + x.fxCovered : ""}`);
-  expect(mine.sort()).toEqual(["1100 EGP فيزا", "50 USD كاش =2500"].sort());
+  expect(mine.sort()).toEqual(["1100 EGP فيزا", "2500 EGP كاش"].sort());
   const res = await env.pool.query(readFileSync(new URL("../../supabase/ops/reconcile.sql", import.meta.url), "utf8"));
   const rows = (Array.isArray(res) ? res : [res]).flatMap((x) => x.rows || []);
   expect(rows.filter((x) => x.level === "خطأ")).toEqual([]);
+});
+
+test("الدفع من كارت الغرفة بأكتر من وسيلة في نفس المرة: المبلغ الأول فاضي بياخد الباقي بعد الكاش", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 615, guest: "Two Ways", start: 0, nights: 2, price: 500, paid: 0, currency: "EGP", anchor: "shift" });
+  await page.goto("/");
+  await login(page, "ahmed");
+  await claimShift(page);
+  await goTab(page, "لوحة الغرف");
+  await openRoom(page, 615);
+  const panel = page.getByTestId("pay-panel");
+  await panel.getByTestId("collect-method").selectOption("فيزا");
+  await panel.getByTestId("pay-last4").fill("1234");
+  await panel.getByTestId("pay-more-add").click();
+  await panel.getByTestId("pay-more-amount-0").fill("400");             // 400 كاش، والفيزا بتاخد الباقي (600)
+  await panel.getByTestId("pay-record").click();
+  await expect(toast(page)).toContainText("الحجز مدفوع بالكامل");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(1000);
+  const rows = await env.q("select r->>'collectionMethod' m, calma_num(r->>'collectionAmt')::float amt from shift_records s, jsonb_array_elements(s.rows) r where r->>'bookingId' = $1 and calma_num(r->>'collectionAmt') > 0 order by 2", [b]);
+  expect(rows.map((r) => `${r.amt} ${r.m}`)).toEqual(["400 كاش", "600 فيزا"]);
+});
+
+test("تمديد بعملة تانية: الليالي الجديدة بتتسجّل حجز تكملة بالجنيه (سعر الليلة بعملة واحدة) وبتتدفع بيها", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 616, guest: "Dollar Guest", start: -1, nights: 2, price: 40, paid: 80, currency: "USD", anchor: "shift" });
+  await page.goto("/");
+  await login(page, "ahmed");
+  await claimShift(page);
+  await goTab(page, "لوحة الغرف");
+  await openRoom(page, 616);
+  await page.getByTestId("extend-currency").selectOption("EGP");
+  await page.getByTestId("extend-price").fill("1900");
+  await page.getByTestId("extend-pay-add").click();
+  await page.getByTestId("extend-pay-amount-0").fill("1900");
+  await page.getByTestId("extend-go").click();
+  await expect(toast(page)).toContainText("حجز تكملة");
+  const orig = (await env.q("select checkout::text, currency, total_room::float from bookings where id = $1", [b]))[0];
+  expect(orig).toEqual({ checkout: cairoDate(1), currency: "USD", total_room: 80 });            // الحجز الأصلي زي ما هو
+  const cont = (await env.q("select checkin::text, checkout::text, currency, total_room::float, amount_paid::float from bookings where guest_name = 'Dollar Guest' and id <> $1", [b]))[0];
+  expect(cont).toEqual({ checkin: cairoDate(1), checkout: cairoDate(2), currency: "EGP", total_room: 1900, amount_paid: 1900 });
+});
+
+test("مدير الشيفت بيعدّل ويمسح الكافيتيريا: استهلاك الاستاف وتحصيل الكافيتيريا (المبلغ والوسيلة)", async ({ page, env }) => {
+  await users(env);
+  await page.goto("/");
+  await login(page, "mona");
+  await claimShift(page);
+  await page.getByTestId("staff-cafe-who").selectOption("sara");
+  await page.getByTestId("staff-cafe-amount").fill("40");
+  await page.getByTestId("staff-cafe-paymode").selectOption("كاش");
+  await page.getByTestId("staff-cafe-add").click();
+  await expect(toast(page)).toContainText("السداد");
+  // تعديل تحصيل الكافيتيريا: 40 كاش ← 35 فيزا
+  await page.getByTestId("cafeteria-row").first().getByTestId("cafe-row-edit").click();
+  await page.getByTestId("cafe-row-amount").fill("35");
+  await page.getByTestId("cafeteria-row").first().locator("select").first().selectOption("فيزا");
+  await page.getByTestId("cafe-row-save").click();
+  await expect(toast(page)).toContainText("تم تعديل تحصيل الكافيتيريا");
+  const row = (await env.q("select cafeteria_rows from shift_records"))[0].cafeteria_rows[0];
+  expect([Number(row.collectionAmt), row.collectionMethod]).toEqual([35, "فيزا"]);
+  // تعديل الاستهلاك نفسه (المبلغ)
+  await page.getByTestId("staff-cafe-entry").first().getByTestId("staff-cafe-fix").click();
+  await page.getByTestId("staff-cafe-fix-amount").fill("45");
+  await page.getByTestId("staff-cafe-fix-save").click();
+  await expect(toast(page)).toContainText("تم تعديل الاستهلاك");
+  expect(Number((await env.q("select amount from staff_cafeteria"))[0].amount)).toBe(45);
+  // مسح تحصيل الكافيتيريا
+  await page.getByTestId("cafeteria-row").first().getByTestId("cafe-row-edit").click();
+  await page.getByTestId("cafe-row-delete").click();
+  await expect(toast(page)).toContainText("اتمسح تحصيل الكافيتيريا");
+  await expect(page.getByTestId("cafeteria-row")).toHaveCount(0);
 });

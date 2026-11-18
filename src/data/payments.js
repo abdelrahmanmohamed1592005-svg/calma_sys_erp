@@ -7,7 +7,6 @@ import { isMissingFunctionError, OUTDATED_SCHEMA_MESSAGE } from "./schemaCheck";
 
 // خطأ شبكة (مفيش كود من الـ API): ممكن العملية تكون اتسجّلت فعلًا والرد بس هو اللي ضاع
 import { isNetworkError, reportDbError } from "../lib/errorReport";
-import { payLineApiRate } from "../domain/payLines";
 const UNCERTAIN_NOTE = " - مش متأكدين إن العملية اتسجّلت (النت قطع): راجع المدفوع/اليومية قبل ما تعيد التسجيل عشان ما يتكرّرش";
 
 async function rpc(name, args) {
@@ -62,9 +61,7 @@ export const devRestoreBooking = (bookingId, what) => rpc("dev_restore_booking",
 export const devDeleteBooking = (bookingId) => rpc("dev_delete_booking", { p_booking: bookingId });
 export const devDeleteShift = ({ hotelId, date, shiftKey }) => rpc("dev_delete_shift", { p_hotel: hotelId, p_date: date, p_key: shiftKey });
 
-/* تسجيل سطور دفع (وسيلة أو أكتر / أي عملة) على حجز - كل سطر بدالته:
-   عملة الحجز = تحصيل عادي (+ رسوم فيزا)، عملة تانية بسعر صرف = دفعة بتغطي من عملة الحجز،
-   عملة تانية من غير سعر = سداد خدمات بالعملة دي. بترجع { done: [نص], errors: [نص] } */
+/* تسجيل سطور دفع على حجز: كل سطر بوسيلته (عملة الحجز = تحصيل عادي + رسوم فيزا، عملة تانية = سداد خدمات بالعملة دي). بترجع { done, errors } */
 export async function recordPayLines(booking, lines, note = "تحصيل") {
   const done = [], errors = [];
   for (const l of lines) {
@@ -73,8 +70,8 @@ export async function recordPayLines(booking, lines, note = "تحصيل") {
     const label = `${amount} ${l.currency} ${l.method}`;
     const details = l.details || {};
     let r;
+    // عملة الحجز = الليالي (والخدمات بنفس العملة)؛ عملة تانية = خدمات بالعملة دي (من غير سعر صرف)
     if (l.currency === booking.currency) r = await recordBookingPayment({ bookingId: booking.id, amount, method: l.method, details, note });
-    else if (payLineApiRate(l, booking.currency) > 0) r = await recordBookingPaymentFx({ bookingId: booking.id, amount, currency: l.currency, rate: payLineApiRate(l, booking.currency), method: l.method, details, note });
     else r = await recordBookingPaymentOther({ bookingId: booking.id, amount, currency: l.currency, method: l.method, details, note });
     if (r.error) { errors.push(`${label}: ${r.error}`); continue; }
     done.push(label);

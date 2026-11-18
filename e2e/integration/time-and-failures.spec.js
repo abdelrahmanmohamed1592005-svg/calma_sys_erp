@@ -210,7 +210,7 @@ test.describe("الحجز الملغي مبيعطّلش الغرفة", () => {
 });
 
 test.describe("تمديد بعد معاد الخروج", () => {
-  test("معاد الخروج 2 الضهر: الساعة 1:40 النزيل لسه في الغرفة، بيتمدّد ويدفع التمديد بأكتر من وسيلة وعملة في نفس المرة، وبعد 2 الغرفة بتفضى", async ({ page, env }) => {
+  test("معاد الخروج 2 الضهر: الساعة 1:40 النزيل لسه في الغرفة، بيتمدّد ويدفع التمديد بأكتر من وسيلة في نفس المرة، وبعد 2 الغرفة بتفضى", async ({ page, env }) => {
     await users(env);
     const b = await env.seedBooking({ room: 611, guest: "Late Leaver", start: -2, nights: 2, price: 300, paid: 600, currency: "EGP" });
     await env.seedShift("ahmed", { key: "morning", day: today() });
@@ -220,7 +220,7 @@ test.describe("تمديد بعد معاد الخروج", () => {
     await openRoom(page, 611);
     await expect(page.getByTestId("departing-today")).toContainText("2 الضهر");
     await expect(page.getByTestId("checkout-now")).toHaveCount(1);         // ممكن يتسجّل خروجه لو مشي قبل 1
-    // تمديد ليلة (300) ودفعها في نفس المرة: 100 كاش + 50 فيزا + 3 دولار بسعر 50 (= 150 جنيه)
+    // تمديد ليلة (300) ودفعها في نفس المرة: 100 كاش + 50 فيزا + 150 كاش تاني
     await page.getByTestId("extend-pay-add").click();
     await page.getByTestId("extend-pay-amount-0").fill("100");
     await page.getByTestId("extend-pay-add").click();
@@ -228,16 +228,14 @@ test.describe("تمديد بعد معاد الخروج", () => {
     await page.getByTestId("extend-pay-method-1").selectOption("فيزا");
     await page.getByTestId("extend-pay-1-last4").fill("4321");
     await page.getByTestId("extend-pay-add").click();
-    await page.getByTestId("extend-pay-amount-2").fill("3");
-    await page.getByTestId("extend-pay-currency-2").selectOption("USD");
-    await page.getByTestId("extend-pay-rate-2").fill("50");
+    await page.getByTestId("extend-pay-amount-2").fill("150");
     await page.getByTestId("extend-go").click();
     await expect(toast(page)).toContainText("تم تمديد الحجز");
     await expect(toast(page)).toContainText("اتحصّل");
     const row = (await env.q("select checkout::text, total_room::float, amount_paid::float from bookings where id = $1", [b]))[0];
     expect(row).toEqual({ checkout: cairoDate(1), total_room: 900, amount_paid: 900 });
     const rows = (await rec(env, "ahmed")).rows.filter((x) => x.bookingId === b && Number(x.collectionAmt) > 0);
-    expect(rows.map((x) => `${x.collectionAmt} ${x.collectionCurrency} ${x.collectionMethod}`).sort()).toEqual(["100 EGP كاش", "3 USD كاش", "50 EGP فيزا"].sort());
+    expect(rows.map((x) => `${x.collectionAmt} ${x.collectionCurrency} ${x.collectionMethod}`).sort()).toEqual(["250 EGP كاش", "50 EGP فيزا"].sort());   // الكاش بيتجمّع في صف واحد
 
     // الساعة 2:05: النزيل اللي خروجه النهارده خرج - الغرفة فضيت ومفيش تمديد
     const c = await env.seedBooking({ room: 612, guest: "Too Late", start: -1, nights: 1, price: 300, currency: "EGP" });

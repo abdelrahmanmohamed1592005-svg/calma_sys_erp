@@ -4666,7 +4666,36 @@ begin
 end;
 $$;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 58 $$;
+-- --------------------------------------------------------------------------
+-- 56) مدير الشيفت بيعدّل ويمسح الكافيتيريا (نزلاء واستاف) زي المطوّر: استهلاك الاستاف (المبلغ/البيان/المسح)
+--     وتحصيل الكافيتيريا في اليومية (المبلغ/الوسيلة/العملة - من تصحيح اليومية)
+-- --------------------------------------------------------------------------
+create or replace function can_fix_staff_cafeteria()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and role in ('accounts', 'dev', 'shift_manager') and active = true);
+$$;
+revoke all on function can_fix_staff_cafeteria() from public, anon;
+grant execute on function can_fix_staff_cafeteria() to authenticated;
+
+create or replace function lock_staff_cafeteria_money()
+returns trigger language plpgsql as $$
+begin
+  if auth.uid() is null or coalesce(current_setting('calma.staff_rpc', true), '') = '1' then
+    return new;
+  end if;
+  if TG_OP = 'UPDATE' and (is_dev() or is_shift_manager()) then return new; end if;
+  if TG_OP = 'INSERT' then
+    raise exception 'استهلاك الاستاف بيتسجّل من خانة كافيتيريا الاستاف في اليومية (مش بإضافة مباشرة)';
+  elsif new.amount is distinct from old.amount
+     or new.paid_amount is distinct from old.paid_amount
+     or new.payments is distinct from old.payments then
+    raise exception 'مبلغ ومدفوع ودفعات كافيتيريا الاستاف بتتغيّر من تسجيل الاستهلاك أو السداد بس';
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 59 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

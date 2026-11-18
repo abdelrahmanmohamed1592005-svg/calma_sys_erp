@@ -1,7 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { currencyKeysOf, otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails, PAYMENT_METHODS } from "../domain/money";
 import { PRINT_FIT_CSS } from "../lib/printFit";
-import { payLineCovered, payLineRateLabel } from "../domain/payLines";
 import { roomLabel, roomDisplay } from "../domain/constants";
 
 /* حقل نص بيكبر لوحده: لو البيان طويل بينزل على سطر تاني بدل ما يتقصّ (نفس شكل وسلوك الـ <input> العادي:
@@ -688,30 +687,27 @@ export function downloadCSV(filename, headers, rows) {
   document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
-/* سطور دفع (وسيلة أو أكتر، وأي عملة): كل سطر مبلغ + عملة (+ سعر صرف لو غير عملة الحجز) + وسيلة + تفاصيلها
-   (+ رسوم فيزا لو فيزا بعملة الحجز). lines = [{ amount, currency, rate, method, details, fee }] */
-export const emptyPayLine = (currency) => ({ amount: "", currency, rate: "", method: "كاش", details: emptyPaymentDetails(), fee: "" });
-export function PayLines({ lines, onChange, bookingCurrency, currencies, testid = "paylines", addLabel = "دفعة بوسيلة أو عملة" }) {
+/* سطور دفع: سطر أو أكتر، كل سطر مبلغ + وسيلة + تفاصيلها (+ رسوم فيزا لو فيزا بعملة الحجز).
+   العملة: عملة الحجز (سعر الليالي بعملة واحدة)، أو عملة خدمات عليها متبقي - من غير أي سعر صرف.
+   lines = [{ amount, currency, method, details, fee }] */
+export const emptyPayLine = (currency) => ({ amount: "", currency, method: "كاش", details: emptyPaymentDetails(), fee: "" });
+export function PayLines({ lines, onChange, bookingCurrency, currencies, testid = "paylines", addLabel = "دفعة بوسيلة تانية" }) {
+  const curs = currencies && currencies.length ? currencies : [bookingCurrency];
   const upd = (i, patch) => onChange(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const lbl = { fontSize: 12.5, color: "var(--muted)" };
   return (
     <div data-testid={testid} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {lines.map((l, i) => {
-        const other = l.currency !== bookingCurrency;
-        const covered = other ? payLineCovered(l, bookingCurrency) : null;
-        return (
-          <div key={i} data-testid={`${testid}-line-${i}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 6, alignItems: "start", background: "var(--paper2)", borderRadius: 8, padding: 8 }}>
-            <div><label style={lbl}>المبلغ</label><input className="cx-input" data-testid={`${testid}-amount-${i}`} type="number" min="0" value={l.amount} onChange={(e) => upd(i, { amount: e.target.value })} /></div>
-            <div><label style={lbl}>العملة</label><select className="cx-select" data-testid={`${testid}-currency-${i}`} value={l.currency} onChange={(e) => upd(i, { currency: e.target.value, rate: "", fee: "" })}>{(currencies || [bookingCurrency]).map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
-            {other && <div><label style={lbl}>سعر الصرف ({payLineRateLabel(l, bookingCurrency)})</label><input className="cx-input" data-testid={`${testid}-rate-${i}`} type="number" min="0" value={l.rate} onChange={(e) => upd(i, { rate: e.target.value })} />{covered > 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>= {fmt(covered)} {bookingCurrency}</div>}</div>}
-            <div><label style={lbl}>طريقة الدفع</label><select className="cx-select" data-testid={`${testid}-method-${i}`} value={l.method} onChange={(e) => upd(i, { method: e.target.value, details: emptyPaymentDetails(), fee: "" })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
-            <div><PaymentDetailsInline compact={false} testid={`${testid}-${i}`} method={l.method} details={l.details} onChange={(d) => upd(i, { details: d })} /></div>
-            {l.method === "فيزا" && !other && <div><label style={lbl}>رسوم فيزا ({bookingCurrency})</label><input className="cx-input" data-testid={`${testid}-fee-${i}`} type="number" min="0" placeholder="0" value={l.fee} onChange={(e) => upd(i, { fee: e.target.value })} /></div>}
-            <div><button type="button" className="cx-btn cx-btn-outline" style={{ marginTop: 18, fontSize: 12.5 }} onClick={() => onChange(lines.filter((_, j) => j !== i))}>شيل</button></div>
-          </div>
-        );
-      })}
-      <button type="button" className="cx-btn cx-btn-outline" data-testid={`${testid}-add`} style={{ alignSelf: "flex-start", fontSize: 13 }} onClick={() => onChange([...lines, emptyPayLine(bookingCurrency)])}>+ {addLabel}</button>
+      {lines.map((l, i) => (
+        <div key={i} data-testid={`${testid}-line-${i}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 6, alignItems: "start", background: "var(--paper2)", borderRadius: 8, padding: 8 }}>
+          <div><label style={lbl}>المبلغ{curs.length === 1 ? ` (${curs[0]})` : ""}</label><input className="cx-input" aria-label="المبلغ" data-testid={`${testid}-amount-${i}`} type="number" min="0" value={l.amount} onChange={(e) => upd(i, { amount: e.target.value })} /></div>
+          {curs.length > 1 && <div><label style={lbl}>العملة</label><select className="cx-select" aria-label="العملة" data-testid={`${testid}-currency-${i}`} value={l.currency} onChange={(e) => upd(i, { currency: e.target.value, fee: "" })}>{curs.map((c) => <option key={c} value={c}>{c}{c === bookingCurrency ? "" : " (خدمات)"}</option>)}</select></div>}
+          <div><label style={lbl}>طريقة الدفع</label><select className="cx-select" aria-label="طريقة الدفع" data-testid={`${testid}-method-${i}`} value={l.method} onChange={(e) => upd(i, { method: e.target.value, details: emptyPaymentDetails(), fee: "" })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
+          <div><PaymentDetailsInline compact={false} testid={`${testid}-${i}`} method={l.method} details={l.details} onChange={(d) => upd(i, { details: d })} /></div>
+          {l.method === "فيزا" && l.currency === bookingCurrency && <div><label style={lbl}>رسوم فيزا ({bookingCurrency})</label><input className="cx-input" aria-label="رسوم فيزا" data-testid={`${testid}-fee-${i}`} type="number" min="0" placeholder="0" value={l.fee} onChange={(e) => upd(i, { fee: e.target.value })} /></div>}
+          <div><button type="button" className="cx-btn cx-btn-outline" style={{ marginTop: 18, fontSize: 12.5 }} onClick={() => onChange(lines.filter((_, j) => j !== i))}>شيل</button></div>
+        </div>
+      ))}
+      <button type="button" className="cx-btn cx-btn-outline" data-testid={`${testid}-add`} style={{ alignSelf: "flex-start", fontSize: 13 }} onClick={() => onChange([...lines, emptyPayLine(lines[0]?.currency || curs[0])])}>+ {addLabel}</button>
     </div>
   );
 }

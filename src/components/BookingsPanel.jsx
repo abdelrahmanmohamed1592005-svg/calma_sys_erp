@@ -8,10 +8,9 @@ import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, ea
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
 import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, devChangeCurrencyAcrossLedgers, splitLedgerPaymentRow } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentOther, recordBookingPaymentFx, changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError } from "../data/payments";
+import { recordBookingPayment, recordBookingPaymentOther, changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
 import { guarded } from "../lib/busy";
-import { payLineApiRate, payLineCovered, payLineRateLabel } from "../domain/payLines";
 import { sanitizeText } from "../domain/security";
 
 /* رأس خطوة في فورم الحجز: رقم (أو ✓ لما تكتمل) + عنوان + وصف */
@@ -88,91 +87,61 @@ function QuickPay({ booking, onDone, showToast }) {
    صفر = الدفعة اتشالت. */
 function EditPayments({ booking, scope, onDone, showToast, onLog }) {
   const [open, setOpen] = useState(false);
-  const [splitKey, setSplitKey] = useState(null);     // الدفعة اللي بتتقسم / عملتها بتتغيّر
-  const [splitLines, setSplitLines] = useState([]);
   const [rows, setRows] = useState(null);
-  const [drafts, setDrafts] = useState({});
-  const load = async () => { setRows(null); const r = await getBookingLedgerRows(booking); if (!r) { showToast("تعذر تحميل الدفعات (مشكلة اتصال)"); setOpen(false); return; } setRows(r); setDrafts({}); };
-  const minDate = scope === "any" ? "0000-00-00" : addDays(shiftDayNow(), -1);
+  const [drafts, setDrafts] = useState({});     // key -> سطور الدفعة (مبلغ + وسيلة) - تعديل مباشر
   const keyOf = (e) => `${e.date}|${e.shiftKey}|${e.list}|${e.idx}`;
-  const save = (e) => guarded("edit-pay:" + keyOf(e), async () => {
-    const d = drafts[keyOf(e)] || {};
-    const method = d.method ?? e.row.collectionMethod;
-    const amount = d.amount === undefined ? Number(e.row.collectionAmt) : Math.round((Number(d.amount) || 0) * 100) / 100;
-    if (!Number.isFinite(amount) || amount < 0) { showToast("اكتب مبلغ صحيح (صفر = تشيل الدفعة)"); return; }
-    const details = d.details ?? e.row.paymentDetails ?? emptyPaymentDetails();
-    if (amount > 0) { const err = validatePaymentDetailsFor(method, details); if (err) { showToast(err); return; } }
-    // رسوم فيزا جديدة على الدفعة (بعملة الحجز بس - زي تسجيل الدفعة)
-    const visaFee = method === "فيزا" && !e.row.visaFee && e.list === "rows" && (e.row.collectionCurrency || "EGP") === booking.currency ? Math.round((Number(d.visaFee) || 0) * 100) / 100 : 0;
-    if (!Number.isFinite(visaFee) || visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
-    const res = await editLedgerPaymentRow(e, { collectionAmt: amount, collectionMethod: method, paymentDetails: cleanPaymentDetailsFor(method, details) }, { visaFee, guestName: booking.guestName });
-    if (res.error) { showToast(res.error); await load(); return; }
-    onLog(`تعديل دفعة على حجز ${booking.guestName} (غرفة ${booking.room}) في يومية ${e.date}: ${fmt(e.row.collectionAmt)} ${e.row.collectionMethod} ← ${fmt(amount)} ${method}${visaFee > 0 ? ` + رسوم فيزا ${fmt(visaFee)} ${booking.currency}` : ""}`);
-    showToast(`اتعدّلت الدفعة${visaFee > 0 ? ` واتضافت رسوم فيزا ${fmt(visaFee)} ${booking.currency} على النزيل` : ""} - المدفوع على الحجز والخزينة اتظبطوا${res.moved ? ` (والعهدة اتنقلت لـ ${res.moved} شيفت بعده)` : ""}`);
-    if (onDone) await onDone();
-    await load();
-  });
-  // تقسيم دفعة / تغيير عملتها: السطور بتبدأ بالدفعة زي ما هي
-  const startSplit = (e) => {
-    const r = e.row, fx = r.fxCovered != null && r.fxBookingCurrency;
-    const userRate = fx ? (booking.currency === "EGP" && r.collectionCurrency !== "EGP" ? Math.round((1 / Number(r.fxRate)) * 10000) / 10000 : Number(r.fxRate)) : "";
-    setSplitLines([{ ...emptyPayLine(r.collectionCurrency || booking.currency), amount: String(Number(r.collectionAmt) || ""), rate: fx ? String(userRate) : "", method: r.collectionMethod || "كاش", details: r.paymentDetails || emptyPaymentDetails() }]);
-    setSplitKey(keyOf(e));
+  const lineOf = (r) => ({ ...emptyPayLine(r.collectionCurrency || booking.currency), amount: String(Number(r.collectionAmt) || ""), method: r.collectionMethod || "كاش", details: r.paymentDetails || emptyPaymentDetails() });
+  // الدفعات الممسوحة (مبلغها صفر) مابتظهرش
+  const load = async () => {
+    setRows(null);
+    const r = await getBookingLedgerRows(booking);
+    if (!r) { showToast("تعذر تحميل الدفعات (مشكلة اتصال)"); setOpen(false); return; }
+    const live = r.filter((e) => (Number(e.row.collectionAmt) || 0) !== 0);
+    setRows(live);
+    setDrafts(Object.fromEntries(live.map((e) => [keyOf(e), [lineOf(e.row)]])));
   };
-  const saveSplit = (e) => guarded("split-pay:" + keyOf(e), async () => {
-    const err = payLinesError(booking, splitLines, validatePaymentDetailsFor);
+  const minDate = scope === "any" ? "0000-00-00" : addDays(shiftDayNow(), -1);
+  const save = (e) => guarded("edit-pay:" + keyOf(e), async () => {
+    const lines = drafts[keyOf(e)] || [];
+    const err = payLinesError(booking, lines, validatePaymentDetailsFor);
     if (err) { showToast(err); return; }
-    for (const l of splitLines) if (Number(l.amount) > 0 && l.currency !== booking.currency && !(payLineApiRate(l, booking.currency) > 0) && !booking.otherCharges?.[l.currency]) { showToast(`اكتب سعر الصرف لدفعة ${l.currency} (${payLineRateLabel(l, booking.currency)})`); return; }
-    const res = await splitLedgerPaymentRow(e, splitLines, booking);
+    const total = lines.reduce((t, l) => t + (Number(l.amount) || 0), 0);
+    let res;
+    if (e.list === "rows" && !e.row.visaFee && total > 0) res = await splitLedgerPaymentRow(e, lines, booking);
+    else {
+      // صف رسوم فيزا / كافيتيريا، أو الدفعة كلها اتشالت (صفر): تعديل المبلغ والوسيلة في نفس الصف
+      const l = lines[0] || lineOf(e.row);
+      const amount = Math.round(total * 100) / 100;
+      res = await editLedgerPaymentRow(e, { collectionAmt: amount, collectionMethod: l.method, paymentDetails: cleanPaymentDetailsFor(l.method, l.details) }, { guestName: booking.guestName });
+    }
     if (res.error) { showToast(res.error); await load(); return; }
-    const txt = splitLines.filter((l) => Number(l.amount) > 0).map((l) => `${fmt(Number(l.amount))} ${l.currency} ${l.method}`).join(" + ");
+    const txt = lines.filter((l) => Number(l.amount) > 0).map((l) => `${fmt(Number(l.amount))} ${l.currency} ${l.method}`).join(" + ") || "صفر (اتشالت)";
+    const fee = lines.reduce((t, l) => t + (l.method === "فيزا" && l.currency === booking.currency ? Number(l.fee) || 0 : 0), 0);
     onLog(`تعديل دفعة على حجز ${booking.guestName} (غرفة ${booking.room}) في يومية ${e.date}: ${fmt(e.row.collectionAmt)} ${e.row.collectionCurrency} ${e.row.collectionMethod} ← ${txt}`);
-    showToast(`اتعدّلت الدفعة لـ ${txt} - المدفوع على الحجز والخزينة اتظبطوا${res.moved ? ` (والعهدة اتنقلت لـ ${res.moved} شيفت بعده)` : ""}`);
-    setSplitKey(null);
+    showToast(`اتعدّلت الدفعة لـ ${txt}${fee > 0 && e.list === "rows" && !e.row.visaFee ? ` واتضافت رسوم فيزا ${fmt(fee)} ${booking.currency} على النزيل` : ""} - المدفوع على الحجز والخزينة اتظبطوا${res.moved ? ` (والعهدة اتنقلت لـ ${res.moved} شيفت بعده)` : ""}`);
     if (onDone) await onDone();
     await load();
   });
   if (!open) return <button className="cx-btn cx-btn-outline" data-testid="edit-payments-open" style={{ fontSize: 12.5 }} onClick={() => { setOpen(true); load(); }}>تعديل المدفوع</button>;
   return (
     <div data-testid="edit-payments" style={{ width: "100%", background: "var(--paper2)", borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 13, fontWeight: 700 }}>الدفعات المتسجّلة على الحجز <span style={{ fontWeight: 400, color: "var(--muted)" }}>(عدّل المبلغ أو الوسيلة واضغط حفظ - صفر = تشيل الدفعة)</span></div>
+      <div style={{ fontSize: 13, fontWeight: 700 }}>الدفعات المتسجّلة على الحجز <span style={{ fontWeight: 400, color: "var(--muted)" }}>(عدّل المبلغ والوسيلة على طول، ولو اتدفعت بأكتر من وسيلة اضغط "+ جزء تاني" - صفر = تشيل الدفعة)</span></div>
       {!rows && <div style={{ fontSize: 13, color: "var(--muted)" }}>جارِ التحميل...</div>}
       {rows && rows.length === 0 && <div style={{ fontSize: 13, color: "var(--muted)" }}>مفيش دفعات متسجّلة على الحجز ده في اليوميات.</div>}
       {rows && rows.map((e) => {
-        const k = keyOf(e), d = drafts[k] || {};
+        const k = keyOf(e);
         const fx = e.row.fxCovered != null && e.row.fxBookingCurrency;
         const allowed = e.date >= minDate && !fx;
-        const method = d.method ?? e.row.collectionMethod;
-        const set = (patch) => setDrafts({ ...drafts, [k]: { ...d, ...patch } });
+        const cur = e.row.collectionCurrency || booking.currency;
+        const label = <span style={{ fontSize: 12.5, fontWeight: 700 }}><bdi dir="ltr">{e.date}</bdi> · {SHIFTS.find((x) => x.key === e.shiftKey)?.label}{e.list === "cafeteriaRows" ? " · كافيتيريا" : ""}{e.row.visaFee ? " · رسوم فيزا" : ""}</span>;
         return (
-          <div key={k} data-testid="edit-payment-row" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderTop: "1px dashed var(--hair)", paddingTop: 6 }}>
-            <span style={{ fontSize: 12.5, minWidth: 150 }}><bdi dir="ltr">{e.date}</bdi> · {SHIFTS.find((x) => x.key === e.shiftKey)?.label}{e.list === "cafeteriaRows" ? " · كافيتيريا" : ""}{e.row.visaFee ? " · رسوم فيزا" : ""}</span>
+          <div key={k} data-testid="edit-payment-row" style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px dashed var(--hair)", paddingTop: 6 }}>
+            {label}
             {allowed ? (<>
-              <input className="cx-input" type="number" min="0" data-testid="edit-payment-amount" style={{ width: 110 }} value={d.amount ?? e.row.collectionAmt} onChange={(ev) => set({ amount: ev.target.value })} />
-              <span style={{ fontSize: 12.5 }}>{e.row.collectionCurrency}</span>
-              {!e.row.visaFee && <select className="cx-select" data-testid="edit-payment-method" style={{ width: 150 }} value={method} onChange={(ev) => set({ method: ev.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>}
-              <PaymentDetailsInline method={method} details={d.details ?? e.row.paymentDetails} onChange={(det) => set({ details: det })} testid="edit-payment" />
-              {method === "فيزا" && !e.row.visaFee && e.list === "rows" && (e.row.collectionCurrency || "EGP") === booking.currency && (
-                <input className="cx-input" type="number" min="0" data-testid="edit-payment-visa-fee" style={{ width: 140 }} placeholder={`+ رسوم فيزا (${booking.currency})`} value={d.visaFee ?? ""} onChange={(ev) => set({ visaFee: ev.target.value })} />
-              )}
-              <button className="cx-btn cx-btn-gold" data-testid="edit-payment-save" style={{ fontSize: 12.5 }} onClick={() => save(e)}>حفظ</button>
-            </>) : fx && e.date >= minDate ? (
-              <span style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(e.row.collectionAmt)} {e.row.collectionCurrency}</bdi> · {e.row.collectionMethod} - دفعة بسعر صرف (عدّلها من "تقسيم / عملة تانية")</span>
-            ) : (
-              <span style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(e.row.collectionAmt)} {e.row.collectionCurrency}</bdi> · {e.row.collectionMethod} - {fx ? "دفعة بسعر صرف (تتصحّح من اليومية)" : "يوم قديم - تصحيحه من الإدارة"}</span>
-            )}
-            {e.date >= minDate && e.list === "rows" && !e.row.visaFee && splitKey !== k && (
-              <button className="cx-btn cx-btn-outline" data-testid="edit-payment-split" style={{ fontSize: 12.5 }} onClick={() => startSplit(e)}>تقسيم / عملة تانية</button>
-            )}
-            {splitKey === k && (
-              <div data-testid="edit-payment-split-box" style={{ width: "100%", display: "flex", flexDirection: "column", gap: 6, background: "#fff", borderRadius: 8, padding: 8 }}>
-                <div style={{ fontSize: 12.5, color: "var(--muted)" }}>الدفعة دي هتتبدّل بالسطور دي (كل سطر بمبلغه وعملته ووسيلته) في نفس اليومية - مثلًا جزء بالدولار وجزء فيزا</div>
-                <PayLines lines={splitLines} onChange={setSplitLines} bookingCurrency={booking.currency} currencies={COMMON_CURRENCIES} testid="split-pay" addLabel="جزء تاني بوسيلة أو عملة تانية" />
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button className="cx-btn cx-btn-gold" data-testid="edit-payment-split-save" style={{ fontSize: 12.5 }} onClick={() => saveSplit(e)}>حفظ التعديل</button>
-                  <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5 }} onClick={() => setSplitKey(null)}>إلغاء</button>
-                </div>
-              </div>
+              <PayLines lines={drafts[k] || []} onChange={(ls) => setDrafts({ ...drafts, [k]: ls })} bookingCurrency={e.row.visaFee || e.list !== "rows" ? "__none__" : booking.currency} currencies={[cur]} testid={"edit-pay-" + rows.indexOf(e)} addLabel="جزء تاني بوسيلة تانية" />
+              <div><button className="cx-btn cx-btn-gold" data-testid="edit-payment-save" style={{ fontSize: 12.5 }} onClick={() => save(e)}>حفظ</button></div>
+            </>) : (
+              <span style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(e.row.collectionAmt)} {e.row.collectionCurrency}</bdi> · {e.row.collectionMethod} - {fx ? "دفعة قديمة بسعر صرف (بتتصحّح من اليومية)" : "يوم قديم - تصحيحه من الإدارة"}</span>
             )}
           </div>
         );
@@ -284,7 +253,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   const grandTotal = form ? roomTotalNow + (Number(form.extras.laundry) || 0) + (Number(form.extras.cafeteria) || 0) + (Number(form.extras.tours) || 0) + (Number(form.extras.pickup) || 0) + (Number(form.extras.visaFee) || 0) + earlyFee : 0;
   // اللي اتدفع قبل كده (حجز موجود) + الدفعة المقدّمة دلوقتي (حجز جديد بس)
   const paidBefore = isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : 0;
-  const extraLineCovered = (l) => { const amt = Number(l.amount) || 0; if (amt <= 0) return 0; if (!form || l.currency === form.currency) return amt; return payLineCovered(l, form.currency); };
+  const extraLineCovered = (l) => Math.max(0, Number(l.amount) || 0);   // سعر الليالي بعملة الحجز بس - كل الدفعات بنفس العملة
   const advanceNow = form && !collectionLocked ? Math.max(0, Number(form.payNow?.amount) || 0) + (form.payMore || []).reduce((t, l) => t + extraLineCovered(l), 0) : 0;
   // مدفوع قبل السيستم بيتكتب من الفورم (حجز جديد أو تعديل): في التعديل المدفوع الحالي فيه القديم، فبنحسب الفرق بس
   const priorOld = isExistingBooking ? Number(originalBooking?.paymentDetails?.priorPaid) || 0 : 0;
@@ -390,7 +359,6 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       if (!myActiveShiftKey && !perms.devTools) { showToast("مفيش شيفتك شغال دلوقتي - ماينفعش تسجّل دفعة مقدّمة"); return; }
       const e2 = validatePaymentDetailsFor(l.method, l.details);
       if (e2) { showToast(e2); return; }
-      if (l.currency !== form.currency && !(Number(l.rate) > 0)) { showToast(`اكتب سعر الصرف لدفعة ${l.currency} (كام ${l.currency} في كل 1 ${form.currency})`); return; }
     }
     const payMethod = advance > 0 && !isExistingBooking ? payNow.method : (originalBooking?.paymentMethod || "كاش");
     // وسيلة وتفاصيل التحصيل دلوقتي (في التعديل مابتغيّرش وسيلة الحجز نفسه)
@@ -500,12 +468,9 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
       else if (onRefresh) await onRefresh();
     }
     for (const l of moreLines) {
-      const same = l.currency === cleaned.currency;
       const det = cleanPaymentDetailsFor(l.method, l.details);
-      const r2 = same
-        ? await recordBookingPayment({ bookingId: savedId, amount: Number(l.amount), method: l.method, details: det, note: isExistingBooking ? "تحصيل" : "تحصيل حجز جديد" })
-        : await recordBookingPaymentFx({ bookingId: savedId, amount: Number(l.amount), currency: l.currency, rate: payLineApiRate(l, cleaned.currency), method: l.method, details: det, note: isExistingBooking ? "تحصيل" : "تحصيل حجز جديد" });
-      if (r2.error) { payFailed += `${payFailed ? " | " : "⚠ "}الدفعة (${fmt(Number(l.amount))} ${l.currency} - ${l.method}) ماتسجّلتش: ${r2.error}`; }
+      const r2 = await recordBookingPayment({ bookingId: savedId, amount: Number(l.amount), method: l.method, details: det, note: isExistingBooking ? "تحصيل" : "تحصيل حجز جديد" });
+      if (r2.error) { payFailed += `${payFailed ? " | " : "⚠ "}الدفعة (${fmt(Number(l.amount))} ${cleaned.currency} - ${l.method}) ماتسجّلتش: ${r2.error}`; }
     }
     // رسوم الفيزا اللي اتدفعت مع الدفعة المقدّمة: صف "رسوم فيزا" في اليومية وبتتحسب على النزيل
     if (visaFee > 0 && advanceOk) {
@@ -650,7 +615,10 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>تاريخ الدخول</label><input className="cx-input" type="date" disabled={staffEdit} value={form.checkin} onChange={(e) => { const newCheckin = e.target.value; setForm((f) => ({ ...f, checkin: newCheckin, checkout: f.checkout && f.checkout > newCheckin ? f.checkout : addDays(newCheckin, 1) })); }} /></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>تاريخ الخروج</label><input className="cx-input" type="date" min={form.checkin ? addDays(form.checkin, 1) : undefined} value={form.checkout} onChange={(e) => setForm({ ...form, checkout: e.target.value })} /></div>
-            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>السعر لليلة {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={chargeLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value, ...(form.totalRoom !== "" && Math.abs((Number(form.totalRoom) || 0) - (Number(form.priceNight) || 0) * nights) < 0.005 ? { totalRoom: "" } : {}) })} /><select className="cx-select" disabled={chargeLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 90 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div></div>
+            <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>السعر لليلة {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={chargeLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value, ...(form.totalRoom !== "" && Math.abs((Number(form.totalRoom) || 0) - (Number(form.priceNight) || 0) * nights) < 0.005 ? { totalRoom: "" } : {}) })} /><select className="cx-select" disabled={chargeLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 90 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+              {isExistingBooking && originalBooking && form.currency !== originalBooking.currency && (
+                <div data-testid="currency-change-warning" style={{ marginTop: 4, fontSize: 12.5, fontWeight: 700, color: "var(--rust)", background: "#F4E7E2", borderRadius: 6, padding: "4px 6px" }}>⚠ العملة اتغيّرت من {originalBooking.currency} لـ {form.currency} - اكتب سعر الليلة بالـ {form.currency} (الرقم مابيتحوّلش لوحده)</div>
+              )}</div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={chargeLocked} placeholder={String(autoTotalRoom)} value={lockedRepricedTotal != null ? lockedRepricedTotal : form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
 
             {/* الحالة (ومعاها "ملغي") من صلاحية مدير الحجوزات بس - موظف
@@ -710,7 +678,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
               )}
               {!collectionLocked && (
                 <div data-testid="advance-payment" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{isExistingBooking ? "تحصيل دلوقتي (اختياري) - بوسيلة أو أكتر وبأي عملة، وبيتسجّل في اليومية" : "المدفوع حتى الآن (اختياري) - بيتسجّل في اليومية بوسيلته وتفاصيله"}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{isExistingBooking ? "تحصيل دلوقتي (اختياري) - بوسيلة أو أكتر، وبيتسجّل في اليومية" : "المدفوع حتى الآن (اختياري) - بيتسجّل في اليومية بوسيلته وتفاصيله"}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8, alignItems: "start" }}>
                     <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ المدفوع / ديبوزيت ({form.currency})</label><input className="cx-input" data-testid="advance-amount" type="number" min="0" value={form.payNow?.amount ?? ""} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, amount: e.target.value } })} /></div>
                     <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>طريقة الدفع</label><select className="cx-select" data-testid="advance-method" value={form.payNow?.method || "كاش"} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, method: e.target.value, details: emptyPaymentDetails() } })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
@@ -719,19 +687,16 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
                   </div>
                   {(form.payMore || []).map((l, i) => {
                     const upd = (patch) => setForm({ ...form, payMore: form.payMore.map((x, j) => j === i ? { ...x, ...patch } : x) });
-                    const other = l.currency !== form.currency;
                     return (
                       <div key={i} data-testid={"advance-extra-" + i} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, alignItems: "start", marginTop: 8, paddingTop: 8, borderTop: "1px dotted var(--hair)" }}>
-                        <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ</label><input className="cx-input" data-testid={"advance-extra-amount-" + i} type="number" min="0" value={l.amount} onChange={(e) => upd({ amount: e.target.value })} /></div>
-                        <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>العملة</label><select className="cx-select" data-testid={"advance-extra-currency-" + i} value={l.currency} onChange={(e) => upd({ currency: e.target.value, rate: "" })}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
-                        {other && <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>سعر الصرف ({payLineRateLabel(l, form.currency)})</label><input className="cx-input" data-testid={"advance-extra-rate-" + i} type="number" min="0" value={l.rate} onChange={(e) => upd({ rate: e.target.value })} />{extraLineCovered(l) > 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>= {fmt(extraLineCovered(l))} {form.currency}</div>}</div>}
+                        <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ ({form.currency})</label><input className="cx-input" data-testid={"advance-extra-amount-" + i} type="number" min="0" value={l.amount} onChange={(e) => upd({ amount: e.target.value })} /></div>
                         <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>طريقة الدفع</label><select className="cx-select" data-testid={"advance-extra-method-" + i} value={l.method} onChange={(e) => upd({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
                         <div><PaymentDetailsInline compact={false} testid={"advance-extra-" + i} method={l.method} details={l.details} onChange={(d) => upd({ details: d })} /></div>
                         <div><button type="button" className="cx-btn cx-btn-outline" style={{ marginTop: 18 }} onClick={() => setForm({ ...form, payMore: form.payMore.filter((_, j) => j !== i) })}>شيل</button></div>
                       </div>
                     );
                   })}
-                  <button type="button" className="cx-btn cx-btn-outline" data-testid="advance-add-line" style={{ marginTop: 8, fontSize: 13 }} onClick={() => setForm({ ...form, payMore: [...(form.payMore || []), { amount: "", currency: form.currency, rate: "", method: "كاش", details: emptyPaymentDetails() }] })}><Plus size={13} /> دفعة تانية بوسيلة أو عملة مختلفة</button>
+                  <button type="button" className="cx-btn cx-btn-outline" data-testid="advance-add-line" style={{ marginTop: 8, fontSize: 13 }} onClick={() => setForm({ ...form, payMore: [...(form.payMore || []), { amount: "", currency: form.currency, method: "كاش", details: emptyPaymentDetails() }] })}><Plus size={13} /> دفعة تانية بوسيلة تانية</button>
                 </div>
               )}
               {canPrior && !form.paymentDetails?.onlinePaid && (
