@@ -88,6 +88,8 @@ describe("كافيتيريا النزلاء والاستاف", () => {
     const t = computeShiftTotals(rec);
     expect(t.totalCollections.EGP).toBe(75);
     expect(t.byMethodCurrency["فيزا"].EGP).toBe(50);
-    expect(t.cashCollections.EGP).toBe(25);
+    expect(t.cashCollections.EGP || 0).toBe(0);         // الكافيتيريا ليها درج لوحدها: مابتدخلش درج الخزينة
+    expect(t.cafeteriaCash.EGP).toBe(25);
+    expect(t.closingCash.EGP || 0).toBe(0);
   });
 });

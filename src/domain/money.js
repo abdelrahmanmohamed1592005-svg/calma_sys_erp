@@ -253,7 +253,7 @@ export function computeShiftTotals(record) {
   const totalExpenses = emptyMoney(), totalCollections = emptyMoney(), cashCollections = emptyMoney();
   const byMethodCurrency = {}, byCategory = {};
   // فلوس الكافيتيريا مفصولة عن فلوس الغرف في الإجماليات (نفس الخزينة، بس كل واحدة برقمها)
-  const cafeteriaCollections = emptyMoney(), roomCollections = emptyMoney(), cashRoomCollections = emptyMoney();
+  const cafeteriaCollections = emptyMoney(), roomCollections = emptyMoney(), cashRoomCollections = emptyMoney(), cafeteriaCash = emptyMoney();
   // والكافيتيريا نفسها حاجتين: خدمات كافيتيريا النزلاء (على الغرف) وكافيتيريا الاستاف (سداد الموظفين)
   const cafeteriaGuest = emptyMoney(), cafeteriaStaff = emptyMoney();
   const cafeSet = new Set([record.cafeteria, ...(record.cafeteriaRows || [])]);
@@ -283,9 +283,10 @@ export function computeShiftTotals(record) {
       }
       byMethodCurrency[r.collectionMethod] = byMethodCurrency[r.collectionMethod] || emptyMoney();
       byMethodCurrency[r.collectionMethod][cur] = (byMethodCurrency[r.collectionMethod][cur] || 0) + col;
+      // الكافيتيريا ليها درج لوحدها (قرار المالك): كاشها مابيدخلش درج الخزينة ولا رصيدها ولا العهدة اللي بتتسلّم
       if (r.collectionMethod === "كاش") {
-        cashCollections[cur] = (cashCollections[cur] || 0) + col;
-        if (!isCafe) cashRoomCollections[cur] = (cashRoomCollections[cur] || 0) + col;   // كاش الغرف بس (من غير كافيتيريا)
+        if (isCafe) cafeteriaCash[cur] = (cafeteriaCash[cur] || 0) + col;
+        else { cashCollections[cur] = (cashCollections[cur] || 0) + col; cashRoomCollections[cur] = (cashRoomCollections[cur] || 0) + col; }
       }
     }
   });
@@ -309,8 +310,8 @@ export function computeShiftTotals(record) {
   });
   // تقريب كل المبالغ لقرشين: مجموع أعداد عشرية بيطلّع بقايا زي 75.02999999999999 كانت بتتخزّن وتتنقل كعهدة للشيفت اللي بعده
   const rnd = (o) => { Object.keys(o).forEach((k) => { if (typeof o[k] === "number") o[k] = Math.round(o[k] * 100) / 100; else if (o[k] && typeof o[k] === "object") rnd(o[k]); }); return o; };
-  [totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodClosing, cafeteriaCollections, roomCollections, cafeteriaGuest, cafeteriaStaff, cashRoomCollections].forEach(rnd);
-  return { totalExpenses, totalCollections, cashCollections, cashRoomCollections, byMethodCurrency, byCategory, closingCash, methodHandover, methodClosing, roomCollections, cafeteriaCollections, cafeteriaGuest, cafeteriaStaff };
+  [totalExpenses, totalCollections, cashCollections, byMethodCurrency, byCategory, closingCash, methodClosing, cafeteriaCollections, roomCollections, cafeteriaGuest, cafeteriaStaff, cashRoomCollections, cafeteriaCash].forEach(rnd);
+  return { totalExpenses, totalCollections, cashCollections, cashRoomCollections, cafeteriaCash, byMethodCurrency, byCategory, closingCash, methodHandover, methodClosing, roomCollections, cafeteriaCollections, cafeteriaGuest, cafeteriaStaff };
 }
 
 /* متابعة رصيد كل وسيلة دفع وعملة عبر شيفتات فترة (مرتّبة زمنيًا)، لكل فندق لوحده وبعدين المجموع:
