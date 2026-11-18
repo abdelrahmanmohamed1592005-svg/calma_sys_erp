@@ -317,10 +317,13 @@ test("المطوّر يغيّر عملة حجز ليه تحصيل في يومي�
   await page.goto("/");
   await login(page, "devo");
   await openRoom(page, 608);
-  await page.getByTestId("currency-open").click();
-  await page.getByTestId("currency-select").selectOption("USD");
-  await page.getByTestId("currency-confirm").click();
-  await expect(toast(page)).toContainText("اتغيّرت عملة الحجز");
+  await expect(page.getByTestId("currency-open")).toHaveCount(0);          // زرار تعديل العملة اتشال من كارت الغرفة
+  // العملة بتتغيّر من فورم "تعديل الحجز"
+  await goTab(page, "الحجوزات");
+  await page.getByRole("button", { name: "تعديل الحجز", exact: true }).first().click();
+  await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//select").selectOption("USD");
+  await page.getByRole("button", { name: /حفظ الحجز/ }).click();
+  await expect(toast(page)).toContainText("العملة اتغيّرت من EGP لـ USD");
   expect((await env.q("select currency from bookings where id = $1", [b]))[0].currency).toBe("USD");
   const fixed = await rec(env, d2, "morning");
   expect(fixed.rows.find((r) => r.room === 608).collectionCurrency).toBe("USD");
@@ -518,7 +521,7 @@ test("موظف الشيفت يعدّل بيانات النزيل (الاسم و�
   expect((await env.api("ahmed", "PATCH", `/rest/v1/bookings?id=eq.${b}`, { room: 608 })).status).toBeGreaterThanOrEqual(400);
 });
 
-test("المطوّر يعدّل سعر حجز موجود من الفورم (مش مقفول عليه)، وفورم التعديل مافيهوش دفعة مقدّمة", async ({ page, env }) => {
+test("المطوّر يعدّل سعر حجز موجود من الفورم (مش مقفول عليه)، وفورم التعديل فيه تحصيل دلوقتي", async ({ page, env }) => {
   await users(env);
   const b = await env.seedBooking({ room: 608, guest: "Price Fix", start: 0, nights: 2, price: 500, currency: "EGP", anchor: "shift" });
   await page.goto("/");
@@ -528,10 +531,10 @@ test("المطوّر يعدّل سعر حجز موجود من الفورم (مش
   const price = page.locator("xpath=//label[starts-with(normalize-space(.),'السعر لليلة')]/following-sibling::*//input").first();
   await expect(price).toBeEnabled();
   await price.fill("450");
+  await expect(page.getByTestId("advance-payment")).toContainText("تحصيل دلوقتي");
   await page.getByRole("button", { name: /^حفظ/ }).last().click();
   await expect(toast(page)).toContainText("تم الحفظ");
   expect(Number((await env.q("select price_night from bookings where id = $1", [b]))[0].price_night)).toBe(450);
-  await expect(page.getByTestId("advance-amount")).toHaveCount(0);
 });
 
 test("مدير الشيفت بيعدّل حجز نزيل مشي (غادر مبكرًا / تم تسجيل الخروج) ومدفوعه - مفيش قفل بعد ما النزيل يخرج", async ({ page, env }) => {
@@ -566,4 +569,28 @@ test("المطوّر بيلغي تسجيل خروج اتعمل بالغلط: ا�
   expect((await env.q("select status, total_room::float, amount_paid::float from bookings where id = $1", [b]))[0]).toEqual({ status: "تم تسجيل الدخول", total_room: 1800, amount_paid: 1800 });
   // موظف الشيفت مايقدرش يستخدم الدالة دي
   expect((await env.api("ahmed", "POST", "/rest/v1/rpc/dev_restore_booking", { p_booking: b, p_what: "uncheckout" })).status).toBeGreaterThanOrEqual(400);
+});
+
+test("تعديل الحجز: مدير الشيفت بيحصّل من الفورم بأكتر من وسيلة وعملة في نفس المرة (نص كاش ونص فيزا وجزء بالدولار)", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 609, guest: "Split Edit", start: 0, nights: 2, price: 500, paid: 0, currency: "EGP", anchor: "shift" });
+  await page.goto("/");
+  await login(page, "mona");
+  await claimShift(page);
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("edit-price").first().click();
+  await page.getByTestId("advance-amount").fill("400");                 // 400 كاش
+  await page.getByTestId("advance-add-line").click();
+  await page.getByTestId("advance-extra-amount-0").fill("300");          // 300 فيزا
+  await page.getByTestId("advance-extra-method-0").selectOption("فيزا");
+  await page.getByTestId("advance-extra-0-last4").fill("1111");
+  await page.getByTestId("advance-add-line").click();
+  await page.getByTestId("advance-extra-amount-1").fill("6");            // 6 دولار × 50 = 300 جنيه
+  await page.getByTestId("advance-extra-currency-1").selectOption("USD");
+  await page.getByTestId("advance-extra-rate-1").fill("50");
+  await page.getByRole("button", { name: /حفظ الحجز/ }).click();
+  await expect(toast(page)).toContainText("تم الحفظ");
+  expect(Number((await env.q("select amount_paid from bookings where id = $1", [b]))[0].amount_paid)).toBe(1000);
+  const rows = await env.q("select r->>'collectionCurrency' cur, r->>'collectionMethod' m, calma_num(r->>'collectionAmt')::float amt from shift_records s, jsonb_array_elements(s.rows) r where r->>'bookingId' = $1 and calma_num(r->>'collectionAmt') > 0 order by 3", [b]);
+  expect(rows.map((r) => `${r.amt} ${r.cur} ${r.m}`)).toEqual(["6 USD كاش", "300 EGP فيزا", "400 EGP كاش"]);
 });
