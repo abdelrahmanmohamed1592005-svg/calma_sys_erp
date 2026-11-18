@@ -177,7 +177,7 @@ export function buildShiftSheet({ record, rooms, hotelName, staffNames }) {
     columns: [{ key: "room", label: "الغرفة", w: 0.9 }, { key: "collection", label: "التحصيل", w: 2.6 }, { key: "expenses", label: "المصاريف", w: 2.1 }],
     rows,
     summary: [
-      ["العهدة", egp(record.handover)], ["إجمالي التحصيل", egp(t.cashCollections)], ["إجمالي المصاريف", egp(t.totalExpenses)], ["رصيد الخزينة", egp(t.closingCash)],
+      ["العهدة", egp(record.handover)], ["إجمالي التحصيل", egp(t.cashRoomCollections)]   /* تحصيل الغرف بس - الكافيتيريا (نزلاء واستاف) في "إجمالي الكافيتيريا" لوحدها */, ["إجمالي المصاريف", egp(t.totalExpenses)], ["رصيد الخزينة", egp(t.closingCash)],
       ["الفيزا", moneyText(visaTotal)], ["انستاباي", moneyText(pickMethods(t.byMethodCurrency, TRANSFER))], ["فودافون كاش", moneyText(pickMethods(t.byMethodCurrency, VODAFONE))], ["عملة", moneyText(foreignCash)],
       ["إجمالي الكافيتيريا", moneyText(t.cafeteriaCollections)],
       ...otherMethods.map((m) => [m, moneyText(t.byMethodCurrency[m])]),

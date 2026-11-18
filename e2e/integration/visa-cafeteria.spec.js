@@ -368,9 +368,9 @@ test.describe("كافيتيريا الاستاف: مين أخد ومين دفع 
     await expect(page.getByText(/أُقفل بواسطة/)).toBeVisible();
     const closed = await shift(env);
     expect(closed.total_collections).toEqual({ EGP: 102 });
-    expect(closed.cash_collections).toEqual({ EGP: 12 });
+    expect(closed.cash_collections).toEqual({});                     // الكافيتيريا ليها درج لوحدها: كاشها مابيدخلش درج الخزينة
     expect(closed.by_method_currency["فيزا"]).toEqual({ EGP: 90 });
-    expect(closed.closing_cash).toEqual({ EGP: 12 });
+    expect(closed.closing_cash).toEqual({ EGP: 0 });                 // رصيد الخزينة = العهدة (0) + كاش الغرف (0) - المصاريف
   });
 
   test("الصلاحيات: مدير الحجوزات والحسابات والمدير العام مايكتبوش، والموظف مايعدّلش مبلغ استهلاك ومايمسحش، والحسابات بس اللي بتصحّح (المدير العام عرض بس)", async ({ page, env }) => {

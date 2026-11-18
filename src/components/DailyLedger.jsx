@@ -156,7 +156,8 @@ function ShiftSummaryFooter({ record, totals, locked, onChangeHandover, onAddCur
               <div><dt>كافيتيريا النزلاء</dt><dd data-testid={"sum-cafe-" + cur}>{money(totals.cafeteriaGuest, cur)}</dd></div>
               <div><dt>كافيتيريا الاستاف</dt><dd data-testid={"sum-cafe-staff-" + cur}>{money(totals.cafeteriaStaff, cur)}</dd></div>
               <div className="sep"><dt>إجمالي التحصيل (كل الوسائل)</dt><dd>{money(totals.totalCollections, cur)}</dd></div>
-              <div><dt>منه كاش في الدرج</dt><dd>{money(totals.cashCollections, cur)}</dd></div>
+              <div><dt>منه كاش غرف في درج الخزينة</dt><dd>{money(totals.cashCollections, cur)}</dd></div>
+              {(totals.cafeteriaCash?.[cur] || 0) !== 0 && <div><dt>كاش الكافيتيريا (درجها لوحده)</dt><dd data-testid={"sum-cafe-cash-" + cur}>{money(totals.cafeteriaCash, cur)}</dd></div>}
               <div><dt>إجمالي المصاريف</dt><dd>{money(totals.totalExpenses, cur)}</dd></div>
               <div className="sep"><dt style={{ color: "var(--ink)", fontWeight: 700 }}>رصيد الخزينة</dt><dd style={{ color: "var(--teal)", fontSize: 16 }}>{money(totals.closingCash, cur)}</dd></div>
             </dl>
