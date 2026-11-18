@@ -1,9 +1,10 @@
 import { supabase } from "../lib/supabaseClient";
+import { payLineApiRate, payLineCovered } from "../domain/payLines";
 import { descWithAmount } from "../domain/ledgerDesc";
 import { fetchAll } from "./page";
 import { friendlyDbError } from "./schemaCheck";
 import { shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
-import { computeShiftTotals, cascadeHandover, stripBookingFromRecord, recordMentionsBooking } from "../domain/money";
+import { computeShiftTotals, cascadeHandover, stripBookingFromRecord, recordMentionsBooking, cleanPaymentDetailsFor } from "../domain/money";
 import { getActiveHotelId, resolveHotelScope } from "./hotels";
 
 /* القراءات/الكتابات على سجل واحد لازم تكون على فندق واحد: نطاق "all" هنا غلط برمجي فنرميه بدل ما نقع على الفندق الشغال بصمت */
@@ -175,6 +176,41 @@ export async function editLedgerPaymentRow(entry, patch, opts = {}) {
     }] };
   }
   const res = await applyCorrection(old, next);
+  if (res.conflict) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
+  return res;
+}
+
+/* تقسيم دفعة متسجّلة على حجز / تغيير عملتها: الصف بيتبدّل بسطور جديدة (كل سطر بمبلغه وعملته ووسيلته) في نفس اليومية.
+   العملة التانية بسعر صرف بتتسجّل صف بسعر صرف (fxCovered = اللي بيغطيه من عملة الحجز)، ورسوم الفيزا صف لوحده.
+   بنفس آلية التصحيح: المدفوع على الحجز والخزينة والعهدة بيتظبطوا مع بعض. */
+export async function splitLedgerPaymentRow(entry, lines, booking) {
+  if (entry.list !== "rows") return { error: "الدفعة دي بتتعدّل من تعديل المبلغ بس" };
+  const old = await getShiftRecord(entry.date, entry.shiftKey, entry.hotelId);
+  if (!old) return { error: "تعذر قراءة اليومية (مشكلة اتصال) - جرّب تاني" };
+  const cur = (old.rows || [])[entry.idx];
+  if (!cur || cur.bookingId !== entry.row.bookingId) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
+  const bc = booking.currency;
+  const { fxCovered: _a, fxRate: _b, fxBookingCurrency: _c, visaFee: _d, ...base } = cur;
+  const who = booking.guestName ? ` - ${booking.guestName}` : "";
+  const made = [], fees = [];
+  for (const l of lines) {
+    const amt = Math.round((Number(l.amount) || 0) * 100) / 100;
+    if (!(amt > 0)) continue;
+    const details = cleanPaymentDetailsFor(l.method, l.details);
+    const row = { ...base, collectionAmt: amt, collectionCurrency: l.currency, collectionMethod: l.method, paymentDetails: details };
+    if (l.currency === bc) row.collectionDesc = `تحصيل${who} (+${amt} ${bc})`;
+    else if (payLineApiRate(l, bc) > 0) {
+      const covered = payLineCovered(l, bc);
+      Object.assign(row, { fxCovered: covered, fxRate: payLineApiRate(l, bc), fxBookingCurrency: bc, collectionDesc: `تحصيل${who} (+${amt} ${l.currency} = ${covered} ${bc})` });
+    } else row.collectionDesc = `تحصيل${who} (+${amt} ${l.currency})`;
+    made.push(row);
+    const fee = l.method === "فيزا" && l.currency === bc ? Math.round((Number(l.fee) || 0) * 100) / 100 : 0;
+    if (fee > 0) fees.push({ ...base, visaFee: true, collectionAmt: fee, collectionCurrency: bc, collectionMethod: "فيزا", paymentDetails: details, collectionDesc: `رسوم فيزا${who} (+${fee} ${bc})` });
+  }
+  if (!made.length) return { error: "اكتب مبلغ سطر واحد على الأقل (أو امسح الدفعة من خانة المبلغ = صفر)" };
+  const rows = [...old.rows];
+  rows.splice(entry.idx, 1, ...made, ...fees);
+  const res = await applyCorrection(old, { ...old, rows });
   if (res.conflict) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
   return res;
 }

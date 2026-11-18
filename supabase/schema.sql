@@ -4559,7 +4559,114 @@ exception when exclusion_violation then
 end;
 $$;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 57 $$;
+-- --------------------------------------------------------------------------
+-- 55) تقسيم دفعة متسجّلة لأكتر من وسيلة/عملة من "تعديل المدفوع": التصحيح بيطبّق النقص قبل الزيادة
+--     (الجزء الجديد بالدولار مايتحسبش فوق الكاش القديم قبل ما يتشال)
+-- --------------------------------------------------------------------------
+create or replace function correct_shift_record(p_hotel integer, p_date date, p_key text, p_expected timestamptz, p_record jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  sr shift_records; b bookings%rowtype; d record; main boolean; v_extras jsonb; v_oc jsonb; c jsonb; cp numeric; n_rows jsonb; n_caf jsonb;
+  f text; allowed text[] := array['rows', 'hotel_rows', 'cafeteria', 'cafeteria_rows', 'booking_collections', 'handover', 'method_handover', 'shift_notes', 'flagged',
+    'total_expenses', 'total_collections', 'closing_cash', 'cash_collections', 'by_method_currency', 'by_category', 'method_closing'];
+  patch jsonb := '{}'::jsonb; label text;
+begin
+  if not calma_can_correct_shift(p_date) then
+    raise exception 'تصحيح اليومية من صلاحية المطوّر (أي يوم) أو مدير الشيفت (شيفتات اليوم) بس';
+  end if;
+  select * into sr from shift_records where hotel_id = p_hotel and date = p_date and shift_key = p_key for update;
+  if not found then raise exception 'اليومية دي مش موجودة'; end if;
+  if p_expected is not null and sr.updated_at is distinct from p_expected then return jsonb_build_object('conflict', true); end if;
+  foreach f in array allowed loop
+    if p_record ? f then patch := patch || jsonb_build_object(f, p_record -> f); end if;
+  end loop;
+  n_rows := coalesce(patch -> 'rows', sr.rows); n_caf := coalesce(patch -> 'cafeteria_rows', sr.cafeteria_rows);
+  if jsonb_typeof(n_rows) <> 'array' or jsonb_typeof(coalesce(n_caf, '[]'::jsonb)) <> 'array' then raise exception 'صفوف اليومية غير صالحة'; end if;
+
+  -- فرق تحصيل كل حجز بين النسخة القديمة والجديدة بيتطبّق على مدفوع الحجز نفسه (مابينزلش تحت الصفر)
+  -- رسم فيزا اتضاف/اتعدّل/اتشال في التصحيح: extras.visaFee بيتظبط الأول (الإجمالي بيزيد قبل المدفوع - قيد "محدش يدفع فوق الإجمالي")
+  for d in
+    select coalesce(n.bid, o.bid) as bid, coalesce(n.amt, 0) - coalesce(o.amt, 0) as delta
+    from calma_ledger_fee_sums(n_rows) n full join calma_ledger_fee_sums(sr.rows) o on o.bid = n.bid
+    where coalesce(n.amt, 0) <> coalesce(o.amt, 0)
+  loop
+    perform set_config('calma.pay_rpc', '1', true);
+    perform set_config('calma.refund_rpc', '1', true);
+    perform set_config('calma.correct_rpc', '1', true);
+    update bookings set extras = jsonb_set(coalesce(extras, '{}'::jsonb), '{visaFee}', to_jsonb(greatest(0, calma_num(extras ->> 'visaFee') + d.delta))) where id::text = d.bid;
+    perform set_config('calma.pay_rpc', '', true);
+    perform set_config('calma.refund_rpc', '', true);
+    perform set_config('calma.correct_rpc', '', true);
+  end loop;
+
+  for d in
+    select coalesce(n.bid, o.bid) as bid, coalesce(n.cur, o.cur) as cur, coalesce(n.is_caf, o.is_caf) as is_caf, coalesce(n.amt, 0) - coalesce(o.amt, 0) as delta
+    from calma_ledger_booking_sums(n_rows, n_caf) n
+    full join calma_ledger_booking_sums(sr.rows, sr.cafeteria_rows) o on o.bid = n.bid and o.cur = n.cur and o.is_caf = n.is_caf
+    where coalesce(n.amt, 0) <> coalesce(o.amt, 0)
+    order by coalesce(n.amt, 0) - coalesce(o.amt, 0)      -- النقص الأول وبعدين الزيادة: تقسيم دفعة لعملة تانية مايعدّيش الإجمالي مؤقتًا
+  loop
+    select * into b from bookings where id::text = d.bid for update;
+    if not found then continue; end if;
+    if b.hotel_id is distinct from p_hotel then raise exception 'صف في اليومية مربوط بحجز في فندق تاني (%) - صحّح الصف ده', coalesce(b.guest_name, ''); end if;
+    main := d.cur = '' or d.cur = b.currency;
+    perform set_config('calma.pay_rpc', '1', true);
+    perform set_config('calma.refund_rpc', '1', true);
+    perform set_config('calma.correct_rpc', '1', true);
+    if main then
+      v_extras := b.extras;
+      if d.is_caf then
+        cp := least(calma_num(b.extras ->> 'cafeteria'), greatest(0, calma_num(b.extras ->> 'cafeteriaPaid') + d.delta));
+        v_extras := jsonb_set(coalesce(b.extras, '{}'::jsonb), '{cafeteriaPaid}', to_jsonb(cp));
+      end if;
+      update bookings set amount_paid = greatest(0, coalesce(amount_paid, 0) + d.delta), extras = v_extras where id = b.id;
+    else
+      v_oc := coalesce(b.other_charges, '{}'::jsonb);
+      if d.is_caf and v_oc ? d.cur then
+        c := v_oc -> d.cur;
+        cp := least(calma_num(c ->> 'cafeteria'), greatest(0, calma_num(c ->> 'cafeteriaPaid') + d.delta));
+        v_oc := jsonb_set(v_oc, array[d.cur], jsonb_set(c, '{cafeteriaPaid}', to_jsonb(cp)));
+      end if;
+      update bookings set other_paid = jsonb_set(coalesce(other_paid, '{}'::jsonb), array[d.cur], to_jsonb(greatest(0, calma_num(other_paid ->> d.cur) + d.delta))),
+                          other_charges = v_oc
+        where id = b.id;
+    end if;
+    perform set_config('calma.pay_rpc', '', true);
+    perform set_config('calma.refund_rpc', '', true);
+    perform set_config('calma.correct_rpc', '', true);
+  end loop;
+
+
+  update shift_records set
+    rows = n_rows, cafeteria_rows = coalesce(n_caf, '[]'::jsonb),
+    hotel_rows = coalesce(patch -> 'hotel_rows', hotel_rows), cafeteria = coalesce(patch -> 'cafeteria', cafeteria),
+    booking_collections = coalesce(patch -> 'booking_collections', booking_collections),
+    handover = coalesce(patch -> 'handover', handover), method_handover = coalesce(patch -> 'method_handover', method_handover),
+    shift_notes = case when patch ? 'shift_notes' then coalesce(patch ->> 'shift_notes', '') else shift_notes end,
+    flagged = case when patch ? 'flagged' then coalesce((patch ->> 'flagged')::boolean, false) else flagged end,
+    total_expenses = case when patch ? 'total_expenses' then nullif(patch -> 'total_expenses', 'null'::jsonb) else total_expenses end,
+    total_collections = case when patch ? 'total_collections' then nullif(patch -> 'total_collections', 'null'::jsonb) else total_collections end,
+    closing_cash = case when patch ? 'closing_cash' then nullif(patch -> 'closing_cash', 'null'::jsonb) else closing_cash end,
+    cash_collections = case when patch ? 'cash_collections' then nullif(patch -> 'cash_collections', 'null'::jsonb) else cash_collections end,
+    by_method_currency = case when patch ? 'by_method_currency' then nullif(patch -> 'by_method_currency', 'null'::jsonb) else by_method_currency end,
+    by_category = case when patch ? 'by_category' then nullif(patch -> 'by_category', 'null'::jsonb) else by_category end,
+    method_closing = case when patch ? 'method_closing' then nullif(patch -> 'method_closing', 'null'::jsonb) else method_closing end
+  where hotel_id = p_hotel and date = p_date and shift_key = p_key;
+
+  -- أثر التصحيح: سجل التدقيق (قبل/بعد) + سجل الحركة باسم اللي صحّح (حتى لو الحساب مخفي)
+  insert into money_audit(actor, tbl, row_id, action, old_val, new_val)
+  values ((select username from profiles where id = auth.uid()), 'shift_records', p_hotel || '|' || p_date || '|' || p_key, 'correct',
+          jsonb_build_object('rows', sr.rows, 'hotel_rows', sr.hotel_rows, 'cafeteria', sr.cafeteria, 'cafeteria_rows', sr.cafeteria_rows, 'handover', sr.handover, 'method_handover', sr.method_handover),
+          patch - array['total_expenses', 'total_collections', 'closing_cash', 'cash_collections', 'by_method_currency', 'by_category', 'method_closing']);
+  label := case p_key when 'morning' then 'الشيفت الصباحي' when 'evening' then 'الشيفت المسائي' else 'الشيفت الليلي' end;
+  insert into activity_log(action, hotel_id) values ('تصحيح يومية ' || label || ' ليوم ' || p_date || ' (صاحب الشيفت: ' || coalesce(sr.staff_name, '') || ')', p_hotel);
+
+  select * into sr from shift_records where hotel_id = p_hotel and date = p_date and shift_key = p_key;
+  return to_jsonb(sr);
+end;
+$$;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 58 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

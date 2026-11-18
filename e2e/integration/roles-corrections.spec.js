@@ -594,3 +594,34 @@ test("تعديل الحجز: مدير الشيفت بيحصّل من الفور�
   const rows = await env.q("select r->>'collectionCurrency' cur, r->>'collectionMethod' m, calma_num(r->>'collectionAmt')::float amt from shift_records s, jsonb_array_elements(s.rows) r where r->>'bookingId' = $1 and calma_num(r->>'collectionAmt') > 0 order by 3", [b]);
   expect(rows.map((r) => `${r.amt} ${r.cur} ${r.m}`)).toEqual(["6 USD كاش", "300 EGP فيزا", "400 EGP كاش"]);
 });
+
+test("تعديل المدفوع: مدير الشيفت بيقسّم دفعة متسجّلة غلط (3600 كاش) لجزء بالدولار وجزء فيزا بالجنيه - المدفوع والخزينة بيتظبطوا", async ({ page, env }) => {
+  await users(env);
+  const day = shiftDay(), key = myShiftKey();
+  const b = await env.seedBooking({ room: 614, guest: "Split Fix", start: 0, nights: 2, price: 1800, paid: 3600, currency: "EGP", anchor: "shift" });
+  await env.seedShift("mona", { day, key, handover: { EGP: 0 }, collections: [{ room: 614, amount: 3600, currency: "EGP", bookingId: b, method: "كاش", desc: "تحصيل - Split Fix (+3600 EGP)" }] });
+  await page.goto("/");
+  await login(page, "mona");
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("edit-price").first().click();
+  await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
+  await page.getByTestId("edit-payment-split").first().click();
+  // السطر الأول بيبدأ بالدفعة زي ما هي: نغيّره لـ 50 دولار كاش بسعر 50 (= 2500 جنيه)
+  await page.getByTestId("split-pay-currency-0").selectOption("USD");
+  await page.getByTestId("split-pay-amount-0").fill("50");
+  await page.getByTestId("split-pay-rate-0").fill("50");
+  // والباقي 1100 جنيه فيزا
+  await page.getByTestId("split-pay-add").click();
+  await page.getByTestId("split-pay-amount-1").fill("1100");
+  await page.getByTestId("split-pay-method-1").selectOption("فيزا");
+  await page.getByTestId("split-pay-1-last4").fill("7777");
+  await page.getByTestId("edit-payment-split-save").click();
+  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(3600);
+  const r = await rec(env, day, key);
+  const mine = r.rows.filter((x) => x.bookingId === b && Number(x.collectionAmt) > 0).map((x) => `${x.collectionAmt} ${x.collectionCurrency} ${x.collectionMethod}${x.fxCovered != null ? " =" + x.fxCovered : ""}`);
+  expect(mine.sort()).toEqual(["1100 EGP فيزا", "50 USD كاش =2500"].sort());
+  const res = await env.pool.query(readFileSync(new URL("../../supabase/ops/reconcile.sql", import.meta.url), "utf8"));
+  const rows = (Array.isArray(res) ? res : [res]).flatMap((x) => x.rows || []);
+  expect(rows.filter((x) => x.level === "خطأ")).toEqual([]);
+});

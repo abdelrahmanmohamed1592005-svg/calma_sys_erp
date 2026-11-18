@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock, Search, CalendarDays, Moon, Users, CreditCard, Globe, BedDouble, ClipboardList, Wallet, SearchX } from "lucide-react";
-import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown } from "./shared";
+import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown, PayLines, emptyPayLine } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHasDue, bookingDueLines, formatMoneyLines, bookingHotelTotal, refundStatusOf } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid, arabicDateLong, shiftDayNow } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, roomLabel, SHIFTS } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
-import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, devChangeCurrencyAcrossLedgers } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentOther, recordBookingPaymentFx, changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking } from "../data/payments";
+import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, devChangeCurrencyAcrossLedgers, splitLedgerPaymentRow } from "../data/shifts";
+import { recordBookingPayment, recordBookingPaymentOther, recordBookingPaymentFx, changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
 import { guarded } from "../lib/busy";
 import { payLineApiRate, payLineCovered, payLineRateLabel } from "../domain/payLines";
@@ -88,6 +88,8 @@ function QuickPay({ booking, onDone, showToast }) {
    صفر = الدفعة اتشالت. */
 function EditPayments({ booking, scope, onDone, showToast, onLog }) {
   const [open, setOpen] = useState(false);
+  const [splitKey, setSplitKey] = useState(null);     // الدفعة اللي بتتقسم / عملتها بتتغيّر
+  const [splitLines, setSplitLines] = useState([]);
   const [rows, setRows] = useState(null);
   const [drafts, setDrafts] = useState({});
   const load = async () => { setRows(null); const r = await getBookingLedgerRows(booking); if (!r) { showToast("تعذر تحميل الدفعات (مشكلة اتصال)"); setOpen(false); return; } setRows(r); setDrafts({}); };
@@ -107,6 +109,26 @@ function EditPayments({ booking, scope, onDone, showToast, onLog }) {
     if (res.error) { showToast(res.error); await load(); return; }
     onLog(`تعديل دفعة على حجز ${booking.guestName} (غرفة ${booking.room}) في يومية ${e.date}: ${fmt(e.row.collectionAmt)} ${e.row.collectionMethod} ← ${fmt(amount)} ${method}${visaFee > 0 ? ` + رسوم فيزا ${fmt(visaFee)} ${booking.currency}` : ""}`);
     showToast(`اتعدّلت الدفعة${visaFee > 0 ? ` واتضافت رسوم فيزا ${fmt(visaFee)} ${booking.currency} على النزيل` : ""} - المدفوع على الحجز والخزينة اتظبطوا${res.moved ? ` (والعهدة اتنقلت لـ ${res.moved} شيفت بعده)` : ""}`);
+    if (onDone) await onDone();
+    await load();
+  });
+  // تقسيم دفعة / تغيير عملتها: السطور بتبدأ بالدفعة زي ما هي
+  const startSplit = (e) => {
+    const r = e.row, fx = r.fxCovered != null && r.fxBookingCurrency;
+    const userRate = fx ? (booking.currency === "EGP" && r.collectionCurrency !== "EGP" ? Math.round((1 / Number(r.fxRate)) * 10000) / 10000 : Number(r.fxRate)) : "";
+    setSplitLines([{ ...emptyPayLine(r.collectionCurrency || booking.currency), amount: String(Number(r.collectionAmt) || ""), rate: fx ? String(userRate) : "", method: r.collectionMethod || "كاش", details: r.paymentDetails || emptyPaymentDetails() }]);
+    setSplitKey(keyOf(e));
+  };
+  const saveSplit = (e) => guarded("split-pay:" + keyOf(e), async () => {
+    const err = payLinesError(booking, splitLines, validatePaymentDetailsFor);
+    if (err) { showToast(err); return; }
+    for (const l of splitLines) if (Number(l.amount) > 0 && l.currency !== booking.currency && !(payLineApiRate(l, booking.currency) > 0) && !booking.otherCharges?.[l.currency]) { showToast(`اكتب سعر الصرف لدفعة ${l.currency} (${payLineRateLabel(l, booking.currency)})`); return; }
+    const res = await splitLedgerPaymentRow(e, splitLines, booking);
+    if (res.error) { showToast(res.error); await load(); return; }
+    const txt = splitLines.filter((l) => Number(l.amount) > 0).map((l) => `${fmt(Number(l.amount))} ${l.currency} ${l.method}`).join(" + ");
+    onLog(`تعديل دفعة على حجز ${booking.guestName} (غرفة ${booking.room}) في يومية ${e.date}: ${fmt(e.row.collectionAmt)} ${e.row.collectionCurrency} ${e.row.collectionMethod} ← ${txt}`);
+    showToast(`اتعدّلت الدفعة لـ ${txt} - المدفوع على الحجز والخزينة اتظبطوا${res.moved ? ` (والعهدة اتنقلت لـ ${res.moved} شيفت بعده)` : ""}`);
+    setSplitKey(null);
     if (onDone) await onDone();
     await load();
   });
@@ -134,8 +156,23 @@ function EditPayments({ booking, scope, onDone, showToast, onLog }) {
                 <input className="cx-input" type="number" min="0" data-testid="edit-payment-visa-fee" style={{ width: 140 }} placeholder={`+ رسوم فيزا (${booking.currency})`} value={d.visaFee ?? ""} onChange={(ev) => set({ visaFee: ev.target.value })} />
               )}
               <button className="cx-btn cx-btn-gold" data-testid="edit-payment-save" style={{ fontSize: 12.5 }} onClick={() => save(e)}>حفظ</button>
-            </>) : (
+            </>) : fx && e.date >= minDate ? (
+              <span style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(e.row.collectionAmt)} {e.row.collectionCurrency}</bdi> · {e.row.collectionMethod} - دفعة بسعر صرف (عدّلها من "تقسيم / عملة تانية")</span>
+            ) : (
               <span style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(e.row.collectionAmt)} {e.row.collectionCurrency}</bdi> · {e.row.collectionMethod} - {fx ? "دفعة بسعر صرف (تتصحّح من اليومية)" : "يوم قديم - تصحيحه من الإدارة"}</span>
+            )}
+            {e.date >= minDate && e.list === "rows" && !e.row.visaFee && splitKey !== k && (
+              <button className="cx-btn cx-btn-outline" data-testid="edit-payment-split" style={{ fontSize: 12.5 }} onClick={() => startSplit(e)}>تقسيم / عملة تانية</button>
+            )}
+            {splitKey === k && (
+              <div data-testid="edit-payment-split-box" style={{ width: "100%", display: "flex", flexDirection: "column", gap: 6, background: "#fff", borderRadius: 8, padding: 8 }}>
+                <div style={{ fontSize: 12.5, color: "var(--muted)" }}>الدفعة دي هتتبدّل بالسطور دي (كل سطر بمبلغه وعملته ووسيلته) في نفس اليومية - مثلًا جزء بالدولار وجزء فيزا</div>
+                <PayLines lines={splitLines} onChange={setSplitLines} bookingCurrency={booking.currency} currencies={COMMON_CURRENCIES} testid="split-pay" addLabel="جزء تاني بوسيلة أو عملة تانية" />
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button className="cx-btn cx-btn-gold" data-testid="edit-payment-split-save" style={{ fontSize: 12.5 }} onClick={() => saveSplit(e)}>حفظ التعديل</button>
+                  <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5 }} onClick={() => setSplitKey(null)}>إلغاء</button>
+                </div>
+              </div>
             )}
           </div>
         );
