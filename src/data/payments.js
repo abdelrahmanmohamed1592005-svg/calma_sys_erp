@@ -7,6 +7,7 @@ import { isMissingFunctionError, OUTDATED_SCHEMA_MESSAGE } from "./schemaCheck";
 
 // خطأ شبكة (مفيش كود من الـ API): ممكن العملية تكون اتسجّلت فعلًا والرد بس هو اللي ضاع
 import { isNetworkError, reportDbError } from "../lib/errorReport";
+import { payLineApiRate } from "../domain/payLines";
 const UNCERTAIN_NOTE = " - مش متأكدين إن العملية اتسجّلت (النت قطع): راجع المدفوع/اليومية قبل ما تعيد التسجيل عشان ما يتكرّرش";
 
 async function rpc(name, args) {
@@ -60,3 +61,41 @@ export const devRestoreBooking = (bookingId, what) => rpc("dev_restore_booking",
 /* المطوّر: مسح نهائي لحجز أو يومية اتعملوا بالغلط (بعد ما تحصيلهم اتشال من اليوميات) */
 export const devDeleteBooking = (bookingId) => rpc("dev_delete_booking", { p_booking: bookingId });
 export const devDeleteShift = ({ hotelId, date, shiftKey }) => rpc("dev_delete_shift", { p_hotel: hotelId, p_date: date, p_key: shiftKey });
+
+/* تسجيل سطور دفع (وسيلة أو أكتر / أي عملة) على حجز - كل سطر بدالته:
+   عملة الحجز = تحصيل عادي (+ رسوم فيزا)، عملة تانية بسعر صرف = دفعة بتغطي من عملة الحجز،
+   عملة تانية من غير سعر = سداد خدمات بالعملة دي. بترجع { done: [نص], errors: [نص] } */
+export async function recordPayLines(booking, lines, note = "تحصيل") {
+  const done = [], errors = [];
+  for (const l of lines) {
+    const amount = Math.round((Number(l.amount) || 0) * 100) / 100;
+    if (!(amount > 0)) continue;
+    const label = `${amount} ${l.currency} ${l.method}`;
+    const details = l.details || {};
+    let r;
+    if (l.currency === booking.currency) r = await recordBookingPayment({ bookingId: booking.id, amount, method: l.method, details, note });
+    else if (payLineApiRate(l, booking.currency) > 0) r = await recordBookingPaymentFx({ bookingId: booking.id, amount, currency: l.currency, rate: payLineApiRate(l, booking.currency), method: l.method, details, note });
+    else r = await recordBookingPaymentOther({ bookingId: booking.id, amount, currency: l.currency, method: l.method, details, note });
+    if (r.error) { errors.push(`${label}: ${r.error}`); continue; }
+    done.push(label);
+    const fee = l.method === "فيزا" && l.currency === booking.currency ? Math.round((Number(l.fee) || 0) * 100) / 100 : 0;
+    if (fee > 0) {
+      const f = await recordVisaFee({ bookingId: booking.id, amount: fee, details });
+      if (f.error) errors.push(`رسوم فيزا ${fee} ${l.currency}: ${f.error}`); else done.push(`رسوم فيزا ${fee} ${l.currency}`);
+    }
+  }
+  return { done, errors };
+}
+
+/* التحقق من سطور الدفع قبل التسجيل: رسالة الخطأ أو null */
+export function payLinesError(booking, lines, validate) {
+  for (const l of lines) {
+    const amount = Number(l.amount);
+    if (l.amount === "" || l.amount == null) continue;
+    if (!Number.isFinite(amount) || amount < 0) return "المبلغ لازم يكون رقم صحيح";
+    if (amount === 0) continue;
+    const err = validate(l.method, l.details); if (err) return err;
+    if (Number(l.fee) < 0) return "رسوم الفيزا لازم تكون صفر أو أكتر";
+  }
+  return null;
+}

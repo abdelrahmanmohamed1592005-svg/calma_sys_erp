@@ -47,11 +47,11 @@ export function parseDateFlexible(s) {
    بيتسجّلوا على يوم الشيفت المسائي اللي قبلهم، مش على التاريخ الجديد بتاع
    التقويم. ده بيخلّي ترتيب الشيفتات (صباحي ← مسائي ← ليلي) ونقل العهدة بينهم
    متسق. (حجوزات الفندق نفسها بتفضل بتاريخ التقويم العادي.) */
-/* معاد الدخول والخروج في الفندق: 12 الضهر. قبلها النزيل اللي خروجه النهارده لسه في الغرفة (لوحة الغرف). */
-export const CHECKOUT_HOUR = 12;
+/* معاد الدخول والخروج في الفندق: 2 الضهر. قبلها النزيل اللي خروجه النهارده لسه في الغرفة (لوحة الغرف). */
+export const CHECKOUT_HOUR = 14;   // معاد الخروج الساعة 2 الضهر (قرار المالك)
 export const beforeCheckoutHour = (now = new Date()) => now.getHours() < CHECKOUT_HOUR;
-/* تمديد إقامة النزيل اللي خروجه النهارده مسموح لحد الساعة 1 الضهر (ساعة بعد معاد الخروج) */
-export const EXTEND_UNTIL_HOUR = 13;
+/* تمديد إقامة النزيل اللي خروجه النهارده مسموح لحد الساعة 2 الضهر (معاد الخروج) */
+export const EXTEND_UNTIL_HOUR = 14;
 export const beforeExtendCutoff = (now = new Date()) => now.getHours() < EXTEND_UNTIL_HOUR;
 
 export function shiftDayNow(now = new Date()) {
