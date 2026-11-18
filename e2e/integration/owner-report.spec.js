@@ -72,9 +72,9 @@ test("موظف الشيفت: زرار إرسال اليومية للأونر ب�
   // المربعات زي الورق: الأربعة الأولى كاش (عهدة + تحصيل - مصاريف = رصيد)، والفيزا تحصيل الشيفت بس
   await expect(sheets.first().locator(".cx-or-sum > div")).toHaveCount(9);
   expect(await box("العهدة")).toBe("500 EGP");
-  expect(await box("إجمالي التحصيل")).toBe("1,960 EGP");   // كاش: 1,600 + 200 + كافيتيريا 160
+  expect(await box("إجمالي التحصيل")).toBe("1,800 EGP");   // كاش الغرف بس: 1,600 + 200 (الكافيتيريا 160 في خانتها لوحدها)
   expect(await box("إجمالي المصاريف")).toBe("70 EGP");
-  expect(await box("رصيد الخزينة")).toBe("2,390 EGP");     // 500 + 1,960 - 70
+  expect(await box("رصيد الخزينة")).toBe("2,390 EGP");     // 500 + 1,800 غرف + 160 كافيتيريا - 70
   expect(await box("الفيزا")).toBe("3,200 EGP");           // تحصيل الشيفت بس (العهدة 6,245 مش محسوبة)
   expect(await box("انستاباي")).toBe("0");
   expect(await box("إجمالي الكافيتيريا")).toBe("160 EGP");
