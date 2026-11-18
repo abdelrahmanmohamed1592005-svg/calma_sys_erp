@@ -88,9 +88,9 @@ describe("تقرير الأونر - ورقة الشيفت", () => {
     expect(sheet.notes).toEqual(["ملاحظات: تمام"]);
   });
 
-  it("مدفوع قبل السيستم بيظهر في خانة المدفوع", () => {
+  it("مدفوع قبل السيستم مابيظهرش في تقرير الأونر (المدفوع بس)", () => {
     const b = booking({ room: 610, guestName: "قديم", checkin: DAY, checkout: "2026-11-15", priceNight: 500, totalRoom: 1000, amountPaid: 700, paymentDetails: { priorPaid: 700 } });
-    expect(clean(buildRoomsSheet({ rooms, bookings: [b], date: DAY }))[0].paid).toBe("700 EGP | قبل السيستم 700 EGP");
+    expect(clean(buildRoomsSheet({ rooms, bookings: [b], date: DAY }))[0].paid).toBe("700 EGP");
   });
 
   it("التقرير الكامل: كشف الغرف + ورقة لكل شيفت اتفتح بالترتيب (اللي لسه ماجاش مابيطلعش)", () => {

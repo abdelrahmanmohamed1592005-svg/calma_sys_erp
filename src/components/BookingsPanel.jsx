@@ -99,10 +99,13 @@ function EditPayments({ booking, scope, onDone, showToast, onLog }) {
     if (!Number.isFinite(amount) || amount < 0) { showToast("اكتب مبلغ صحيح (صفر = تشيل الدفعة)"); return; }
     const details = d.details ?? e.row.paymentDetails ?? emptyPaymentDetails();
     if (amount > 0) { const err = validatePaymentDetailsFor(method, details); if (err) { showToast(err); return; } }
-    const res = await editLedgerPaymentRow(e, { collectionAmt: amount, collectionMethod: method, paymentDetails: cleanPaymentDetailsFor(method, details) });
+    // رسوم فيزا جديدة على الدفعة (بعملة الحجز بس - زي تسجيل الدفعة)
+    const visaFee = method === "فيزا" && !e.row.visaFee && e.list === "rows" && (e.row.collectionCurrency || "EGP") === booking.currency ? Math.round((Number(d.visaFee) || 0) * 100) / 100 : 0;
+    if (!Number.isFinite(visaFee) || visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
+    const res = await editLedgerPaymentRow(e, { collectionAmt: amount, collectionMethod: method, paymentDetails: cleanPaymentDetailsFor(method, details) }, { visaFee, guestName: booking.guestName });
     if (res.error) { showToast(res.error); await load(); return; }
-    onLog(`تعديل دفعة على حجز ${booking.guestName} (غرفة ${booking.room}) في يومية ${e.date}: ${fmt(e.row.collectionAmt)} ${e.row.collectionMethod} ← ${fmt(amount)} ${method}`);
-    showToast(`اتعدّلت الدفعة - المدفوع على الحجز والخزينة اتظبطوا${res.moved ? ` (والعهدة اتنقلت لـ ${res.moved} شيفت بعده)` : ""}`);
+    onLog(`تعديل دفعة على حجز ${booking.guestName} (غرفة ${booking.room}) في يومية ${e.date}: ${fmt(e.row.collectionAmt)} ${e.row.collectionMethod} ← ${fmt(amount)} ${method}${visaFee > 0 ? ` + رسوم فيزا ${fmt(visaFee)} ${booking.currency}` : ""}`);
+    showToast(`اتعدّلت الدفعة${visaFee > 0 ? ` واتضافت رسوم فيزا ${fmt(visaFee)} ${booking.currency} على النزيل` : ""} - المدفوع على الحجز والخزينة اتظبطوا${res.moved ? ` (والعهدة اتنقلت لـ ${res.moved} شيفت بعده)` : ""}`);
     if (onDone) await onDone();
     await load();
   });
@@ -126,6 +129,9 @@ function EditPayments({ booking, scope, onDone, showToast, onLog }) {
               <span style={{ fontSize: 12.5 }}>{e.row.collectionCurrency}</span>
               {!e.row.visaFee && <select className="cx-select" data-testid="edit-payment-method" style={{ width: 150 }} value={method} onChange={(ev) => set({ method: ev.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>}
               <PaymentDetailsInline method={method} details={d.details ?? e.row.paymentDetails} onChange={(det) => set({ details: det })} testid="edit-payment" />
+              {method === "فيزا" && !e.row.visaFee && e.list === "rows" && (e.row.collectionCurrency || "EGP") === booking.currency && (
+                <input className="cx-input" type="number" min="0" data-testid="edit-payment-visa-fee" style={{ width: 140 }} placeholder={`+ رسوم فيزا (${booking.currency})`} value={d.visaFee ?? ""} onChange={(ev) => set({ visaFee: ev.target.value })} />
+              )}
               <button className="cx-btn cx-btn-gold" data-testid="edit-payment-save" style={{ fontSize: 12.5 }} onClick={() => save(e)}>حفظ</button>
             </>) : (
               <span style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(e.row.collectionAmt)} {e.row.collectionCurrency}</bdi> · {e.row.collectionMethod} - {fx ? "دفعة بسعر صرف (تتصحّح من اليومية)" : "يوم قديم - تصحيحه من الإدارة"}</span>
@@ -140,16 +146,18 @@ function EditPayments({ booking, scope, onDone, showToast, onLog }) {
 
 /* المطوّر: يرجّع حجز اتلغى بالغلط، أو نزيل اتسجّل "غادر مبكرًا" بالغلط (بيرجع لتاريخ خروجه وإجماليه الأصليين) */
 function DevRestore({ booking, onDone, showToast }) {
-  const cancelled = booking.status === "ملغي", early = !!booking.leftEarly;
-  if (!cancelled && !early) return null;
-  const what = cancelled ? "uncancel" : "unearly";
+  const cancelled = booking.status === "ملغي", early = !!booking.leftEarly, out = !early && booking.status === "تم تسجيل الخروج";
+  if (!cancelled && !early && !out) return null;
+  const what = cancelled ? "uncancel" : early ? "unearly" : "uncheckout";
   const run = () => guarded("booking-devRestore", async () => {
     const res = await devRestoreBooking(booking.id, what);
     if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
-    showToast(cancelled ? `الحجز رجع تاني (${booking.guestName})` : `المغادرة المبكرة اتلغت - ${booking.guestName} رجع لتاريخ خروجه الأصلي`);
+    showToast(cancelled ? `الحجز رجع تاني (${booking.guestName})` : early ? `المغادرة المبكرة اتلغت - ${booking.guestName} رجع لتاريخ خروجه الأصلي` : `تسجيل الخروج اتلغى - ${booking.guestName} رجع ساكن في الغرفة`);
     if (onDone) await onDone();
   });
-  return <span data-testid="dev-restore"><TwoStepButton className="cx-btn-outline" label={cancelled ? "إرجاع الحجز (اتلغى بالغلط)" : "إلغاء المغادرة المبكرة"} confirmLabel={cancelled ? "ترجّع الحجز؟" : "ترجّع تاريخ الخروج الأصلي؟"} onConfirm={run} /></span>;
+  const label = cancelled ? "إرجاع الحجز (اتلغى بالغلط)" : early ? "إلغاء المغادرة المبكرة" : "إلغاء تسجيل الخروج (اتعمل بالغلط)";
+  const confirm = cancelled ? "ترجّع الحجز؟" : early ? "ترجّع تاريخ الخروج الأصلي؟" : "ترجّع النزيل ساكن في الغرفة؟";
+  return <span data-testid="dev-restore"><TwoStepButton className="cx-btn-outline" label={label} confirmLabel={confirm} onConfirm={run} /></span>;
 }
 
 /* المطوّر: مسح نهائي لحجز اتضاف بالغلط - تحصيله بيتشال من كل اليوميات (والعهدة بتتظبط) وبعدين الحجز نفسه بيتمسح كأنه ماكانش */

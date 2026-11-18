@@ -65,7 +65,6 @@ function paidLines(b, payments) {
   if (online) lines.push("الغرفة مدفوعة أونلاين");
   if (paid > 0 || !online) lines.push(amt(paid, b.currency));
   Object.entries(otherPaidOf(b)).forEach(([c, v]) => lines.push(amt(v, c)));
-  if (Number(b.paymentDetails?.priorPaid) > 0) lines.push(`قبل السيستم ${amt(b.paymentDetails.priorPaid, b.currency)}`);
   // تفاصيل الدفع من اليومية نفسها: كل وسيلة بمبلغها (كاش 1,261 / فيزا 6,245 ****1234)
   (payments || []).forEach((p) => {
     const d = describePaymentDetails(p.method, p.details);
@@ -83,7 +82,7 @@ export function buildRoomsSheet({ rooms, bookings, date, paymentsIndex, hotelNam
     { key: "due", label: "متبقي", w: 1.15 }, { key: "source", label: "التسكين", w: 1.2 },
   ];
   const rows = [];
-  const dueAll = {}, priorAll = {};
+  const dueAll = {};
   let occupied = 0, arrivals = 0, departures = 0;
   const roomNumbers = new Set((rooms || []).map((r) => r.number));
   departures = (bookings || []).filter((b) => roomNumbers.has(b.room) && b.status !== "ملغي" && b.checkout === date && roomStart(b) < date).length;
@@ -98,7 +97,6 @@ export function buildRoomsSheet({ rooms, bookings, date, paymentsIndex, hotelNam
       const pn = paidNights(b);
       const due = bookingDueLines(b);
       due.forEach((l) => sumInto(dueAll, l.currency, l.due));
-      if (Number(b.paymentDetails?.priorPaid) > 0) sumInto(priorAll, b.currency, Number(b.paymentDetails.priorPaid));
       const codes = guestCodeEntries(b).map((g) => g.code);
       const other = otherTotals(b);
       rows.push({
@@ -122,9 +120,7 @@ export function buildRoomsSheet({ rooms, bookings, date, paymentsIndex, hotelNam
     id: "rooms", title: "كشف الغرف", hotelName: hotelName || "",
     head: [["اليوم", arabicWeekday(date)], ["التاريخ", ltr(date)]],
     columns, rows,
-    summary: [["غرف مشغولة", `${occupied} من ${(rooms || []).length}`], ["دخول النهارده", String(arrivals)], ["خروج النهارده", String(departures)], ["إجمالي المتبقي على النزلاء", moneyText(dueAll)],
-      // مبالغ اتسجّلت "مدفوع قبل السيستم" على نزلاء النهارده: برّه الخزينة، فبتتعرض للأونر صريحة عشان تتراجع مع الورق
-      ...(moneyText(priorAll) !== "0" ? [["مدفوع قبل السيستم (برّه الخزينة)", moneyText(priorAll)]] : [])],
+    summary: [["غرف مشغولة", `${occupied} من ${(rooms || []).length}`], ["دخول النهارده", String(arrivals)], ["خروج النهارده", String(departures)], ["إجمالي المتبقي على النزلاء", moneyText(dueAll)]],   // "مدفوع قبل السيستم" مش بيظهر في تقرير الأونر (قرار المالك)
     notes: [],
   };
 }

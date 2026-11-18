@@ -155,7 +155,7 @@ export async function getBookingLedgerRows(booking) {
 }
 
 /* تعديل صف دفع واحد في يومية (المبلغ/الوسيلة/التفاصيل) - المدفوع على الحجز والعهدة بيتظبطوا لوحدهم (تصحيح) */
-export async function editLedgerPaymentRow(entry, patch) {
+export async function editLedgerPaymentRow(entry, patch, opts = {}) {
   const old = await getShiftRecord(entry.date, entry.shiftKey, entry.hotelId);
   if (!old) return { error: "تعذر قراءة اليومية (مشكلة اتصال) - جرّب تاني" };
   const cur = (old[entry.list] || [])[entry.idx];
@@ -163,7 +163,17 @@ export async function editLedgerPaymentRow(entry, patch) {
   const fixed = { ...patch };
   // بيان الصف فيه المبلغ "(+4000 EGP)": لما المبلغ يتعدّل البيان بيتعدّل معاه عشان اليومية تبان صح
   if (patch.collectionAmt !== undefined && Number(patch.collectionAmt) !== Number(cur.collectionAmt)) fixed.collectionDesc = descWithAmount(cur.collectionDesc, cur.collectionAmt, patch.collectionAmt, cur.collectionCurrency || "EGP");
-  const next = { ...old, [entry.list]: old[entry.list].map((x, i) => (i === entry.idx ? { ...x, ...fixed } : x)) };
+  let next = { ...old, [entry.list]: old[entry.list].map((x, i) => (i === entry.idx ? { ...x, ...fixed } : x)) };
+  // رسوم فيزا على الدفعة دي: صف "رسوم فيزا" في نفس اليومية - التصحيح بيزوّد إجمالي النزيل (extras.visaFee) والمدفوع مع بعض
+  const fee = Math.round((Number(opts.visaFee) || 0) * 100) / 100;
+  if (fee > 0 && entry.list === "rows") {
+    const cur2 = cur.collectionCurrency || "EGP";
+    next = { ...next, rows: [...next.rows, {
+      room: cur.room, bookingId: cur.bookingId, visaFee: true, expenseDesc: "", expenseAmt: "", expenseCategory: "أخرى", expenseCurrency: "EGP",
+      collectionDesc: `رسوم فيزا${opts.guestName ? " - " + opts.guestName : ""} (+${fee} ${cur2})`, collectionAmt: fee, collectionCurrency: cur2,
+      collectionMethod: "فيزا", paymentDetails: fixed.paymentDetails ?? cur.paymentDetails ?? {}, notes: "",
+    }] };
+  }
   const res = await applyCorrection(old, next);
   if (res.conflict) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
   return res;

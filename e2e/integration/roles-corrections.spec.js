@@ -436,15 +436,20 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   await page.getByTestId("edit-payment-amount").fill("400");
   await page.getByTestId("edit-payment-method").selectOption("فيزا");
   await page.getByTestId("edit-payment-last4").fill("5555");
+  await page.getByTestId("edit-payment-visa-fee").fill("50");          // رسوم فيزا على الدفعة القديمة
   await page.getByTestId("edit-payment-save").click();
-  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
-  expect(Number((await booking(env, b)).amount_paid)).toBe(400);
+  await expect(toast(page)).toContainText("اتضافت رسوم فيزا 50 EGP");
+  const after = await env.q("select amount_paid::float, (extras ->> 'visaFee')::float fee from bookings where id = $1", [b]);
+  expect(after[0]).toEqual({ amount_paid: 450, fee: 50 });             // الرسم اتحسب على النزيل واتدفع
+  const feeRow = (await rec(env, day, key)).rows.find((x) => x.bookingId === b && x.visaFee);
+  expect(feeRow).toMatchObject({ collectionAmt: 50, collectionMethod: "فيزا", collectionDesc: "رسوم فيزا - Full Edit (+50 EGP)" });
   const r = (await rec(env, day, key)).rows.find((x) => x.bookingId === b);
   expect(r).toMatchObject({ collectionAmt: 400, collectionMethod: "فيزا", collectionDesc: "تحصيل حجز جديد - Full Edit (+400 EGP)" });   // البيان اتعدّل مع المبلغ
+  expect(r.visaFee).toBeUndefined();
   // الفورم لسه مفتوح وبيتحفظ عادي بعد تعديل المدفوع (من غير "اتحدّث من مكان تاني")
   await page.getByRole("button", { name: /حفظ الحجز/ }).click();
   await expect(toast(page)).toContainText("تم الحفظ");
-  expect(Number((await booking(env, b)).amount_paid)).toBe(400);
+  expect((await env.q("select amount_paid::float, (extras ->> 'visaFee')::float fee from bookings where id = $1", [b]))[0]).toEqual({ amount_paid: 450, fee: 50 });
   const res = await env.pool.query(readFileSync(new URL("../../supabase/ops/reconcile.sql", import.meta.url), "utf8"));
   const rows = (Array.isArray(res) ? res : [res]).flatMap((x) => x.rows || []);
   expect(rows.filter((x) => x.level === "خطأ")).toEqual([]);
@@ -545,4 +550,20 @@ test("مدير الشيفت بيعدّل حجز نزيل مشي (غادر مبك
   await page.getByTestId("edit-payment-save").click();
   await expect(toast(page)).toContainText("اتعدّلت الدفعة");
   expect(Number((await booking(env, b)).amount_paid)).toBe(550);
+});
+
+test("المطوّر بيلغي تسجيل خروج اتعمل بالغلط: النزيل بيرجع ساكن والتواريخ والحساب زي ما هم", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 608, guest: "Out By Mistake", start: -1, nights: 1, price: 1800, paid: 1800, currency: "EGP", status: "تم تسجيل الخروج" });
+  await page.goto("/");
+  await login(page, "devo");
+  await goTab(page, "الحجوزات");
+  const card = page.getByTestId("booking-card").filter({ hasText: "Out By Mistake" });
+  await card.getByTestId("booking-more").locator("summary").click();
+  await card.getByTestId("dev-restore").getByRole("button").first().click();
+  await card.getByTestId("dev-restore").getByRole("button", { name: /ترجّع/ }).click();
+  await expect(toast(page)).toContainText("تسجيل الخروج اتلغى");
+  expect((await env.q("select status, total_room::float, amount_paid::float from bookings where id = $1", [b]))[0]).toEqual({ status: "تم تسجيل الدخول", total_room: 1800, amount_paid: 1800 });
+  // موظف الشيفت مايقدرش يستخدم الدالة دي
+  expect((await env.api("ahmed", "POST", "/rest/v1/rpc/dev_restore_booking", { p_booking: b, p_what: "uncheckout" })).status).toBeGreaterThanOrEqual(400);
 });
