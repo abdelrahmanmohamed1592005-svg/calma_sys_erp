@@ -99,7 +99,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
   const [codesDraft, setCodesDraft] = useState([]);
   const [payBreakdown, setPayBreakdown] = useState(null);
   const date = todayStr();
-  // قبل 1 الضهر (معاد الخروج) النزيل اللي خروجه النهارده لسه في الغرفة - بنحدّث كل دقيقة عشان الغرفة تفضى لوحدها الساعة 12
+  // قبل 2 الضهر (معاد الخروج) النزيل اللي خروجه النهارده لسه في الغرفة - بنحدّث كل دقيقة عشان الغرفة تفضى لوحدها الساعة 12
   const [beforeCheckout, setBeforeCheckout] = useState(() => beforeCheckoutHour());
   const [canLateExtend, setCanLateExtend] = useState(() => beforeExtendCutoff());
   useEffect(() => { const t = setInterval(() => { setBeforeCheckout(beforeCheckoutHour()); setCanLateExtend(beforeExtendCutoff()); }, 60000); return () => clearInterval(t); }, []);
@@ -232,7 +232,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     if (left > 0) msg += ` — لسه متبقي على النزيل ${fmt(left)} ${booking.currency}`;
     showToast(msg);
   }
-  // نزيل خروجه النهارده ومشي بدري عن 1 الضهر (حتى بعد نص الليل): تسجيل خروج دلوقتي - الحساب زي ما هو والغرفة بتفضى على طول
+  // نزيل خروجه النهارده ومشي بدري عن 2 الضهر (حتى بعد نص الليل): تسجيل خروج دلوقتي - الحساب زي ما هو والغرفة بتفضى على طول
   async function checkoutNow(booking) { return guarded("checkout:" + booking.id, async () => {
     if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
     const res = await onUpdateBooking(booking.id, { ...booking, status: "تم تسجيل الخروج" });
@@ -450,7 +450,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
             {s.guest && <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.guest}</div>}
             {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(s.booking.priceNight)} {s.booking.currency}</bdi> / ليلة</div>}
             {dueT.length > 0 && <div style={{ fontSize: 12.5, color: "var(--rust)", fontWeight: 600, marginTop: "auto" }}>متبقي <bdi dir="ltr">{formatMoneyLines(dueT)}</bdi></div>}
-            {s.departingToday && <span className="cx-pill" style={{ background: "#FBE9DA", color: "#8F4A12", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>خروج 1 الضهر</span>}
+            {s.departingToday && <span className="cx-pill" style={{ background: "#FBE9DA", color: "#8F4A12", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>خروج 2 الضهر</span>}
             {s.booking?.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>تسكين مكرر</span>}
           </div>
         ); })}
@@ -484,7 +484,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         return (
         <aside className="cx-card cx-panel" aria-label={"تفاصيل " + roomLabel(rooms, room.number)} style={{ padding: 16 }}>
           <div className="cx-panel-head">
-            <div style={{ fontSize: 20, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span><RoomName rooms={rooms} number={room.number} /></span> <span className="cx-pill" style={{ background: STATUS_TINTS[status.key], color: STATUS_TEXT[status.key], fontSize: 12.5 }}>{status.label}</span>{status.departingToday && <span data-testid="departing-today" className="cx-pill" style={{ background: "#FBE9DA", color: "#8F4A12", fontSize: 12.5 }}>خروجه النهارده الساعة 1 الضهر</span>}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span><RoomName rooms={rooms} number={room.number} /></span> <span className="cx-pill" style={{ background: STATUS_TINTS[status.key], color: STATUS_TEXT[status.key], fontSize: 12.5 }}>{status.label}</span>{status.departingToday && <span data-testid="departing-today" className="cx-pill" style={{ background: "#FBE9DA", color: "#8F4A12", fontSize: 12.5 }}>خروجه النهارده الساعة 2 الضهر</span>}</div>
             <button className="cx-btn cx-btn-outline" aria-label="إغلاق" title="إغلاق (Esc)" style={{ minHeight: 36, padding: "6px 10px" }} onClick={() => setSelected(null)}><X size={16} /></button>
           </div>
 
@@ -502,7 +502,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
 
           {lateLeaver && canAct && (
             <div data-testid="late-extend" className="cx-card" style={{ marginTop: 10, padding: 10, background: "#FFF6E0", display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ fontSize: 14 }}><b>{lateLeaver.guestName}</b> خروجه النهارده - التمديد مسموح لحد الساعة 1 الضهر</div>
+              <div style={{ fontSize: 14 }}><b>{lateLeaver.guestName}</b> خروجه النهارده - التمديد مسموح لحد الساعة 2 الضهر</div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                 <input className="cx-input" aria-label="عدد ليالي التمديد" data-testid="late-extend-nights" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
                 <span style={{ fontSize: 13, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>

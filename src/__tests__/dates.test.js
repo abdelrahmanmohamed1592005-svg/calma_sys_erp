@@ -112,7 +112,7 @@ describe("ليلة تغيير الساعة (توقيت القاهرة)", () => {
 });
 
 import { computeRoomStatus } from "../domain/bookingLogic";
-describe("معاد الخروج 1 الضهر في لوحة الغرف", () => {
+describe("معاد الخروج 2 الضهر في لوحة الغرف", () => {
   const out = { id: "a", room: 601, guestName: "Leaving", checkin: "2026-10-25", checkout: "2026-10-27", status: "مؤكد", totalRoom: 200, amountPaid: 200, extras: {}, paymentDetails: {} };
   const inn = { id: "b", room: 601, guestName: "Arriving", checkin: "2026-10-27", checkout: "2026-10-29", status: "مؤكد", totalRoom: 200, amountPaid: 0, extras: {}, paymentDetails: {} };
   it("قبل 1: النزيل اللي خروجه النهارده لسه في الغرفة (حتى لو فيه حد داخل النهارده)", () => {
@@ -131,10 +131,10 @@ describe("معاد الخروج 1 الضهر في لوحة الغرف", () => {
 });
 
 import { beforeCheckoutHour, CHECKOUT_HOUR } from "../domain/dates";
-describe("معاد الخروج الساعة 1 الضهر", () => {
-  it("12:30 لسه قبل معاد الخروج، و1:00 بعده", () => {
-    expect(CHECKOUT_HOUR).toBe(13);
-    expect(beforeCheckoutHour(new Date(2026, 10, 18, 12, 30))).toBe(true);
-    expect(beforeCheckoutHour(new Date(2026, 10, 18, 13, 0))).toBe(false);
+describe("معاد الخروج الساعة 2 الضهر", () => {
+  it("1:30 لسه قبل معاد الخروج، و2:00 بعده", () => {
+    expect(CHECKOUT_HOUR).toBe(14);
+    expect(beforeCheckoutHour(new Date(2026, 10, 18, 13, 30))).toBe(true);
+    expect(beforeCheckoutHour(new Date(2026, 10, 18, 14, 0))).toBe(false);
   });
 });

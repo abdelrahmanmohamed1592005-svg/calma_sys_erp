@@ -210,15 +210,15 @@ test.describe("الحجز الملغي مبيعطّلش الغرفة", () => {
 });
 
 test.describe("تمديد بعد معاد الخروج", () => {
-  test("معاد الخروج 1 الضهر: الساعة 12:40 النزيل لسه في الغرفة، بيتمدّد ويدفع التمديد بأكتر من وسيلة وعملة في نفس المرة، وبعد 1 الغرفة بتفضى", async ({ page, env }) => {
+  test("معاد الخروج 2 الضهر: الساعة 1:40 النزيل لسه في الغرفة، بيتمدّد ويدفع التمديد بأكتر من وسيلة وعملة في نفس المرة، وبعد 2 الغرفة بتفضى", async ({ page, env }) => {
     await users(env);
     const b = await env.seedBooking({ room: 611, guest: "Late Leaver", start: -2, nights: 2, price: 300, paid: 600, currency: "EGP" });
     await env.seedShift("ahmed", { key: "morning", day: today() });
-    await setCairoTime(page, 12, 40);
+    await setCairoTime(page, 13, 40);
     await page.goto("/");
     await login(page, "ahmed");
     await openRoom(page, 611);
-    await expect(page.getByTestId("departing-today")).toContainText("1 الضهر");
+    await expect(page.getByTestId("departing-today")).toContainText("2 الضهر");
     await expect(page.getByTestId("checkout-now")).toHaveCount(1);         // ممكن يتسجّل خروجه لو مشي قبل 1
     // تمديد ليلة (300) ودفعها في نفس المرة: 100 كاش + 50 فيزا + 3 دولار بسعر 50 (= 150 جنيه)
     await page.getByTestId("extend-pay-add").click();
@@ -239,9 +239,9 @@ test.describe("تمديد بعد معاد الخروج", () => {
     const rows = (await rec(env, "ahmed")).rows.filter((x) => x.bookingId === b && Number(x.collectionAmt) > 0);
     expect(rows.map((x) => `${x.collectionAmt} ${x.collectionCurrency} ${x.collectionMethod}`).sort()).toEqual(["100 EGP كاش", "3 USD كاش", "50 EGP فيزا"].sort());
 
-    // الساعة 1:05: النزيل اللي خروجه النهارده خرج - الغرفة فضيت ومفيش تمديد
+    // الساعة 2:05: النزيل اللي خروجه النهارده خرج - الغرفة فضيت ومفيش تمديد
     const c = await env.seedBooking({ room: 612, guest: "Too Late", start: -1, nights: 1, price: 300, currency: "EGP" });
-    await setCairoTime(page, 13, 5);
+    await setCairoTime(page, 14, 5);
     await page.reload();
     await boardTile(page, 612).click();
     await expect(page.getByTestId("late-extend")).toHaveCount(0);
