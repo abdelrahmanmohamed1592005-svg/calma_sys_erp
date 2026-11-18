@@ -211,15 +211,15 @@ test.describe("نقل النزيل وإضافة الحجز", () => {
     await page.locator("xpath=//label[contains(.,'السعر لليلة')]/following-sibling::div//select").selectOption("USD");
     await page.getByTestId("advance-amount").fill("60");
     await page.getByTestId("advance-add-line").click();
-    await page.getByTestId("advance-extra-amount-0").fill("1500");
-    await page.getByTestId("advance-extra-currency-0").selectOption("EGP");
-    await page.getByTestId("advance-extra-rate-0").fill("50");
+    await page.getByTestId("advance-extra-amount-0").fill("30");
+    await page.getByTestId("advance-extra-method-0").selectOption("فيزا");
+    await page.getByTestId("advance-extra-0-last4").fill("2468");
     await page.locator(".cx-card[data-calma-editing]").getByRole("button", { name: /حفظ الحجز/ }).click();
     await expect(toast(page)).toContainText("تم الحفظ");
     const b = (await env.q("select amount_paid::float p from bookings where guest_name = 'Split Pay'"))[0];
     expect(b.p).toBe(90);
-    const rows = await env.q("select r->>'collectionCurrency' cur, calma_num(r->>'collectionAmt')::float amt from shift_records s, jsonb_array_elements(s.rows) r where s.staff_username = 'ahmed' and calma_num(r->>'collectionAmt') > 0 order by 1");
-    expect(rows.map((r) => [r.cur, r.amt])).toEqual([["EGP", 1500], ["USD", 60]]);
+    const rows = await env.q("select r->>'collectionMethod' m, r->>'collectionCurrency' cur, calma_num(r->>'collectionAmt')::float amt from shift_records s, jsonb_array_elements(s.rows) r where s.staff_username = 'ahmed' and calma_num(r->>'collectionAmt') > 0 order by 3 desc");
+    expect(rows.map((r) => [r.m, r.cur, r.amt])).toEqual([["كاش", "USD", 60], ["فيزا", "USD", 30]]);   // نفس عملة الحجز بوسيلتين
   });
 
   test("شيفت مشترك: صاحب الشيفت يضيف زميل، والزميل يحصّل على نفس اليومية", async ({ page, env }) => {
