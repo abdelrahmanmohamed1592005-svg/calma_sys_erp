@@ -91,6 +91,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, lockLinked = false, b
                           <span data-testid="ledger-linked-note" style={{ fontSize: 11.5, color: "var(--muted)" }}>دفعة على حجز - التعديل بيظبط المدفوع على الحجز كمان</span>
                         </div>
                       )}
+                      {(Number(row.expenseAmt) || 0) !== 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>مصروف قديم مسجّل على الغرفة: {row.expenseDesc || row.expenseCategory} - {fmt(row.expenseAmt)} {row.expenseCurrency}</div>}
                     </div>
                   </td>
                 );

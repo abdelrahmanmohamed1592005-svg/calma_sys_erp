@@ -592,7 +592,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                       <button className="cx-btn cx-btn-gold" data-testid="pay-record" style={{ fontSize: 13 }} disabled={payLock} aria-busy={payLock} onClick={() => recordPayment(b)}><Check size={13} /> تسجيل التحصيل</button>
                     </div>
                     {payMore.length > 0
-                      ? <PayLinesInline lines={payMore} onChange={setPayMore} bookingCurrency={payCur === b.currency ? b.currency : "__none__"} currencies={[payCur]} testid="pay-more" />
+                      ? <PayLinesInline lines={payMore} onChange={setPayMore} bookingCurrency={payCur === b.currency ? b.currency : "__none__"} currencies={[payCur]} testid="pay-more" removableFirst />
                       : <button type="button" data-testid="pay-more-add" style={{ alignSelf: "flex-start", background: "none", border: 0, padding: 0, color: "var(--teal)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }} onClick={() => setPayMore([emptyPayLine(payCur)])}>+ دفعة تانية بوسيلة تانية (نص كاش ونص فيزا مثلًا)</button>}
                   </div>
                 )}
@@ -699,7 +699,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                     <div style={{ marginTop: 8 }}>
                       {extPay.length > 0 && <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 4 }}>دفع الليالي الجديدة (اختياري) - بيتسجّل مع التمديد، كل سطر بوسيلته</div>}
                       {extPay.length > 0
-                        ? <PayLinesInline lines={extPay} onChange={setExtPay} bookingCurrency={extCur || b.currency} currencies={[extCur || b.currency]} testid="extend-pay" />
+                        ? <PayLinesInline lines={extPay} onChange={setExtPay} bookingCurrency={extCur || b.currency} currencies={[extCur || b.currency]} testid="extend-pay" removableFirst />
                         : <button type="button" data-testid="extend-pay-add" style={{ background: "none", border: 0, padding: 0, color: "var(--teal)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }} onClick={() => setExtPay([emptyPayLine(extCur || b.currency)])}>+ ادفع التمديد دلوقتي (وسيلة أو أكتر)</button>}
                     </div>
                   )}

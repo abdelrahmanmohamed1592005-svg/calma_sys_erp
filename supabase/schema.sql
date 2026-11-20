@@ -4887,6 +4887,7 @@ begin
   update bookings set currency = cur, other_charges = oc - cur where id = p_booking;
   perform set_config('calma.currency_rpc', '', true);
   perform set_config('calma.pay_rpc', '', true);
+  delete from currency_fix_grants where expires_at < now();      -- الأذونات اللي خلصت مالهاش لازمة
   if first_closed is not null then
     insert into currency_fix_grants(username, hotel_id, from_date, expires_at)
       values ((select username from profiles where id = auth.uid()), b.hotel_id, first_closed, now() + interval '10 minutes');
