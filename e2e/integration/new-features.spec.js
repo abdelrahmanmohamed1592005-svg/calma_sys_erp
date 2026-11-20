@@ -125,7 +125,7 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await goTab(page, "اليومية");
     const ledgerRows = page.locator("table.cx-table tbody tr", { hasText: "613" });
     await expect(ledgerRows).toHaveCount(2);
-    await expect(ledgerRows.nth(1).getByPlaceholder("بيان التحصيل")).toHaveValue(/Replacement Guest/);
+    await expect(ledgerRows.nth(1)).toContainText("Replacement Guest");
     await expect(ledgerRows.nth(1)).toContainText("صف إضافي");
 
     // تحصيل باقي المبلغ من لوحة الغرف بيروح لنفس صف الحجز الجديد

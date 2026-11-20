@@ -711,3 +711,27 @@ export function PayLines({ lines, onChange, bookingCurrency, currencies, testid 
     </div>
   );
 }
+
+/* محرّر دفعة في سطر واحد: المبلغ | العملة | الوسيلة | (آخر 4 أرقام / اسم ورقم) | رسوم فيزا - ولو اتدفعت بأكتر من وسيلة "+ جزء تاني" */
+export function PayLinesInline({ lines, onChange, bookingCurrency, currencies, testid = "payline" }) {
+  const curs = currencies && currencies.length ? currencies : [bookingCurrency];
+  const upd = (i, patch) => onChange(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const inp = { height: 34, padding: "4px 8px", fontSize: 13 };
+  return (
+    <div data-testid={testid} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {lines.map((l, i) => (
+        <div key={i} data-testid={`${testid}-line-${i}`} style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          <input className="cx-input" aria-label="المبلغ" data-testid={`${testid}-amount-${i}`} type="number" min="0" placeholder="المبلغ" style={{ ...inp, width: 96 }} value={l.amount} onChange={(e) => upd(i, { amount: e.target.value })} />
+          {curs.length > 1
+            ? <select className="cx-select" aria-label="العملة" data-testid={`${testid}-currency-${i}`} style={{ ...inp, width: 76 }} value={l.currency} onChange={(e) => upd(i, { currency: e.target.value, fee: "" })}>{curs.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+            : <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{curs[0]}</span>}
+          <select className="cx-select" aria-label="طريقة الدفع" data-testid={`${testid}-method-${i}`} style={{ ...inp, width: 128 }} value={l.method} onChange={(e) => upd(i, { method: e.target.value, details: emptyPaymentDetails(), fee: "" })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+          <PaymentDetailsInline testid={`${testid}-${i}`} method={l.method} details={l.details} onChange={(d) => upd(i, { details: d })} />
+          {l.method === "فيزا" && l.currency === bookingCurrency && <input className="cx-input" aria-label="رسوم فيزا" data-testid={`${testid}-fee-${i}`} type="number" min="0" placeholder="رسوم فيزا" style={{ ...inp, width: 90 }} value={l.fee} onChange={(e) => upd(i, { fee: e.target.value })} />}
+          {lines.length > 1 && <button type="button" className="cx-btn cx-btn-outline" aria-label="شيل الجزء ده" style={{ ...inp, padding: "2px 8px" }} onClick={() => onChange(lines.filter((_, j) => j !== i))}>✕</button>}
+        </div>
+      ))}
+      <button type="button" data-testid={`${testid}-add`} style={{ alignSelf: "flex-start", background: "none", border: 0, padding: 0, color: "var(--teal)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }} onClick={() => onChange([...lines, emptyPayLine(lines[0]?.currency || curs[0])])}>+ جزء تاني بوسيلة تانية</button>
+    </div>
+  );
+}

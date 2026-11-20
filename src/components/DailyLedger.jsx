@@ -1,17 +1,17 @@
 import { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send, PencilLine, Check, X } from "lucide-react";
-import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel, TwoStepButton } from "./shared";
+import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel, TwoStepButton, PayLinesInline, emptyPayLine } from "./shared";
 import { guarded } from "../lib/busy";
-import { devDeleteShift } from "../data/payments";
+import { devDeleteShift, payLinesError } from "../data/payments";
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { OwnerReport } from "./OwnerReport";
 import { listStaffCafeteria } from "../data/staffCafeteria";
-import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, blankShiftRecord } from "../domain/money";
+import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, blankShiftRecord, describePaymentDetails, validatePaymentDetailsFor, cleanPaymentDetailsFor } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
 import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { resolveMyShift, getShiftRecordsInRange, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection } from "../data/shifts";
+import { resolveMyShift, getShiftRecordsInRange, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection, splitLedgerPaymentRow, editLedgerPaymentRow } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -36,7 +36,10 @@ const rowHasData = (r) => (Number(r.expenseAmt) || 0) !== 0 || (Number(r.collect
 
 /* lockLinked (يومية الشيفت المفتوح): صف عليه دفعة متسجّلة على حجز (bookingId) مايتعدّلش بالإيد - المبلغ والعملة والوسيلة والبيان
    متقفولين، لأن تعديلهم هنا مابيوصلش للحجز (المدفوع والمتبقي بيبقوا غلط). التعديل من "تعديل المدفوع" على كارت الحجز أو من تصحيح اليومية. */
-function LedgerTable({ record, rooms, locked, onUpdateRow, lockLinked = false }) {
+function LedgerTable({ record, rooms, locked, onUpdateRow, lockLinked = false, bookings = [], onSaveLinked }) {
+  const [editIdx, setEditIdx] = useState(null);    // صف دفعة على حجز بيتعدّل (بالتصحيح - المدفوع على الحجز بيتظبط معاه)
+  const [editLines, setEditLines] = useState([]);
+  const startEdit = (idx, row) => { setEditIdx(idx); setEditLines([{ ...emptyPayLine(row.collectionCurrency || "EGP"), amount: String(Number(row.collectionAmt) || ""), method: row.collectionMethod || "كاش", details: row.paymentDetails || emptyPaymentDetails() }]); };
   const [shown, setShown] = useState(() => new Set());
   const [all, setAll] = useState(false);
   const visible = (r) => all || shown.has(r.room) || rowHasData(r);
@@ -67,19 +70,45 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, lockLinked = false })
               {/* ممكن يكون لنفس الغرفة أكتر من صف (لو اتحصّل عليها بوسيلتين دفع أو
                   عملتين مختلفتين، أو اتردّ ليها فلوس) - الصف الإضافي بيتعلّم. */}
               <td data-label="الغرفة" style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}><RoomName rooms={rooms} number={row.room} />{record.rows.findIndex((r) => r.room === row.room) !== idx && <div style={{ fontSize: 11.5, fontWeight: 400, color: "var(--muted)" }}>صف إضافي</div>}</td>
+              {rl && !locked && onSaveLinked ? (() => {
+                const bk = bookings.find((x) => x.id === row.bookingId);
+                const curs = [...new Set([row.collectionCurrency || "EGP", ...(bk ? [bk.currency, ...Object.keys(bk.otherCharges || {})] : [])])];
+                return (
+                  <td data-label="التحصيل" colSpan={2}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <div style={{ fontSize: 12.5 }}>{row.collectionDesc}</div>
+                      {editIdx === idx ? (
+                        <div data-testid="ledger-linked-edit" style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
+                          <PayLinesInline lines={editLines} onChange={setEditLines} bookingCurrency={bk?.currency || "__none__"} currencies={curs} testid="ledger-pay" />
+                          <button className="cx-btn cx-btn-gold" data-testid="ledger-linked-save" style={{ fontSize: 12.5, height: 34 }} onClick={async () => { const ok = await onSaveLinked(idx, row, editLines, bk); if (ok) setEditIdx(null); }}>حفظ</button>
+                          <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5, height: 34 }} onClick={() => setEditIdx(null)}>إلغاء</button>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          <b><bdi dir="ltr">{fmt(row.collectionAmt)} {row.collectionCurrency}</bdi></b> · {row.collectionMethod}
+                          {describePaymentDetails(row.collectionMethod, row.paymentDetails) && <span dir="ltr" style={{ color: "var(--muted)" }}>{describePaymentDetails(row.collectionMethod, row.paymentDetails)}</span>}
+                          <button className="cx-btn cx-btn-outline cx-no-print" data-testid="ledger-linked-open" style={{ fontSize: 12.5, padding: "2px 10px" }} onClick={() => startEdit(idx, row)}>تعديل الدفعة</button>
+                          <span data-testid="ledger-linked-note" style={{ fontSize: 11.5, color: "var(--muted)" }}>دفعة على حجز - التعديل بيظبط المدفوع على الحجز كمان</span>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                );
+              })() : (<>
               <td data-label="التحصيل">
-                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <select className="cx-select" disabled={rl} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                  <AutoText className="cx-input" placeholder="بيان التحصيل" disabled={rl} value={row.collectionDesc} onChange={(e) => updateRow(idx, { collectionDesc: e.target.value })} />
-                  <div style={{ display: "flex", gap: 3 }}>
-                    <input className="cx-input" type="number" placeholder="المبلغ" disabled={rl} value={row.collectionAmt} onChange={(e) => updateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
-                    <CurrencyPicker value={row.collectionCurrency} disabled={rl} onChange={(v) => updateRow(idx, { collectionCurrency: v })} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    <select className="cx-select" disabled={rl} value={row.collectionMethod} onChange={(e) => updateRow(idx, { collectionMethod: e.target.value, paymentDetails: emptyPaymentDetails() })}>{methodOptionsFor(row.collectionMethod).map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                    <AutoText className="cx-input" placeholder="بيان التحصيل" disabled={rl} value={row.collectionDesc} onChange={(e) => updateRow(idx, { collectionDesc: e.target.value })} />
+                    <div style={{ display: "flex", gap: 3 }}>
+                      <input className="cx-input" type="number" placeholder="المبلغ" disabled={rl} value={row.collectionAmt} onChange={(e) => updateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
+                      <CurrencyPicker value={row.collectionCurrency} disabled={rl} onChange={(v) => updateRow(idx, { collectionCurrency: v })} />
+                    </div>
+                    {rl && !locked && <div data-testid="ledger-linked-note" style={{ fontSize: 11.5, color: "var(--muted)", display: "flex", gap: 4, alignItems: "center" }}><Lock size={10} aria-hidden="true" /> دفعة مسجّلة على حجز - تتعدّل من "تعديل المدفوع" (مدير الشيفت)، ودفعة جديدة من "تسجيل دفعة"</div>}
+                    {(Number(row.expenseAmt) || 0) !== 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>مصروف قديم مسجّل على الغرفة: {row.expenseDesc || row.expenseCategory} - {fmt(row.expenseAmt)} {row.expenseCurrency}</div>}
                   </div>
-                  {rl && !locked && <div data-testid="ledger-linked-note" style={{ fontSize: 11.5, color: "var(--muted)", display: "flex", gap: 4, alignItems: "center" }}><Lock size={10} aria-hidden="true" /> دفعة مسجّلة على حجز - تتعدّل من "تعديل المدفوع" (مدير الشيفت)، ودفعة جديدة من "تسجيل دفعة"</div>}
-                  {(Number(row.expenseAmt) || 0) !== 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>مصروف قديم مسجّل على الغرفة: {row.expenseDesc || row.expenseCategory} - {fmt(row.expenseAmt)} {row.expenseCurrency}</div>}
-                </div>
-              </td>
-              <td data-label="تفاصيل الدفع"><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={rl} onChange={(d) => updateRow(idx, { paymentDetails: d })} /></td>
+                </td>
+                <td data-label="تفاصيل الدفع"><PaymentDetailsInline method={row.collectionMethod} details={row.paymentDetails} disabled={rl} onChange={(d) => updateRow(idx, { paymentDetails: d })} /></td>
+              </>)}
               <td data-label="ملاحظات"><AutoText className="cx-input" disabled={locked} value={row.notes} onChange={(e) => updateRow(idx, { notes: e.target.value })} /></td>
             </tr>
           )); })}
@@ -502,6 +531,26 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   }
   // بيبعت أي كتابة معلّقة فورًا (قبل ما شاشة تانية تكتب على نفس السجل)
   async function flushNow() { if (debounceTimer.current) clearTimeout(debounceTimer.current); await flushPending(); }
+  // تعديل دفعة على حجز من اليومية نفسها: بالتصحيح (المدفوع على الحجز والخزينة بيتظبطوا مع بعض)
+  async function saveLinked(idx, row, lines, bk) {
+    return guarded("ledger-linked:" + idx, async () => {
+      if (!bk) { showToast("الحجز بتاع الدفعة دي مش موجود في الفندق ده"); return false; }
+      const err = payLinesError(bk, lines, validatePaymentDetailsFor);
+      if (err) { showToast(err); return false; }
+      await flushNow();
+      const entry = { date: record.date, shiftKey: record.shiftKey, hotelId: record.hotelId, list: "rows", idx, row };
+      const total = lines.reduce((t, l) => t + (Number(l.amount) || 0), 0);
+      const l0 = lines[0] || {};
+      const res = total > 0 ? await splitLedgerPaymentRow(entry, lines, bk)
+        : await editLedgerPaymentRow(entry, { collectionAmt: 0, collectionMethod: l0.method || row.collectionMethod, paymentDetails: cleanPaymentDetailsFor(l0.method || row.collectionMethod, l0.details) }, { guestName: bk.guestName });
+      if (res.error) { showToast(res.error); await reloadRecord(); return false; }
+      const txt = lines.filter((l) => Number(l.amount) > 0).map((l) => `${fmt(Number(l.amount))} ${l.currency} ${l.method}`).join(" + ") || "صفر (اتشالت)";
+      onLog(`تعديل دفعة من اليومية - ${bk.guestName} (غرفة ${row.room}): ${fmt(row.collectionAmt)} ${row.collectionCurrency} ${row.collectionMethod} ← ${txt}`);
+      await reloadRecord();
+      showToast(`اتعدّلت الدفعة لـ ${txt} - المدفوع على الحجز اتظبط معاها`);
+      return true;
+    });
+  }
   // الخروج أو الانتقال لتبويب تاني: أي كتابة معلّقة بتتبعت قبل ما الشاشة تتشال (الجلسة لسه شغّالة وقتها)
   flushLatest.current = flushNow;
   useEffect(() => {
@@ -589,7 +638,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // الموظف يقدر يكمل في شيفت اتفتح تاني بس لو الشيفت لسه في وقته (أو في هامش الأوفر تايم)؛ غير كده بيتقفل تلقائيًا عند فتح اليومية
   function staffCanContinue(date) { return date >= addDays(shiftDayNow(), -1); }
 
-  const canCorrect = (rec) => !!rec && (perms.correctLedger === "any" || (perms.correctLedger === "today" && rec.date >= addDays(todayStr(), -1)));
+  const canCorrect = (rec) => !!rec && (perms.correctLedger === "any" || (perms.correctLedger === "today" && rec.date >= shiftDayNow()));   // مدير الشيفت: شيفتات يومه بس
   function corrUpdateRow(idx, patch) {
     setCorr((c) => ({ ...c, rows: c.rows.map((r, i) => {
       if (i !== idx) return r;
@@ -687,7 +736,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
               <div>{record.closed ? <span className="cx-pill" style={{ background: "#EFEEEC", color: "#8A8577" }}><Lock size={11} style={{ verticalAlign: -1 }} /> مقفول</span> : <span className="cx-pill" style={{ background: "#EAF2EC", color: "var(--sage)" }}><Unlock size={11} style={{ verticalAlign: -1 }} /> شيفتك الوحيد المتاح ليك النهارده</span>}</div>
             </div>
             <LedgerBar sections={LEDGER_SECTIONS} totals={totals} record={record} canClose={!record.closed && perms.closeShift} onClose={closeShift} />
-            <div id="led-rooms" className="cx-anchor"><LedgerTable record={record} rooms={rooms} locked={locked} lockLinked={!perms.devTools} onUpdateRow={updateRow} /></div>
+            <div id="led-rooms" className="cx-anchor"><LedgerTable record={record} rooms={rooms} locked={locked} lockLinked bookings={bookings} onSaveLinked={saveLinked} onUpdateRow={updateRow} /></div>
             <div id="led-cafe" className="cx-anchor">
             <CafeteriaSection record={record} rooms={rooms} bookings={bookings} onUpdateCafeteria={updateCafeteria} locked={locked} readOnly={!perms.editLedger} profile={profile} profiles={profiles} staffEntries={staffEntries} onReload={reloadStaffEntries} flushNow={flushNow} reloadRecord={reloadRecord} onLog={onLog} showToast={showToast} />
             </div>
