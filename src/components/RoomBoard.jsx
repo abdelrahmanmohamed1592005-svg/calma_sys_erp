@@ -7,7 +7,7 @@ import { computeRoomStatus, roomStart, roomsOverlap, findOverlappingBooking, rep
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
 import { recordBookingPayment, recordBookingPaymentOther, moveBookingRoom, recordVisaFee, recordPayLines, payLinesError } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown, MoneyStack, PayLines } from "./shared";
+import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown, MoneyStack, PayLinesInline, emptyPayLine } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
@@ -591,7 +591,9 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                       {pay.method === "فيزا" && payCur === b.currency && <input className="cx-input" data-testid="pay-visa-fee" type="number" min="0" placeholder={`رسوم فيزا (${payCur})`} aria-label="رسوم الفيزا" style={{ width: 140 }} value={pay.fee || ""} onChange={(e) => setPay({ ...pay, fee: e.target.value })} />}
                       <button className="cx-btn cx-btn-gold" data-testid="pay-record" style={{ fontSize: 13 }} disabled={payLock} aria-busy={payLock} onClick={() => recordPayment(b)}><Check size={13} /> تسجيل التحصيل</button>
                     </div>
-                    <PayLines lines={payMore} onChange={setPayMore} bookingCurrency={payCur === b.currency ? b.currency : "__none__"} currencies={[payCur]} testid="pay-more" addLabel="دفعة تانية بوسيلة تانية (نص كاش ونص فيزا مثلًا)" />
+                    {payMore.length > 0
+                      ? <PayLinesInline lines={payMore} onChange={setPayMore} bookingCurrency={payCur === b.currency ? b.currency : "__none__"} currencies={[payCur]} testid="pay-more" removableFirst />
+                      : <button type="button" data-testid="pay-more-add" style={{ alignSelf: "flex-start", background: "none", border: 0, padding: 0, color: "var(--teal)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }} onClick={() => setPayMore([emptyPayLine(payCur)])}>+ دفعة تانية بوسيلة تانية (نص كاش ونص فيزا مثلًا)</button>}
                   </div>
                 )}
                 {occupiedNow && !status.departingToday && perms.editRoomStatus && !offShift && (
@@ -696,7 +698,9 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                   {perms.markPaymentReceived && !b.paymentDetails?.onlinePaid && (
                     <div style={{ marginTop: 8 }}>
                       {extPay.length > 0 && <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 4 }}>دفع الليالي الجديدة (اختياري) - بيتسجّل مع التمديد، كل سطر بوسيلته</div>}
-                      <PayLines lines={extPay} onChange={setExtPay} bookingCurrency={extCur || b.currency} currencies={[extCur || b.currency]} testid="extend-pay" addLabel={extPay.length ? "دفعة تانية بوسيلة تانية" : "ادفع التمديد دلوقتي (وسيلة أو أكتر)"} />
+                      {extPay.length > 0
+                        ? <PayLinesInline lines={extPay} onChange={setExtPay} bookingCurrency={extCur || b.currency} currencies={[extCur || b.currency]} testid="extend-pay" removableFirst />
+                        : <button type="button" data-testid="extend-pay-add" style={{ background: "none", border: 0, padding: 0, color: "var(--teal)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }} onClick={() => setExtPay([emptyPayLine(extCur || b.currency)])}>+ ادفع التمديد دلوقتي (وسيلة أو أكتر)</button>}
                     </div>
                   )}
                 </Sec>

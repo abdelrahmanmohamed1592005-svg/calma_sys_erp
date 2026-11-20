@@ -77,8 +77,8 @@ export async function updateShiftRecordIfUnchanged(date, shiftKey, expectedUpdat
 
 /* تصحيح يومية (المطوّر: أي يوم - مدير الشيفت: شيفتات اليوم): الرقم الأصلي بيتعدّل، والقاعدة بتظبط مدفوع الحجوزات المربوطة
    بنفس الفرق وبتسجّل التصحيح في سجل التدقيق وسجل الحركة. بترجّع { data } أو { conflict } أو { error }. */
-export async function correctShiftRecord(record, expectedUpdatedAt) {
-  const { data, error } = await supabase.rpc("correct_shift_record", {
+export async function correctShiftRecord(record, expectedUpdatedAt, rpcName = "correct_shift_record") {
+  const { data, error } = await supabase.rpc(rpcName, {
     p_hotel: record.hotelId ?? getActiveHotelId(), p_date: record.date, p_key: record.shiftKey, p_expected: expectedUpdatedAt || null, p_record: shiftToRow(record),
   });
   if (error) return { error: friendlyDbError(error) };
@@ -88,9 +88,9 @@ export async function correctShiftRecord(record, expectedUpdatedAt) {
 
 /* تصحيح يومية + نقل العهدة الجديدة للشيفتات اللي بعدها اللي عهدتها كانت منقولة تلقائي (لحد أول عهدة مكتوبة بالإيد).
    بترجّع { data, moved, stoppedAt } أو { conflict } أو { error }. */
-export async function applyCorrection(oldRec, newRec) {
+export async function applyCorrection(oldRec, newRec, opts = {}) {
   const oldT = computeShiftTotals(oldRec), newT = computeShiftTotals(newRec);
-  const res = await correctShiftRecord({ ...newRec, ...(newRec.closed ? newT : {}) }, oldRec.updatedAt);
+  const res = await correctShiftRecord({ ...newRec, ...(newRec.closed ? newT : {}) }, oldRec.updatedAt, opts.rpc);
   if (!res.data) return res;
   const hotelId = newRec.hotelId ?? getActiveHotelId();
   const later = await getShiftRecordsInRange(newRec.date, addDays(newRec.date, 370), hotelId);
@@ -98,7 +98,7 @@ export async function applyCorrection(oldRec, newRec) {
   const following = (later || []).filter((r) => r.date > newRec.date || (r.date === newRec.date && order[r.shiftKey] > order[newRec.shiftKey]));
   let moved = 0, stoppedAt = null;
   for (const rec of cascadeHandover(following, oldT, newT)) {
-    const r = await correctShiftRecord({ ...rec, ...(rec.closed ? computeShiftTotals(rec) : {}) }, rec.updatedAt);
+    const r = await correctShiftRecord({ ...rec, ...(rec.closed ? computeShiftTotals(rec) : {}) }, rec.updatedAt, opts.rpc);
     if (!r.data) { stoppedAt = rec.date; break; }
     moved += 1;
   }
@@ -123,6 +123,7 @@ export async function purgeBookingFromLedgers(booking) {
 
 /* المطوّر بيغيّر عملة حجز ليه تحصيل في يوميات مقفولة: القاعدة بتغيّر العملة في الصفوف، وبعدها كل يومية مقفولة اتأثرت
    أرقامها بتتحسب من جديد والعهدة بتتنقل للشيفتات اللي بعدها (نفس التصحيح). change = الدالة اللي بتغيّر العملة في القاعدة. */
+/* تغيير عملة حجز في كل اليوميات (المفتوحة والمقفولة) + إعادة حساب أرقام الشيفتات المقفولة والعهدة اللي بعدها - لأي حد بيعدّل الحجز */
 export async function devChangeCurrencyAcrossLedgers(booking, change) {
   const hotelId = booking.hotelId ?? getActiveHotelId();
   const all = await getShiftRecordsInRange("2000-01-01", addDays(shiftDayNow(), 2), hotelId);
@@ -133,7 +134,7 @@ export async function devChangeCurrencyAcrossLedgers(booking, change) {
   for (const old of before) {
     const fresh = await getShiftRecord(old.date, old.shiftKey, hotelId);
     if (!fresh) return { ...res, warn: `العملة اتغيّرت، لكن أرقام يومية ${old.date} ماتحسبتش من جديد - افتحها وصحّحها` };
-    const r = await applyCorrection({ ...old, updatedAt: fresh.updatedAt }, fresh);
+    const r = await applyCorrection({ ...old, updatedAt: fresh.updatedAt }, fresh, { rpc: "currency_fix_correct" });   // إذن مؤقت بعد تغيير العملة
     if (!r.data) return { ...res, warn: `العملة اتغيّرت، لكن أرقام يومية ${old.date} ماتحسبتش من جديد - افتحها وصحّحها` };
   }
   return res;
@@ -149,7 +150,7 @@ export async function getBookingLedgerRows(booking) {
   const out = [];
   recs.forEach((r) => ["rows", "cafeteriaRows"].forEach((list) => (r[list] || []).forEach((x, idx) => {
     if (x.bookingId !== booking.id) return;   // حتى الصف اللي مبلغه اتمسح (صفر) بيظهر عشان يترجع
-    out.push({ date: r.date, shiftKey: r.shiftKey, hotelId: r.hotelId, closed: r.closed, list, idx, row: x });
+    out.push({ date: r.date, shiftKey: r.shiftKey, hotelId: r.hotelId, closed: r.closed, staffUsername: r.staffUsername, helpers: r.helpers || [], list, idx, row: x });
   })));
   return out;
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock, Search, CalendarDays, Moon, Users, CreditCard, Globe, BedDouble, ClipboardList, Wallet, SearchX } from "lucide-react";
-import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown, PayLines, emptyPayLine } from "./shared";
+import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown, PayLinesInline, emptyPayLine } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHasDue, bookingDueLines, formatMoneyLines, bookingHotelTotal, refundStatusOf } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid, arabicDateLong, shiftDayNow } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, roomLabel, SHIFTS } from "../domain/constants";
@@ -85,7 +85,7 @@ function QuickPay({ booking, onDone, showToast }) {
 /* تعديل المدفوع (مدير الشيفت: يوميات النهارده وامبارح - المطوّر: أي يوم): كل دفعة متسجّلة على الحجز في اليومية
    بتتعدّل في مكانها (المبلغ/الوسيلة/التفاصيل)، فالمدفوع على الحجز والخزينة والعهدة والتقارير بيتحدّثوا مع بعض.
    صفر = الدفعة اتشالت. */
-function EditPayments({ booking, scope, onDone, showToast, onLog }) {
+function EditPayments({ booking, scope, me, onDone, showToast, onLog }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState(null);
   const [drafts, setDrafts] = useState({});     // key -> سطور الدفعة (مبلغ + وسيلة) - تعديل مباشر
@@ -100,7 +100,8 @@ function EditPayments({ booking, scope, onDone, showToast, onLog }) {
     setRows(live);
     setDrafts(Object.fromEntries(live.map((e) => [keyOf(e), [lineOf(e.row)]])));
   };
-  const minDate = scope === "any" ? "0000-00-00" : addDays(shiftDayNow(), -1);
+  // مين يعدّل إيه: المطوّر أي يوم، مدير الشيفت شيفتات يومه، موظف الشيفت شيفته المفتوح بس
+  const canEdit = (e) => scope === "any" || (scope === "today" && e.date >= shiftDayNow()) || (scope === "own" && !e.closed && (e.staffUsername === me || (e.helpers || []).includes(me)));
   const save = (e) => guarded("edit-pay:" + keyOf(e), async () => {
     const lines = drafts[keyOf(e)] || [];
     const err = payLinesError(booking, lines, validatePaymentDetailsFor);
@@ -131,17 +132,19 @@ function EditPayments({ booking, scope, onDone, showToast, onLog }) {
       {rows && rows.map((e) => {
         const k = keyOf(e);
         const fx = e.row.fxCovered != null && e.row.fxBookingCurrency;
-        const allowed = e.date >= minDate && !fx;
+        const allowed = canEdit(e) && !fx;
         const cur = e.row.collectionCurrency || booking.currency;
         const label = <span style={{ fontSize: 12.5, fontWeight: 700 }}><bdi dir="ltr">{e.date}</bdi> · {SHIFTS.find((x) => x.key === e.shiftKey)?.label}{e.list === "cafeteriaRows" ? " · كافيتيريا" : ""}{e.row.visaFee ? " · رسوم فيزا" : ""}</span>;
         return (
           <div key={k} data-testid="edit-payment-row" style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px dashed var(--hair)", paddingTop: 6 }}>
             {label}
             {allowed ? (<>
-              <PayLines lines={drafts[k] || []} onChange={(ls) => setDrafts({ ...drafts, [k]: ls })} bookingCurrency={e.row.visaFee || e.list !== "rows" ? "__none__" : booking.currency} currencies={[cur]} testid={"edit-pay-" + rows.indexOf(e)} addLabel="جزء تاني بوسيلة تانية" />
-              <div><button className="cx-btn cx-btn-gold" data-testid="edit-payment-save" style={{ fontSize: 12.5 }} onClick={() => save(e)}>حفظ</button></div>
+              <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <PayLinesInline lines={drafts[k] || []} onChange={(ls) => setDrafts({ ...drafts, [k]: ls })} bookingCurrency={e.row.visaFee || e.list !== "rows" ? "__none__" : booking.currency} currencies={[...new Set([cur, booking.currency, ...Object.keys(booking.otherCharges || {})])]} testid={"edit-pay-" + rows.indexOf(e)} />
+                <button className="cx-btn cx-btn-gold" data-testid="edit-payment-save" style={{ fontSize: 12.5, height: 34 }} onClick={() => save(e)}>حفظ</button>
+              </div>
             </>) : (
-              <span style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(e.row.collectionAmt)} {e.row.collectionCurrency}</bdi> · {e.row.collectionMethod} - {fx ? "دفعة قديمة بسعر صرف (بتتصحّح من اليومية)" : "يوم قديم - تصحيحه من الإدارة"}</span>
+              <span style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(e.row.collectionAmt)} {e.row.collectionCurrency}</bdi> · {e.row.collectionMethod} - {fx ? "دفعة قديمة بسعر صرف (بتتصحّح من اليومية)" : scope === "own" ? "في شيفت تاني - تعديلها من مدير الشيفت" : "يوم قديم - تعديله من المطوّر"}</span>
             )}
           </div>
         );
@@ -452,7 +455,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     let curChangeDone = false;
     if (curTo) {
       const change = () => changeBookingCurrency({ bookingId: savedId, currency: curTo, expectedUpdatedAt: res.data?.updatedAt });
-      const cr = perms.devTools ? await devChangeCurrencyAcrossLedgers(res.data || cleaned, change) : await change();
+      const cr = await devChangeCurrencyAcrossLedgers(res.data || cleaned, change);   // كل اليوميات (والمقفولة كمان) لأي حد بيعدّل الحجز
       if (cr?.error) { showToast(`⚠ الحجز اتحفظ لكن العملة ماتغيّرتش: ${cr.error}`); if (onRefresh) await onRefresh(); setForm(null); return; }
       curChangeDone = true;
       onLog(`تعديل عملة الحجز - ${roomLabel(rooms, cleaned.room)} - ${cleaned.guestName}: من ${originalBooking.currency} إلى ${curTo}`);
@@ -673,7 +676,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
               </div>
               {isExistingBooking && perms.correctLedger && originalBooking && (
                 <div data-testid="form-edit-payments" style={{ marginTop: 8 }}>
-                  <EditPayments booking={originalBooking} scope={perms.correctLedger} onDone={async () => { payEditedRef.current = true; if (onRefresh) await onRefresh(); }} showToast={showToast} onLog={onLog} />
+                  <EditPayments booking={originalBooking} scope={perms.correctLedger} me={profile?.username} onDone={async () => { payEditedRef.current = true; if (onRefresh) await onRefresh(); }} showToast={showToast} onLog={onLog} />
                 </div>
               )}
               {!collectionLocked && (

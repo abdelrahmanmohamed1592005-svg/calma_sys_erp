@@ -26,7 +26,7 @@ test("خطأ غير متوقع في متصفح الموظف بيتسجّل، و�
   await expect(box.getByTestId("system-error-row").first()).toContainText("boom-e2e-test");
 });
 
-test("الدفعة المسجّلة على حجز في اليومية ماتتعدّلش بالإيد: الخانة مقفولة في الشاشة، والتعديل المباشر بيترفض من القاعدة", async ({ page, env }) => {
+test("الدفعة المسجّلة على حجز في اليومية: التعديل المباشر من الـ API بيترفض، ومن الشاشة بتتعدّل بالتصحيح (المدفوع على الحجز بيتظبط)", async ({ page, env }) => {
   await env.seedUser("ahmed", "staff", "أحمد");
   const b = await env.seedBooking({ room: 603, guest: "Linked Guest", start: 0, nights: 2, price: 500, paid: 0, currency: "EGP", anchor: "shift" });
   await env.seedShift("ahmed", {});
@@ -42,24 +42,21 @@ test("الدفعة المسجّلة على حجز في اليومية ماتتع
   // صف غرفة تانية (مش مربوط بحجز) بيتعدّل عادي
   const ok = await env.api("ahmed", "PATCH", `/rest/v1/shift_records?date=eq.${shiftDay()}&shift_key=eq.${myShiftKey()}`, { rows: rec.rows.map((r) => (r.room === 605 && !r.bookingId ? { ...r, collectionAmt: 50, collectionDesc: "تحصيل يدوي" } : r)) });
   expect(ok.status, JSON.stringify(ok.body)).toBeLessThan(300);
-  // في الشاشة: خانات الدفعة المربوطة مقفولة ومعاها توضيح
+  // في الشاشة: الدفعة المربوطة بتتعرض ملخّص وبتتعدّل من "تعديل الدفعة" (بالتصحيح - المدفوع على الحجز بيتظبط معاها)
   await page.goto("/");
   await login(page, "ahmed");
   await goTab(page, "اليومية");
   const row = page.locator("tr[data-linked='true']", { hasText: "603" }).first();
   await expect(row.getByTestId("ledger-linked-note")).toBeVisible();
-  await expect(row.locator("input[type='number']").first()).toBeDisabled();
-  // المطوّر: كل الصلاحيات - الصف المربوط مفتوح له في الشاشة والقاعدة
-  await env.seedUser("devo", "dev", "المطوّر");
-  await logout(page);
-  await login(page, "devo");
-  await goTab(page, "اليومية");
-  await expect(page.locator("tr[data-linked='true']")).toHaveCount(0);
-  const devRow = page.locator("tr", { hasText: "Linked Guest" }).first();
-  await expect(devRow.locator("input[type='number']").first()).toBeEnabled();
-  await expect(devRow.getByTestId("ledger-linked-note")).toHaveCount(0);
-  const rec2 = (await env.q("select rows from shift_records"))[0];
-  const devFix = await env.api("devo", "PATCH", `/rest/v1/shift_records?date=eq.${shiftDay()}&shift_key=eq.${myShiftKey()}`, { rows: rec2.rows.map((r) => (r.bookingId === b ? { ...r, collectionDesc: "تعديل المطوّر" } : r)) });
-  expect(devFix.status, JSON.stringify(devFix.body)).toBeLessThan(300);
-  expect((await env.q("select rows from shift_records"))[0].rows.find((r) => r.bookingId === b).collectionDesc).toBe("تعديل المطوّر");
+  await row.getByTestId("ledger-linked-open").click();
+  await page.getByTestId("ledger-pay-amount-0").fill("700");
+  await page.getByTestId("ledger-pay-add").click();
+  await page.getByTestId("ledger-pay-amount-1").fill("100");
+  await page.getByTestId("ledger-pay-method-1").selectOption("فيزا");
+  await page.getByTestId("ledger-pay-1-last4").fill("1234");
+  await page.getByTestId("ledger-linked-save").click();
+  await expect(page.locator(".cx-toast")).toContainText("المدفوع على الحجز اتظبط");
+  const after = (await env.q("select rows from shift_records"))[0].rows.filter((r) => r.bookingId === b && Number(r.collectionAmt) > 0).map((r) => `${Number(r.collectionAmt)} ${r.collectionMethod}`).sort();
+  expect(after).toEqual(["100 فيزا", "700 كاش"]);
+  expect(Number((await env.q("select amount_paid from bookings where id = $1", [b]))[0].amount_paid)).toBe(800);
 });
