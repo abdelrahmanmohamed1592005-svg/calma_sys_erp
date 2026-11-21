@@ -9,6 +9,7 @@ function bookingFromRow(r) {
     totalRoom: Number(r.total_room) || 0, extras: r.extras || { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 },
     earlyCheckin: r.early_checkin || { applied: false, fee: 0, note: "" },
     guestCodes: Array.isArray(r.guest_codes) ? r.guest_codes.map((c) => String(c ?? "")) : [],
+    continuesFrom: r.continues_from || null,   // حجز تكملة (تمديد بعملة تانية): رقم الحجز الأصلي
     paymentMethod: r.payment_method, paymentDetails: r.payment_details || { senderName: "", senderNumber: "", ref: "", onlinePaid: false },
     amountPaid: Number(r.amount_paid) || 0,
     // خدمات ودفعات بعملة غير عملة الحجز (قسم ٤٠): كل عملة لوحدها من غير تحويل
@@ -48,6 +49,7 @@ function bookingToRow(b) {
     notes: b.notes || "", imported: !!b.imported, needs_room_review: !!b.needsRoomReview,
     left_early: !!b.leftEarly, duplicate_placement: !!b.duplicatePlacement,
     guest_codes: Array.isArray(b.guestCodes) ? b.guestCodes : [],
+    ...(b.continuesFrom ? { continues_from: b.continuesFrom } : {}),
     // حقول رد الفلوس (refund_*) مش بتتبعت من الواجهة خالص: طلب الرد بيتفتح
     // تلقائيًا في قاعدة البيانات، وقراره (رد/إبقاء) بيتم بس عن طريق
     // decideBookingRefund تحت (مدير الحجوزات بس).
@@ -72,10 +74,42 @@ export function friendlyBookingError(error) {
 // بترجع null (مش قايمة فاضية) لو القراءة فشلت، عشان الشاشة تفضل على آخر
 // بيانات سليمة بدل ما "تفضى" فجأة ويتعتبر مفيش حجوزات خالص (وده كان هيخلّي
 // فحص التعارض يعدّي غلط) - انظر App.jsx.
+// الشاشة بتحمّل آخر ٣ شهور + أي حجز لسه ساكن أو جاي (قرار المالك) - القديم بيتجاب بالبحث (searchBookings)
+// والتقارير لفترة أقدم بتجيب حجوزاتها لوحدها (getBookingsOverlapping).
+export const BOOKINGS_WINDOW_DAYS = 90;
+const cairoToday = () => new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+export const bookingsWindowStart = () => { const d = new Date(cairoToday() + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - BOOKINGS_WINDOW_DAYS); return d.toISOString().slice(0, 10); };
 export async function getBookings() {
-  const { data, error } = await fetchAll(() => supabase.from("bookings").select("*", { count: "exact" }).order("checkin", { ascending: false }).order("id"));
+  const from = bookingsWindowStart();
+  const [recent, stillIn] = await Promise.all([
+    fetchAll(() => supabase.from("bookings").select("*", { count: "exact" }).gte("checkout", from).order("checkin", { ascending: false }).order("id")),
+    // نزيل لسه ساكن وتاريخ خروجه أقدم من الفترة (ماتعملوش تسجيل خروج)
+    fetchAll(() => supabase.from("bookings").select("*", { count: "exact" }).eq("status", "تم تسجيل الدخول").lt("checkout", from).order("checkin", { ascending: false }).order("id")),
+  ]);
+  if (recent.error || !recent.data || stillIn.error || !stillIn.data) return null;
+  const seen = new Set();
+  return [...recent.data, ...stillIn.data].filter((r) => (seen.has(r.id) ? false : seen.add(r.id))).map(bookingFromRow)
+    .sort((a, b) => (a.checkin === b.checkin ? (a.id < b.id ? -1 : 1) : a.checkin < b.checkin ? 1 : -1));
+}
+
+/* حجوزات بتتقاطع مع فترة (للتقارير ولتقرير الأونر على يوم قديم برا فترة التحميل). null لو القراءة فشلت */
+export async function getBookingsOverlapping(from, to) {
+  const { data, error } = await fetchAll(() => supabase.from("bookings").select("*", { count: "exact" }).lte("checkin", to).gte("checkout", from).order("checkin", { ascending: false }).order("id"));
   if (error || !data) return null;
   return data.map(bookingFromRow);
+}
+
+/* بحث في كل الحجوزات (القديمة كمان) على السيرفر: اسم/تليفون/رقم حجز/كود فرد - ٢٠٠ نتيجة بالكتير. null لو فشل */
+export async function searchBookings(q, hotelId = null) {
+  const { data, error } = await supabase.rpc("search_bookings", { p_q: q, p_hotel: hotelId });
+  if (error || !Array.isArray(data)) return null;
+  return data.map(bookingFromRow);
+}
+
+/* حالة حجوزات التكملة حسب التاريخ (القاعدة بتظبطها): بترجّع عدد اللي اتظبط */
+export async function promoteContinuations(hotelId) {
+  const { data, error } = await supabase.rpc("calma_promote_continuations", { p_hotel: hotelId });
+  return error ? 0 : Number(data) || 0;
 }
 
 export async function insertBooking(booking) {

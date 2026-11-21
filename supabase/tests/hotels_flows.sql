@@ -148,3 +148,52 @@ select t.reject('S2 الزميل ما يغيّرش صاحب الشيفت', t.dml
 select t.reject('S3 موظف تاني مش زميل ما يحصّلش على اليومية دي', t.pay('hs2', 'H3c', 10), 'شيفتك');
 select t.pass('S4 دفع بعملة تانية بسعر صرف (٥٠ جنيه = ١ دولار)', t.try('hs1', format($q$select record_booking_payment_fx(%L, 50, 'EGP', 50, 'كاش')$q$, (select id from t.ids where name = 'H3c'))));
 select t.reject('S4 الدفع بنفس عملة الحجز بسعر صرف مرفوض', t.try('hs1', format($q$select record_booking_payment_fx(%L, 5, (select currency from bookings where id = %L), 1, 'كاش')$q$, (select id from t.ids where name = 'H3c'), (select id from t.ids where name = 'H3c'))), 'نفس عملة');
+
+-- ======================================================================
+-- K) حجز التكملة (تمديد بعملة تانية): الأكواد بتتنقل ومش تكرار، والحالة حسب التاريخ،
+--    ويوميات الحجز والبحث في القديم
+-- ======================================================================
+create function t.ins_cont(u text, nm text, parent text, cin int, cout int, codes jsonb, st text default 'مؤكد') returns text language plpgsql as $$
+declare v uuid; p bookings%rowtype;
+begin
+  select * into p from bookings where id = (select id from t.ids where name = parent);
+  perform t.as_user(u);
+  insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, amount_paid, status, currency, source, payment_method, continues_from, guest_codes, pax)
+  values (p.room, nm, hotel_today() + cin, hotel_today() + cout, 50, 50 * (cout - cin), 0, st, 'EGP', 'مباشر', 'كاش', p.id, codes, jsonb_array_length(codes))
+  returning id into v;
+  execute 'reset role';
+  insert into t.ids values (nm, v);
+  return null;
+exception when others then
+  execute 'reset role';
+  return sqlerrm;
+end $$;
+select t.pass('K1 الحجز الأصلي ساكن (من امبارح لبكرة)', t.ins('st1', 'K1', 615, -1, 1, 100, 200, 0, false, 'تم تسجيل الدخول'));
+select t.pass('K1 أكواد الأصل', t.upd('st1', 'K1', $q$guest_codes = '["KX1"]'::jsonb$q$));
+select t.pass('K2 التكملة بنفس الكود: مش تكرار', t.ins_cont('st1', 'K2', 'K1', 1, 3, '["KX1"]'::jsonb));
+select t.eq('K2 مربوطة بالأصل', t.f('K2', 'continues_from'), (select id::text from t.ids where name = 'K1'));
+select t.pass('K3 حجز تاني بنفس الكود', t.ins('st1', 'K3', 616, 5, 6, 100, 100));
+select t.reject('K3 كود مستخدم في حجز مالوش علاقة لسه مرفوض', t.upd('st1', 'K3', $q$guest_codes = '["KX1"]'::jsonb$q$), 'مستخدم الشهر ده');
+select t.pass('K4 الأصل كوده اتغيّر', t.upd('st1', 'K1', $q$guest_codes = '["KX9"]'::jsonb$q$));
+select t.eq('K4 التكملة أخدت الكود الجديد', t.f('K2', 'guest_codes'), '["KX9"]');
+select t.reject('K5 التكملة لازم نفس الغرفة', t.try('st1', format($q$insert into bookings(room, guest_name, checkin, checkout, price_night, total_room, status, currency, source, payment_method, continues_from)
+  values (616, 'x', hotel_today() + 8, hotel_today() + 9, 1, 1, 'مؤكد', 'EGP', 'مباشر', 'كاش', %L)$q$, (select id from t.ids where name = 'K1'))), 'نفس الغرفة');
+select t.pass('K6 الموظف مايغيّرش الربط', t.upd('st1', 'K2', 'continues_from = null'));
+select t.eq('K6 الربط زي ما هو', t.f('K2', 'continues_from'), (select id::text from t.ids where name = 'K1'));
+-- الحالة: لسه ماجاش يومها = مؤكد؛ لما ييجي (والأصل ساكن) تبقى تم تسجيل الدخول
+select t.eqn('K7 قبل يومها: مفيش تظبيط', (select calma_promote_continuations(1) from (select t.as_user('st1')) x), 0);
+reset role;
+select t.pass('K7 الأصل خلص امبارح', t.maint_sql(format($q$update bookings set checkin = hotel_today() - 2, checkout = hotel_today() where id = %L$q$, (select id from t.ids where name = 'K1'))));
+select t.pass('K7 يوم التكملة جه (نرجّعها يومين)', t.maint_sql(format($q$update bookings set checkin = hotel_today(), checkout = hotel_today() + 2 where id = %L$q$, (select id from t.ids where name = 'K2'))));
+select t.eqn('K7 اتظبطت واحدة', (select calma_promote_continuations(1) from (select t.as_user('st1')) x), 1);
+reset role;
+select t.eq('K7 التكملة بقت تم تسجيل الدخول', t.f('K2', 'status'), 'تم تسجيل الدخول');
+-- يوميات الحجز ده بس + البحث في القديم
+select t.chk('K8 يوميات حجز بس: كل يومية راجعة فيها الحجز', (select bool_and(e::text like '%' || (select id::text from t.ids where name = 'H3c') || '%') from jsonb_array_elements((select calma_booking_ledgers((select id from t.ids where name = 'H3c')) from (select t.as_user('gm1')) x)) e));
+reset role;
+select t.chk('K8 فيه يومية واحدة على الأقل', jsonb_array_length((select calma_booking_ledgers((select id from t.ids where name = 'H3c')) from (select t.as_user('gm1')) x)) >= 1);
+reset role;
+select t.eqn('K9 البحث بالكود', jsonb_array_length((select search_bookings('KX9') from (select t.as_user('st1')) x)), 2);
+reset role;
+select t.eqn('K9 حرف واحد مابيبحثش', jsonb_array_length((select search_bookings('K') from (select t.as_user('st1')) x)), 0);
+reset role;

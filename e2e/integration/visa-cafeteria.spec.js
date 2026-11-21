@@ -53,8 +53,8 @@ test.describe("الفيزا: كل دفعة بوسيلتها وتفاصيلها",
     // اليومية: صف الغرفة بالفيزا + خانة آخر 4 أرقام + كارت عهدة الفيزا بتفاصيل العملية
     await goTab(page, "اليومية");
     const trow = page.locator("table.cx-table tbody tr", { hasText: "601" }).first();
-    await expect(trow).toContainText("فيزا");
-    await expect(trow).toContainText("4242");
+    await expect(trow.locator("select").first()).toHaveValue("فيزا");               // نفس شكل باقي الصفوف (خانات مقفولة)
+    await expect(trow.locator('input[value="4242"]')).toHaveCount(1);
     const tx = page.getByTestId("method-transactions");
     await expect(tx).toContainText("****4242");
     await expect(tx).toContainText("غرفة 601");

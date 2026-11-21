@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble } from "lucide-react";
 import { DateRange, Logo, RoomName, StaleShiftsAlert } from "./shared";
+import { getBookingsOverlapping, bookingsWindowStart } from "../data/bookings";
 import { emptyMoney, computeShiftTotals, trackBalances, methodTransactions, bookingDueLines, formatMoneyLines, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, GROUP_NAME } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
@@ -99,7 +100,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
   const group = canGroup && scope === "all";
   const hotelScope = group ? "all" : hotel.id;
   const rooms = group ? (allRooms || hotelRoomsProp) : hotelRoomsProp;
-  const bookings = group ? (allBookings || hotelBookingsProp) : hotelBookingsProp;
+  const loadedBookings = group ? (allBookings || hotelBookingsProp) : hotelBookingsProp;
   const reportTitleName = group ? `مجموعة ${GROUP_NAME} - كل الفنادق` : hotel.name;
   const [rangeMode, setRangeMode] = useState("day");
   const [date, setDate] = useState(shiftDayNow());
@@ -117,6 +118,22 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
     ? "اختار تاريخ صحيح"
     : effFrom > effTo ? "تاريخ البداية لازم يكون قبل تاريخ النهاية"
     : nightsBetween(effFrom, effTo) + 1 > MAX_RANGE_DAYS ? `أقصى فترة للتقرير ${MAX_RANGE_DAYS} يوم` : "";
+
+  // الشاشة محمّلة آخر ٣ شهور بس: تقرير فترة أقدم بيجيب حجوزاتها من السيرفر
+  const [olderBookings, setOlderBookings] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    const ws = bookingsWindowStart();
+    if (rangeError || effFrom >= ws) { setOlderBookings([]); return undefined; }
+    getBookingsOverlapping(effFrom, effTo).then((r) => { if (alive) setOlderBookings((r || []).filter((b) => hotelScope === "all" || (b.hotelId ?? 1) === hotelScope)); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effFrom, effTo, hotelScope, dataVersion]);
+  const bookings = useMemo(() => {
+    if (!olderBookings.length) return loadedBookings;
+    const have = new Set(loadedBookings.map((b) => b.id));
+    return [...loadedBookings, ...olderBookings.filter((b) => !have.has(b.id))];
+  }, [loadedBookings, olderBookings]);
 
   const loadedKeyRef = React.useRef(null);
   const [loadFailed, setLoadFailed] = useState(false);   // أي قراءة فشلت: الأرقام ممكن تكون ناقصة (مثلًا تحصيلات مش محسوبة) - لازم نقول ده بدل ما نعرض تقرير يبان كامل

@@ -18,9 +18,9 @@ const TILE_LABEL = { available: "متاحة", occupied_paid: "مدفوعة", occ
 const STATUS_TINTS = { available: "#E6F2EA", occupied_paid: "#F5EFD6", occupied_unpaid: "#FBE2E4", reserved: "#EDE7F5", early_checkout: "#FBE9DA", maintenance: "#EEEBE7", cleaning: "#E3EBF0" };
 
 /* قسم مطوي في بطاقة الغرفة (برّه الـ component عشان الحقول اللي جواه ماتتفقدش الفوكس وقت الكتابة) */
-function Sec({ id, title, children, badge }) {
+function Sec({ id, title, children, badge, open }) {
   return (
-    <details data-testid={id} style={{ marginTop: 4, background: "#fff", borderRadius: 12, padding: "10px 14px", border: "1px solid var(--hair2)" }}>
+    <details data-testid={id} open={open} style={{ marginTop: 4, background: "#fff", borderRadius: 12, padding: "10px 14px", border: "1px solid var(--hair2)" }}>
       <summary style={{ cursor: "pointer", fontSize: 14.5, fontWeight: 700, color: "var(--ink)" }}>{title}{badge ? <span className="cx-pill" style={{ background: "var(--paper2)", marginInlineStart: 6, fontSize: 12 }}>{badge}</span> : null}</summary>
       <div style={{ marginTop: 8 }}>{children}</div>
     </details>
@@ -309,8 +309,10 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         id: uid(), room: booking.room, guestName: booking.guestName, phone: booking.phone || "", pax: booking.pax || 1,
         checkin: booking.checkout, checkout: newCheckout, priceNight: price, totalRoom: Math.round(price * n * 100) / 100, currency: extCur,
         extras: { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 }, otherCharges: {}, earlyCheckin: { applied: false, fee: 0, note: "" },
-        paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: 0, source: booking.source || "مباشر", status: "تم تسجيل الدخول",
-        approvalStatus: "approved", notes: `تكملة إقامة${booking.code ? " حجز " + booking.code : ""} بالـ ${extCur} (${n} ليلة)`, guestCodes: [],
+        // الحالة حسب التاريخ: التكملة بتبدأ يوم خروج الأصل - لو لسه ماجاش "مؤكد" والقاعدة بتظبطها لما يومها ييجي
+        paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: 0, source: booking.source || "مباشر", status: booking.checkout > date ? "مؤكد" : "تم تسجيل الدخول",
+        // أكواد الأفراد بتتنقل من الحجز الأصلي (ومش تكرار - نفس السلسلة)، والربط بالأصل
+        approvalStatus: "approved", notes: `تكملة إقامة${booking.code ? " حجز " + booking.code : ""} بالـ ${extCur} (${n} ليلة)`, guestCodes: [...(booking.guestCodes || [])], continuesFrom: booking.id,
       };
       const ins = await onInsertBooking(cont);
       if (ins?.error) { showToast(ins.error); return; }
@@ -602,11 +604,44 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                 {occupiedNow && status.departingToday && b && b.status !== "تم تسجيل الخروج" && perms.editRoomStatus && !offShift && (
                   <span data-testid="checkout-now"><TwoStepButton label="النزيل خرج (تسجيل خروج دلوقتي)" confirmLabel={`تأكيد خروج ${b.guestName}؟ (خروجه النهارده - الحساب مش هيتغيّر والغرفة هتفضى)`} onConfirm={() => checkoutNow(b)} /></span>
                 )}
+              </div>
+              {canAct && occupiedNow && (
+                <Sec id="sec-extend" title="تمديد الإقامة" open>
+                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي بيتحدثوا لوحدهم (لو الغرفة محجوزة لحد تاني في التاريخ الجديد مش هيتسمحلك)</div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <input className="cx-input" aria-label="عدد ليالي التمديد" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
+                    <span style={{ fontSize: 13, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
+                    <button className="cx-btn cx-btn-outline" data-testid="extend-go" style={{ fontSize: 13 }} onClick={() => extendBooking(b)}>تمديد الحجز{extPay.some((l) => Number(l.amount) > 0) ? " + تسجيل الدفع" : ""}</button>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+                    <span style={{ fontSize: 13, color: "var(--muted)" }}>عملة الليالي الجديدة</span>
+                    <select className="cx-select" aria-label="عملة الليالي الجديدة" data-testid="extend-currency" style={{ width: 90 }} value={extCur || b.currency} onChange={(e) => { setExtCur(e.target.value === b.currency ? "" : e.target.value); setExtPrice(""); setExtPay((ls) => ls.map((l) => ({ ...l, currency: e.target.value, fee: "" }))); }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    {extCur && extCur !== b.currency && <>
+                      <input className="cx-input" aria-label="سعر الليلة بالعملة الجديدة" data-testid="extend-price" type="number" min="0" style={{ width: 110 }} placeholder={`سعر الليلة بالـ ${extCur}`} value={extPrice} onChange={(e) => setExtPrice(e.target.value)} />
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>الليالي دي هتتسجّل حجز تكملة بالـ {extCur}</span>
+                    </>}
+                  </div>
+                  {perms.markPaymentReceived && !b.paymentDetails?.onlinePaid && (
+                    <div style={{ marginTop: 8 }}>
+                      {extPay.length > 0 && <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 4 }}>دفع الليالي الجديدة (اختياري) - بيتسجّل مع التمديد، كل سطر بوسيلته</div>}
+                      {extPay.length > 0
+                        ? <PayLinesInline lines={extPay} onChange={setExtPay} bookingCurrency={extCur || b.currency} currencies={[extCur || b.currency]} testid="extend-pay" removableFirst />
+                        : <button type="button" data-testid="extend-pay-add" style={{ background: "none", border: 0, padding: 0, color: "var(--teal)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }} onClick={() => setExtPay([emptyPayLine(extCur || b.currency)])}>+ ادفع التمديد دلوقتي (وسيلة أو أكتر)</button>}
+                    </div>
+                  )}
+                </Sec>
+              )}
+
+              {/* الشغل اليومي (الدفع والخروج والتمديد) ظاهر فوق، والباقي تحت "المزيد" */}
+              <details data-testid="room-more" style={{ marginTop: 4, background: "#fff", borderRadius: 12, padding: "10px 14px", border: "1px solid var(--hair2)" }}>
+                <summary style={{ cursor: "pointer", fontSize: 14.5, fontWeight: 700, color: "var(--teal)" }}>المزيد (تعديل الحجز، النقل، الخدمات، الأكواد، البيانات)</summary>
+                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 {(perms.editBookings || perms.editBookingPrice) && !offShift && onEditBooking && <button className="cx-btn cx-btn-outline" style={{ fontSize: 13 }} onClick={() => onEditBooking(b.id)}><Pencil size={13} /> تعديل الحجز</button>}
                 {perms.moveGuest && b.status !== "ملغي" && b.checkout > date && (
                   <button className="cx-btn cx-btn-outline" data-testid="move-open" style={{ fontSize: 13 }} onClick={() => { setMoveTo(""); setMoveOpen((v) => !v); }}><ArrowLeftRight size={13} /> نقل لغرفة تانية</button>
                 )}
-              </div>
+                  </div>
               {moveOpen && b.status !== "ملغي" && (
                 <div data-testid="move-panel" style={{ background: "#fff", borderRadius: 8, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>نقل {b.guestName} لغرفة تانية <span style={{ fontWeight: 400, color: "var(--muted)" }}>- الحجز كله بيتنقل بكل تفاصيله وفلوسه (<DateRange from={b.checkin} to={b.checkout} />)، والغرفة الجديدة بتتحجز من النهارده لحد الخروج، والغرفة دي بتفضى</span></div>
@@ -628,7 +663,6 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                 </div>
               )}
 
-              {/* باقي التفاصيل مطوية عشان الشاشة تفضل بسيطة */}
               {(extrasList.length > 0 || (canAct && occupiedNow)) && (
                 <Sec id="sec-extras" title="خدمات إضافية" badge={extrasList.length ? extrasList.length : null}>
                   {extrasList.length > 0 && (
@@ -679,33 +713,6 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                 </Sec>
               )}
 
-              {canAct && occupiedNow && (
-                <Sec id="sec-extend" title="تمديد الإقامة">
-                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي بيتحدثوا لوحدهم (لو الغرفة محجوزة لحد تاني في التاريخ الجديد مش هيتسمحلك)</div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    <input className="cx-input" aria-label="عدد ليالي التمديد" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
-                    <span style={{ fontSize: 13, color: "var(--muted)" }}>ليلة/ليالي إضافية</span>
-                    <button className="cx-btn cx-btn-outline" data-testid="extend-go" style={{ fontSize: 13 }} onClick={() => extendBooking(b)}>تمديد الحجز{extPay.some((l) => Number(l.amount) > 0) ? " + تسجيل الدفع" : ""}</button>
-                  </div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
-                    <span style={{ fontSize: 13, color: "var(--muted)" }}>عملة الليالي الجديدة</span>
-                    <select className="cx-select" aria-label="عملة الليالي الجديدة" data-testid="extend-currency" style={{ width: 90 }} value={extCur || b.currency} onChange={(e) => { setExtCur(e.target.value === b.currency ? "" : e.target.value); setExtPrice(""); setExtPay((ls) => ls.map((l) => ({ ...l, currency: e.target.value, fee: "" }))); }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                    {extCur && extCur !== b.currency && <>
-                      <input className="cx-input" aria-label="سعر الليلة بالعملة الجديدة" data-testid="extend-price" type="number" min="0" style={{ width: 110 }} placeholder={`سعر الليلة بالـ ${extCur}`} value={extPrice} onChange={(e) => setExtPrice(e.target.value)} />
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>الليالي دي هتتسجّل حجز تكملة بالـ {extCur}</span>
-                    </>}
-                  </div>
-                  {perms.markPaymentReceived && !b.paymentDetails?.onlinePaid && (
-                    <div style={{ marginTop: 8 }}>
-                      {extPay.length > 0 && <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 4 }}>دفع الليالي الجديدة (اختياري) - بيتسجّل مع التمديد، كل سطر بوسيلته</div>}
-                      {extPay.length > 0
-                        ? <PayLinesInline lines={extPay} onChange={setExtPay} bookingCurrency={extCur || b.currency} currencies={[extCur || b.currency]} testid="extend-pay" removableFirst />
-                        : <button type="button" data-testid="extend-pay-add" style={{ background: "none", border: 0, padding: 0, color: "var(--teal)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }} onClick={() => setExtPay([emptyPayLine(extCur || b.currency)])}>+ ادفع التمديد دلوقتي (وسيلة أو أكتر)</button>}
-                    </div>
-                  )}
-                </Sec>
-              )}
-
               <Sec id="sec-codes" title="أكواد الأفراد" badge={codes.length ? codes.length : null}>
                 <GuestCodeChips codes={codes} />
                 {canAct && (
@@ -731,6 +738,8 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                   {b.notes && <div style={{ gridColumn: "1 / -1" }}><div style={{ color: "var(--muted)", fontSize: 12 }}>ملاحظات</div><div>{b.notes}</div></div>}
                 </div>
               </Sec>
+                </div>
+              </details>
             </div>
           )}
 

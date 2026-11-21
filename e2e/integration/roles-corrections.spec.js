@@ -1,7 +1,7 @@
 // مدير الشيفت + حساب المطوّر المخفي + تصحيح يومية قديمة (والمدفوع والعهدة بيتحدّثوا لوحدهم) + مدفوع قبل السيستم
 // + التقرير بيحسب عهدة الفيزا المكتوبة بالإيد + كروت تحصيل اليوم مفصّلة.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, toast, addBooking, claimShift, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
+import { login, logout, goTab, toast, addBooking, claimShift, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits, openPaySections } from "../ui";
 import { readFileSync } from "node:fs";
 const addDaysStr = (d, n) => { const t = new Date(d + "T12:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
 
@@ -177,6 +177,7 @@ test("مدفوع قبل السيستم: بيتحسب في المدفوع وال�
   await claimShift(page);
   await goTab(page, "الحجوزات");
   await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
   await page.getByTestId("new-prior-amount").fill("700");
   await page.getByTestId("new-prior-note").fill("دفع كاش يوم 10/11");
   await page.getByRole("button", { name: /حفظ الحجز/ }).click();
@@ -467,6 +468,7 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   // تعديل المدفوع: مش على الكارت - جوه فورم "تعديل الحجز". الدفعة 500 كاش بقت 400 فيزا
   await expect(page.getByTestId("booking-card").getByTestId("edit-payments-open")).toHaveCount(0);
   await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   // محدش يدفع فوق الإجمالي (900): تعديل الدفعة لـ 1000 بيترفض والمدفوع واليومية مابيتغيّروش
   await page.getByTestId("edit-pay-0-amount-0").fill("1000");
@@ -505,6 +507,7 @@ test("دفعة اتمسح مبلغها من اليومية: مابتظهرش ف�
   await login(page, "devo");
   await goTab(page, "الحجوزات");
   await page.getByRole("button", { name: "تعديل الحجز", exact: true }).first().click();
+  await openPaySections(page);
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   await expect(page.getByTestId("edit-payments")).toContainText("مفيش دفعات متسجّلة");
   await expect(page.getByTestId("edit-payment-row")).toHaveCount(0);
@@ -583,6 +586,7 @@ test("مدير الشيفت بيعدّل حجز نزيل مشي (غادر مبك
   await goTab(page, "الحجوزات");
   const card = page.getByTestId("booking-card").filter({ hasText: "Gone Guest" });
   await card.getByTestId("edit-price").click();
+  await openPaySections(page);
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   await page.getByTestId("edit-pay-0-amount-0").fill("550");
   await page.getByTestId("edit-payment-save").click();
@@ -614,6 +618,7 @@ test("تعديل الحجز: مدير الشيفت بيحصّل من الفور�
   await claimShift(page);
   await goTab(page, "الحجوزات");
   await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
   await page.getByTestId("advance-amount").fill("400");                 // 400 كاش
   await page.getByTestId("advance-add-line").click();
   await page.getByTestId("advance-extra-amount-0").fill("300");          // 300 فيزا
@@ -640,6 +645,7 @@ test("تعديل المدفوع مباشر: مدير الشيفت بيعدّل �
   await login(page, "mona");
   await goTab(page, "الحجوزات");
   await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   // تعديل مباشر: الدفعة (3600 كاش) بقت 2500 كاش + جزء تاني 1100 فيزا
   await page.getByTestId("edit-pay-0-amount-0").fill("2500");
@@ -681,6 +687,7 @@ test("الدفع من كارت الغرفة بأكتر من وسيلة في نف
 test("تمديد بعملة تانية: الليالي الجديدة بتتسجّل حجز تكملة بالجنيه (سعر الليلة بعملة واحدة) وبتتدفع بيها", async ({ page, env }) => {
   await users(env);
   const b = await env.seedBooking({ room: 616, guest: "Dollar Guest", start: -1, nights: 2, price: 40, paid: 80, currency: "USD", anchor: "shift" });
+  await env.q("update bookings set guest_codes = '[\"DG1\"]'::jsonb, status = 'تم تسجيل الدخول' where id = $1", [b]);
   await page.goto("/");
   await login(page, "ahmed");
   await claimShift(page);
@@ -696,6 +703,27 @@ test("تمديد بعملة تانية: الليالي الجديدة بتتسج
   expect(orig).toEqual({ checkout: cairoDate(1), currency: "USD", total_room: 80 });            // الحجز الأصلي زي ما هو
   const cont = (await env.q("select checkin::text, checkout::text, currency, total_room::float, amount_paid::float from bookings where guest_name = 'Dollar Guest' and id <> $1", [b]))[0];
   expect(cont).toEqual({ checkin: cairoDate(1), checkout: cairoDate(2), currency: "EGP", total_room: 1900, amount_paid: 1900 });
+  // مربوطة بالأصل وأخدت أكواده، وحالتها "مؤكد" لحد ما يومها ييجي
+  const link = (await env.q("select continues_from, guest_codes, status from bookings where guest_name = 'Dollar Guest' and id <> $1", [b]))[0];
+  expect(link).toEqual({ continues_from: b, guest_codes: ["DG1"], status: "مؤكد" });
+  // يومها جه: الحالة بتتظبط لوحدها مع التحميل
+  await env.q("update bookings set checkout = $2 where id = $1", [b, cairoDate(0)]);
+  await env.q("update bookings set checkin = $2 where continues_from = $1", [b, cairoDate(0)]);
+  await page.reload();
+  await expect.poll(async () => (await env.q("select status from bookings where continues_from = $1", [b]))[0].status).toBe("تم تسجيل الدخول");
+});
+
+test("الحجوزات: الشاشة بتحمّل آخر ٣ شهور، والحجز القديم بيظهر بالبحث", async ({ page, env }) => {
+  await users(env);
+  await env.seedBooking({ room: 601, guest: "Ancient Guest", start: -200, nights: 2, price: 100, paid: 0, currency: "EGP" });
+  await env.seedBooking({ room: 602, guest: "Recent Guest", start: -10, nights: 2, price: 100, paid: 0, currency: "EGP" });
+  await page.goto("/");
+  await login(page, "boss");
+  await goTab(page, "الحجوزات");
+  await expect(page.getByText("Recent Guest").first()).toBeVisible();
+  await expect(page.getByText("Ancient Guest")).toHaveCount(0);
+  await page.getByLabel("بحث في الحجوزات").fill("Ancient");
+  await expect(page.getByText("Ancient Guest").first()).toBeVisible();
 });
 
 test("مدير الشيفت بيعدّل ويمسح الكافيتيريا: استهلاك الاستاف وتحصيل الكافيتيريا (المبلغ والوسيلة)", async ({ page, env }) => {

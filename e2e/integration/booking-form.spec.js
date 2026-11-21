@@ -224,7 +224,7 @@ test.describe("البحث والتصفية في قائمة الحجوزات", ()
   test("قايمة كبيرة بتتعرض ٥٠ ٥٠ وزرار 'عرض حجوزات أقدم' بيكمّل", async ({ page, env }) => {
     test.setTimeout(90_000);
     await users(env);
-    for (let i = 0; i < 55; i++) await env.seedBooking({ room: 601 + (i % 16), guest: `Old ${i}`, start: -400 + i * 7, nights: 1 });
+    for (let i = 0; i < 55; i++) await env.seedBooking({ room: 601 + (i % 16), guest: `Old ${i}`, start: -85 + i, nights: 1 });   // جوه فترة التحميل (آخر ٣ شهور)
     await page.goto("/");
     await login(page, "rawan");
     await goTab(page, "الحجوزات");

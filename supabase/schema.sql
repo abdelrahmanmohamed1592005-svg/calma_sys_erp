@@ -5201,7 +5201,171 @@ $$;
 drop function if exists currency_fix_correct(integer, date, text, timestamptz, jsonb);
 drop table if exists currency_fix_grants;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 61 $$;
+-- --------------------------------------------------------------------------
+-- 59) مراجعة المالك (٢):
+--     (أ) حجز التكملة (تمديد بعملة تانية) مربوط بالحجز الأصلي (continues_from): أكواد الأفراد بتتنقل له تلقائي
+--         (ومايتعتبرش تكرار جوه نفس السلسلة)، وحالته بتتظبط حسب التاريخ (calma_promote_continuations).
+--     (ب) قراءة يوميات حجز معيّن: اليوميات اللي فيها الحجز ده بس (calma_booking_ledgers) بدل كل اليوميات من أول السيستم.
+--     (ج) بحث في الحجوزات القديمة على السيرفر (search_bookings) - الشاشة بتحمّل آخر ٣ شهور + الساكن والجاي بس.
+-- --------------------------------------------------------------------------
+alter table bookings add column if not exists continues_from uuid references bookings(id) on delete set null;
+create index if not exists bookings_continues_from_idx on bookings (continues_from) where continues_from is not null;
+create index if not exists bookings_checkout_idx on bookings (checkout);
+create index if not exists shift_records_rows_gin on shift_records using gin (rows jsonb_path_ops);
+create index if not exists shift_records_caf_rows_gin on shift_records using gin (cafeteria_rows jsonb_path_ops);
+create index if not exists shift_records_bc_gin on shift_records using gin (booking_collections jsonb_path_ops);
+
+-- أول حجز في السلسلة (الأصلي) - لحد ٢٠ تكملة
+create or replace function calma_booking_root(p_id uuid)
+returns uuid language plpgsql stable security definer set search_path = public as $$
+declare cur uuid := p_id; nxt uuid; i int := 0;
+begin
+  loop
+    select continues_from into nxt from bookings where id = cur;
+    exit when nxt is null or i >= 20;
+    cur := nxt; i := i + 1;
+  end loop;
+  return cur;
+end;
+$$;
+revoke all on function calma_booking_root(uuid) from public, anon;
+
+-- الربط بيتحدد وقت إنشاء التكملة بس، ومابيتغيّرش بعد كده (إلا المطوّر)
+create or replace function bookings_continuation_guard()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if TG_OP = 'UPDATE' then
+    if new.continues_from is distinct from old.continues_from and not (auth.uid() is null or is_dev()) then
+      new.continues_from := old.continues_from;
+    end if;
+  elsif new.continues_from is not null then
+    if new.continues_from = new.id then raise exception 'الحجز مايبقاش تكملة لنفسه'; end if;
+    if not exists (select 1 from bookings p where p.id = new.continues_from and p.room = new.room and p.hotel_id is not distinct from new.hotel_id) then
+      raise exception 'حجز التكملة لازم يكون لنفس الغرفة ونفس الفندق بتوع الحجز الأصلي';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke all on function bookings_continuation_guard() from public, anon, authenticated;
+drop trigger if exists bookings_continuation_guard on bookings;
+create trigger bookings_continuation_guard before insert or update on bookings
+  for each row execute function bookings_continuation_guard();
+
+-- أكواد الأفراد: نفس الكود في حجز الأصل وتكملته مش تكرار (نفس النزيل)
+create or replace function bookings_sync_guests()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare codes jsonb; n int; i int; c text; seen text[] := '{}'; ym_v text; clash record; my_root uuid;
+begin
+  codes := coalesce(new.guest_codes, '[]'::jsonb);
+  n := least(greatest(coalesce(new.pax, 1), 1), jsonb_array_length(codes));
+  ym_v := to_char(new.checkin, 'YYMM');
+  delete from booking_guests where booking_id = new.id;
+  for i in 0 .. n - 1 loop
+    if jsonb_typeof(codes -> i) is distinct from 'string' then continue; end if;
+    c := btrim(codes ->> i);
+    if c = '' then continue; end if;
+    if char_length(c) > 40 then raise exception 'كود الفرد % أطول من ٤٠ حرف', i + 1; end if;
+    if upper(c) = any(seen) then raise exception 'الكود % مكرر جوه نفس الحجز', c; end if;
+    seen := seen || upper(c);
+    if new.status is distinct from 'ملغي' then
+      select g.room, b.guest_name, b.id into clash from booking_guests g join bookings b on b.id = g.booking_id
+        where g.ym = ym_v and upper(g.code) = upper(c) and g.booking_id <> new.id and b.status is distinct from 'ملغي'
+          and b.hotel_id = new.hotel_id
+          and not (b.continues_from is not null or new.continues_from is not null)
+        limit 1;
+      if not found then
+        my_root := calma_booking_root(new.id);
+        select g.room, b.guest_name, b.id into clash from booking_guests g join bookings b on b.id = g.booking_id
+          where g.ym = ym_v and upper(g.code) = upper(c) and g.booking_id <> new.id and b.status is distinct from 'ملغي'
+            and b.hotel_id = new.hotel_id and (b.continues_from is not null or new.continues_from is not null)
+            and calma_booking_root(b.id) <> my_root
+          limit 1;
+      end if;
+      if found then
+        raise exception 'الكود % مستخدم الشهر ده بالفعل في نفس الفندق (غرفة % - %) - اختار كود تاني أو استنى الشهر الجاي', c, clash.room, clash.guest_name;
+      end if;
+    end if;
+    insert into booking_guests(booking_id, room, seq, code, ym) values (new.id, new.room, i + 1, c, ym_v);
+  end loop;
+  return null;
+end;
+$$;
+
+-- أكواد الأصل اتعدّلت: التكملة (اللي لسه ماخلصتش) بتاخد نفس الأكواد ونفس عدد الأفراد
+create or replace function bookings_continuation_codes()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.guest_codes is distinct from old.guest_codes or new.pax is distinct from old.pax then
+    update bookings set guest_codes = new.guest_codes, pax = new.pax
+      where continues_from = new.id and status in ('مؤكد', 'تم تسجيل الدخول')
+        and (guest_codes is distinct from new.guest_codes or pax is distinct from new.pax);
+  end if;
+  return null;
+end;
+$$;
+revoke all on function bookings_continuation_codes() from public, anon, authenticated;
+drop trigger if exists bookings_continuation_codes on bookings;
+create trigger bookings_continuation_codes after update of guest_codes, pax on bookings
+  for each row execute function bookings_continuation_codes();
+
+-- حالة التكملة حسب التاريخ: لما يومها ييجي والأصل ساكن/خرج بتبقى "تم تسجيل الدخول" (أو خروج لو خلصت)
+create or replace function calma_promote_continuations(p_hotel integer)
+returns integer language plpgsql security definer set search_path = public as $$
+declare n int := 0; r record;
+begin
+  if not is_staff_or_reservations() then return 0; end if;
+  for r in select c.id, case when c.checkout <= hotel_today() then 'تم تسجيل الخروج' else 'تم تسجيل الدخول' end as st
+    from bookings c join bookings p on p.id = c.continues_from
+    where c.hotel_id = p_hotel and c.status = 'مؤكد' and c.checkin <= hotel_today()
+      and p.status in ('تم تسجيل الدخول', 'تم تسجيل الخروج')
+  loop
+    update bookings set status = r.st where id = r.id;
+    n := n + 1;
+  end loop;
+  if n > 0 then insert into activity_log(action, hotel_id) values ('تظبيط حالة ' || n || ' حجز تكملة حسب التاريخ', p_hotel); end if;
+  return n;
+end;
+$$;
+revoke all on function calma_promote_continuations(integer) from public, anon;
+grant execute on function calma_promote_continuations(integer) to authenticated;
+
+-- يوميات حجز معيّن بس (بصلاحيات اللي بيقرا - RLS)
+create or replace function calma_booking_ledgers(p_booking uuid)
+returns jsonb language sql stable security invoker set search_path = public as $$
+  select coalesce(jsonb_agg(to_jsonb(s) order by s.date, calma_shift_ord(s.shift_key)), '[]'::jsonb) from shift_records s
+  where s.rows @> jsonb_build_array(jsonb_build_object('bookingId', p_booking::text))
+     or s.cafeteria_rows @> jsonb_build_array(jsonb_build_object('bookingId', p_booking::text))
+     or s.booking_collections @> jsonb_build_array(jsonb_build_object('bookingId', p_booking::text));
+$$;
+revoke all on function calma_booking_ledgers(uuid) from public, anon;
+grant execute on function calma_booking_ledgers(uuid) to authenticated;
+
+-- بحث في كل الحجوزات (القديمة كمان): اسم/تليفون/رقم حجز/كود فرد - بصلاحيات اللي بيبحث (RLS)، ٢٠٠ نتيجة بالكتير
+create or replace function search_bookings(p_q text, p_hotel integer default null)
+returns jsonb language sql stable security invoker set search_path = public as $$
+  with q as (select '%' || replace(replace(replace(btrim(coalesce(p_q, '')), '\', '\\'), '%', '\%'), '_', '\_') || '%' as pat)
+  select coalesce(jsonb_agg(to_jsonb(b) order by b.checkin desc), '[]'::jsonb) from (
+    select b.* from bookings b, q
+    where char_length(btrim(coalesce(p_q, ''))) >= 2
+      and (p_hotel is null or b.hotel_id = p_hotel)
+      and (b.guest_name ilike q.pat or b.phone ilike q.pat or b.code ilike q.pat or b.guest_codes::text ilike q.pat)
+    order by b.checkin desc limit 200) b;
+$$;
+revoke all on function search_bookings(text, integer) from public, anon;
+grant execute on function search_bookings(text, integer) to authenticated;
+
+-- أرقام الحجوزات اللي ليها تحصيل في أي يومية (للتقارير) - السيرفر بيجمّعها بدل ما الشاشة تقرا كل اليوميات
+create or replace function calma_journaled_booking_ids()
+returns jsonb language sql stable security invoker set search_path = public as $$
+  select coalesce(jsonb_agg(distinct e ->> 'bookingId'), '[]'::jsonb)
+  from shift_records s, jsonb_array_elements(case when jsonb_typeof(s.booking_collections) = 'array' then s.booking_collections else '[]'::jsonb end) e
+  where coalesce(e ->> 'bookingId', '') <> '';
+$$;
+revoke all on function calma_journaled_booking_ids() from public, anon;
+grant execute on function calma_journaled_booking_ids() to authenticated;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 62 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

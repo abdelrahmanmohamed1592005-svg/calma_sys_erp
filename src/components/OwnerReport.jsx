@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Send, Printer, Download, X } from "lucide-react";
 import { buildOwnerReport, bookingsForDay } from "../domain/ownerReport";
+import { getBookingsOverlapping, bookingsWindowStart } from "../data/bookings";
 import { arabicWeekday } from "../domain/dates";
 import { getShiftRecordsInRange, getPaymentsIndex } from "../data/shifts";
 import { sheetToPngFile, downloadFile } from "../lib/sheetImage";
@@ -51,16 +52,25 @@ export function OwnerReport({ date, rooms, bookings, staffNames, onClose, onLog,
       const records = await getShiftRecordsInRange(date, date, hotelId);
       if (cancelled) return;
       if (!records) { setData({ error: true }); return; }
-      const dayBookings = rooms.flatMap((r) => bookingsForDay(bookings, r.number, date));
+      // يوم أقدم من فترة التحميل (٣ شهور): حجوزاته بتتجاب من السيرفر
+      let pool = bookings;
+      if (date < bookingsWindowStart()) {
+        const older = await getBookingsOverlapping(date, date);
+        if (cancelled) return;
+        if (!older) { setData({ error: true }); return; }
+        const have = new Set(bookings.map((b) => b.id));
+        pool = [...bookings, ...older.filter((b) => !have.has(b.id) && (b.hotelId ?? 1) === hotelId)];
+      }
+      const dayBookings = rooms.flatMap((r) => bookingsForDay(pool, r.number, date));
       const paymentsIndex = await getPaymentsIndex(dayBookings);
-      if (!cancelled) setData({ records, paymentsIndex: paymentsIndex || new Map() });
+      if (!cancelled) setData({ records, paymentsIndex: paymentsIndex || new Map(), pool });
     })();
     return () => { cancelled = true; };
     // التقرير لقطة لحظة الفتح - مش بيتحدّث وهو مفتوح
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, hotelId]);
 
-  const sheets = useMemo(() => (data && !data.error ? buildOwnerReport({ rooms, bookings, date, records: data.records, paymentsIndex: data.paymentsIndex, hotelName: hotel.name, staffNames }) : null),
+  const sheets = useMemo(() => (data && !data.error ? buildOwnerReport({ rooms, bookings: data.pool || bookings, date, records: data.records, paymentsIndex: data.paymentsIndex, hotelName: hotel.name, staffNames }) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- لقطة: بتتبني مرة مع تحميل البيانات
     [data]);
 
