@@ -125,7 +125,7 @@ describe.skipIf(!enabled)("تزامن حقيقي", () => {
       const recs = await db.q("select rows, cafeteria_rows from shift_records");
       const sum = (arr, k) => (arr || []).reduce((a, x) => a + (Number(x[k]) || 0), 0);
       expect(e.mx).toBeLessThanOrEqual(100);
-      expect(b.paid).toBeLessThanOrEqual(100);
+      expect(b.paid).toBe(360);                     // الدفع الزيادة مسموح (قرار المالك): ٦ دفعات × ٦٠ كلها اتسجّلت مرة واحدة بالظبط
       expect(sum(recs.flatMap((r) => r.cafeteria_rows), "collectionAmt")).toBeCloseTo(e.paid, 2);
       expect(sum(recs.flatMap((r) => r.rows), "collectionAmt")).toBeCloseTo(b.paid, 2);
     } finally { await db.close(); }

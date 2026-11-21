@@ -146,6 +146,8 @@ select t.eqn('S2 التحصيل اتسجّل في يومية صاحب الشيف
 select t.reject('S2 الزميل ما يغيّرش قايمة الزملاء مباشرة', t.dml('hs3', format($q$update shift_records set helpers = '{}' where hotel_id = 1 and date = %L and shift_key = 'evening'$q$, hotel_today())), 'زميل معايا');
 select t.reject('S2 الزميل ما يغيّرش صاحب الشيفت', t.dml('hs3', format($q$update shift_records set staff_name = 'x' where hotel_id = 1 and date = %L and shift_key = 'evening'$q$, hotel_today())), 'اسم صاحب الشيفت');
 select t.reject('S3 موظف تاني مش زميل ما يحصّلش على اليومية دي', t.pay('hs2', 'H3c', 10), 'شيفتك');
+select t.reject('S4 من غير سعر العملة على الحجز مرفوض', t.try('hs1', format($q$select record_booking_payment_fx(%L, 50, 'EGP', 50, 'كاش')$q$, (select id from t.ids where name = 'H3c'))), 'سعر العملة بالمصري');
+select t.pass('S4 سعر الدولار بالمصري على الحجز = ٥٠', t.maint_sql(format($q$update bookings set fx_rates = '{"USD": 50}' where id = %L$q$, (select id from t.ids where name = 'H3c'))));
 select t.pass('S4 دفع بعملة تانية بسعر صرف (٥٠ جنيه = ١ دولار)', t.try('hs1', format($q$select record_booking_payment_fx(%L, 50, 'EGP', 50, 'كاش')$q$, (select id from t.ids where name = 'H3c'))));
 select t.reject('S4 الدفع بنفس عملة الحجز بسعر صرف مرفوض', t.try('hs1', format($q$select record_booking_payment_fx(%L, 5, (select currency from bookings where id = %L), 1, 'كاش')$q$, (select id from t.ids where name = 'H3c'), (select id from t.ids where name = 'H3c'))), 'نفس عملة');
 
@@ -197,3 +199,15 @@ select t.eqn('K9 البحث بالكود', jsonb_array_length((select search_boo
 reset role;
 select t.eqn('K9 حرف واحد مابيبحثش', jsonb_array_length((select search_bookings('K') from (select t.as_user('st1')) x)), 0);
 reset role;
+
+-- الجيست يدفع أكتر من اللي عليه عادي (قرار المالك)
+select t.pass('OV1 دفعة أكبر من المتبقي بكتير', t.pay('hs1', 'H3c', 5000));
+select t.chk('OV1 المدفوع أكبر من الإجمالي', (select amount_paid > booking_hotel_total(b) from bookings b where id = (select id from t.ids where name = 'H3c')));
+-- القفل التلقائي: شيفت فضل مفتوح أكتر من ٢٤ ساعة بعد معاده
+select t.pass('AC1 شيفت مفتوح من ٣ أيام', t.maint_sql($q$insert into shift_records(hotel_id, date, shift_key, staff_name, staff_username, rows, handover, closed)
+  values (1, hotel_today() - 3, 'morning', 'hs1', 'hs1', '[{"room": 601, "collectionAmt": 100, "collectionCurrency": "EGP", "collectionMethod": "كاش"}]'::jsonb, '{"EGP": 20}'::jsonb, false)
+  on conflict (hotel_id, date, shift_key) do update set closed = false, rows = excluded.rows, handover = excluded.handover$q$));
+select t.chk('AC1 اتقفل لوحده', (select calma_auto_close_stale_shifts() from (select t.as_user('st1')) x) >= 1);
+reset role;
+select t.chk('AC1 مقفول وأرقامه متحسبة', (select closed and closed_by = 'إقفال تلقائي' and calma_num(closing_cash ->> 'EGP') = 120 from shift_records where hotel_id = 1 and date = hotel_today() - 3 and shift_key = 'morning'));
+select t.chk('AC1 الشيفت الشغال دلوقتي مااتقفلش', exists (select 1 from shift_records where hotel_id = 1 and date >= hotel_today() - 1 and closed = false));

@@ -23,7 +23,7 @@ const id = r.data?.id;
 let p = await st.rpc("record_booking_payment", { p_booking: id, p_amount: 50, p_method: "فيزا", p_details: { senderName: "", senderNumber: "٤٢٤٢", ref: "" }, p_expected: null, p_note: "تحصيل" });
 ok(!p.error && p.data.cafeteria === 30 && p.data.details.senderNumber === "4242", "visa payment rpc (cafeteria first, arabic last4)", p);
 p = await st.rpc("record_booking_payment", { p_booking: id, p_amount: 9999, p_method: "كاش", p_details: {}, p_expected: null, p_note: "x" });
-ok(p.error && /أكبر من المتبقي/.test(p.error.message), "overpay rejected with Arabic message", p);
+ok(!p.error && Number(p.data.left) < 0, "overpay accepted (owner decision)", p);
 p = await st.rpc("record_booking_payment", { p_booking: id, p_amount: 10, p_method: "فيزا", p_details: { senderNumber: "12" }, p_expected: null, p_note: "x" });
 ok(p.error && /٤ أرقام/.test(p.error.message), "visa without 4 digits rejected", p);
 // الاستاف
@@ -39,7 +39,7 @@ ok(!fx.error && Number(fx.data.left) === 0, "EGP payment via real PostgREST (no 
 let mv = await res.rpc("move_booking_room", { p_booking: id, p_room: 602, p_expected: null });
 ok(!mv.error && mv.data.to === 602, "move guest via real PostgREST", mv);
 let c = await res.from("bookings").update({ status: "ملغي" }).eq("id", id).select().single();
-ok(!c.error && c.data.refund_pending === false && Number(c.data.amount_paid) === 50 && Number(c.data.other_paid.EGP) === 2500, "cancel keeps the money (no refund request)", c.error || c.data);
+ok(!c.error && c.data.refund_pending === false && Number(c.data.amount_paid) === 50 + 9999 && Number(c.data.other_paid.EGP) === 2500, "cancel keeps the money (no refund request)", c.error || c.data);
 // صلاحيات: رد الفلوس مقفول على الكل، anon مايقدرش ينادي الدوال
 let bad = await res.rpc("decide_booking_refund", { p_booking: id, p_decision: "refund", p_expected: null, p_method: "كاش" });
 ok(bad.error, "refund rpc is closed", bad);

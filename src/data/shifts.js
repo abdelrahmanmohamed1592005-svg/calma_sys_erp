@@ -2,7 +2,7 @@ import { supabase } from "../lib/supabaseClient";
 import { descWithAmount } from "../domain/ledgerDesc";
 import { fetchAll } from "./page";
 import { friendlyDbError } from "./schemaCheck";
-import { shiftDayNow, addDays, isShiftActiveNow, isStaleOpenShift } from "../domain/dates";
+import { shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
 import { computeShiftTotals, cascadeHandover, stripBookingFromRecord, recordMentionsBooking, cleanPaymentDetailsFor } from "../domain/money";
 import { getActiveHotelId, resolveHotelScope } from "./hotels";
 
@@ -209,15 +209,10 @@ export async function getShiftRecordsInRange(fromDate, toDate, hotelId) {
   return data.map(shiftFromRow).sort((a, b) => (a.date === b.date ? (a.hotelId - b.hotelId || order[a.shiftKey] - order[b.shiftKey]) : a.date < b.date ? -1 : 1));
 }
 
-/* الشيفتات اللي فاضلة مفتوحة من أيام فاتت (آخر ٦٠ يوم) - للتنبيه الأحمر في اليومية والتقارير. null لو القراءة فشلت */
-export async function getStaleOpenShifts(hotelId) {
-  const h = resolveHotelScope(hotelId);
-  const today = shiftDayNow();
-  let q = supabase.from("shift_records").select("hotel_id, date, shift_key, staff_name, closed").eq("closed", false).lt("date", today).gte("date", addDays(today, -60));
-  if (h != null) q = q.eq("hotel_id", h);
-  const { data, error } = await q.order("date");
-  if (error || !data) return null;
-  return data.map((r) => ({ hotelId: r.hotel_id, date: r.date, shiftKey: r.shift_key, staffName: r.staff_name, closed: r.closed })).filter((r) => isStaleOpenShift(r));
+/* قفل تلقائي: أي شيفت فضل مفتوح أكتر من ٢٤ ساعة بعد معاده بيتقفل على السيرفر (أرقامه بتتحسب هناك) - بترجّع العدد */
+export async function autoCloseStaleShifts() {
+  const { data, error } = await supabase.rpc("calma_auto_close_stale_shifts");
+  return error ? 0 : Number(data) || 0;
 }
 
 /* اليوميات اللي فيها حجز معيّن بس (مش كل اليوميات من أول السيستم) - null لو القراءة فشلت */

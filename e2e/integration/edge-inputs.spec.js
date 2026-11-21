@@ -31,13 +31,13 @@ test.describe("إدخالات غريبة", () => {
     expect(voda.paymentDetails.senderNumber).toBe("01012345678");
   });
 
-  test("مبالغ غلط: صفر وسالب وأكبر من المتبقي بتتقفل ومفيش حاجة بتتسجّل، والكسور بتتقرّب لقرشين", async ({ page, env }) => {
+  test("مبالغ غلط: صفر وسالب بتتقفل ومفيش حاجة بتتسجّل، والكسور بتتقرّب لقرشين", async ({ page, env }) => {
     await users(env);
     await env.seedShift("ahmed");
     await env.seedBooking({ room: 601, guest: "Bad Amounts", nights: 1, price: 100 });
     await page.goto("/"); await login(page, "ahmed");
     await goTab(page, "لوحة الغرف"); await openRoom(page, 601);
-    for (const bad of ["0", "-5", "100.01", "99999"]) {
+    for (const bad of ["0", "-5"]) {          // الدفع الزيادة مسموح (قرار المالك)
       await page.getByTestId("pay-amount").fill(bad);
       await page.getByTestId("pay-record").click();
       await waitIdle(page);

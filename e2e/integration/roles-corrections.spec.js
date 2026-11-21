@@ -142,17 +142,59 @@ test("مدير الشيفت: الليلي اللي قبل يومه بيتصحّ�
   expect((await env.q("select currency from bookings where id = $1", [b]))[0].currency).toBe("USD");
 });
 
-test("تنبيه أحمر: شيفت مفتوح من امبارح بيظهر في اليومية والتقارير، ومابيتقفلش لوحده", async ({ page, env }) => {
+test("قفل تلقائي: شيفت فضل مفتوح أكتر من ٢٤ ساعة بعد معاده بيتقفل لوحده وأرقامه بتتحسب، والتنبيه الأحمر اتشال", async ({ page, env }) => {
   await users(env);
-  await env.seedShift("sara", { day: cairoDate(-2), key: "evening", closed: false, handover: { EGP: 0 } });
+  await env.seedShift("sara", { day: cairoDate(-3), key: "evening", closed: false, handover: { EGP: 50 }, collections: [{ room: 601, amount: 200, currency: "EGP" }] });
   await page.goto("/");
   await login(page, "mona");
   await goTab(page, "اليومية");
-  await expect(page.getByTestId("stale-open-shift")).toContainText("فيه شيفت مفتوح من امبارح");
-  await expect(page.getByTestId("stale-open-shift")).toContainText("سارة");
-  await goTab(page, "التقارير");
-  await expect(page.getByTestId("stale-open-shift")).toBeVisible();
-  expect((await rec(env, cairoDate(-2), "evening")).closed).toBe(false);
+  await expect.poll(async () => (await rec(env, cairoDate(-3), "evening")).closed).toBe(true);
+  const r = await rec(env, cairoDate(-3), "evening");
+  expect(r.closed_by).toBe("إقفال تلقائي");
+  expect(Number(r.closing_cash.EGP)).toBe(250);
+  await expect(page.getByTestId("stale-open-shift")).toHaveCount(0);
+});
+
+test("سعر العملة بالمصري على الحجز: حجز بالدولار والجيست بيدفع بالجنيه - بيتحوّل بسعر الحجز، والزيادة مسموحة", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 606, guest: "FX Guest", start: 0, nights: 2, price: 50, paid: 0, currency: "USD", anchor: "shift" });
+  await env.q("update bookings set fx_rates = '{\"USD\": 50}'::jsonb where id = $1", [b]);
+  await page.goto("/");
+  await login(page, "ahmed");
+  await claimShift(page);
+  await goTab(page, "لوحة الغرف");
+  await openRoom(page, 606);
+  await expect(page.getByTestId("money-box")).toContainText("سعر الـ USD بالمصري");
+  const panel = page.getByTestId("pay-panel");
+  await panel.getByTestId("pay-currency").selectOption("EGP");
+  await panel.getByTestId("pay-amount").fill("2500");              // = 50 دولار
+  await panel.getByTestId("pay-record").click();
+  await expect(toast(page)).toBeVisible();
+  expect(digits(await toast(page).innerText())).toContain("تمتسجيل2500EGP");
+  expect(digits(await toast(page).innerText())).toContain("المتبقي50USD");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(50);
+  const row = (await env.q("select r from shift_records, jsonb_array_elements(rows) r where r ->> 'bookingId' = $1", [b]))[0].r;
+  expect(row).toMatchObject({ collectionAmt: 2500, collectionCurrency: "EGP", fxCovered: 50 });   // الخزينة بالجنيه الفعلي
+  // الباقي 50 دولار: يدفع 3000 جنيه (= 60 دولار) - زيادة 10 دولار عادي
+  await panel.getByTestId("pay-currency").selectOption("EGP");
+  await panel.getByTestId("pay-amount").fill("3000");
+  await panel.getByTestId("pay-record").click();
+  await expect.poll(async () => digits(await toast(page).innerText())).toContain("تمتسجيل3000EGP");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(110);
+});
+
+test("فورم الحجز: خانة سعر العملة بالمصري بتتحفظ على الحجز", async ({ page, env }) => {
+  await users(env);
+  const b = await env.seedBooking({ room: 607, guest: "Rate Form", start: 0, nights: 1, price: 40, paid: 0, currency: "USD", anchor: "shift" });
+  await page.goto("/");
+  await login(page, "mona");
+  await claimShift(page);
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("edit-price").first().click();
+  await expect(page.getByTestId("fx-currency")).toHaveValue("USD");
+  await page.getByTestId("fx-egp").fill("51.5");
+  await page.getByRole("button", { name: /حفظ الحجز/ }).click();
+  await expect.poll(async () => (await env.q("select fx_rates from bookings where id = $1", [b]))[0].fx_rates).toEqual({ USD: 51.5 });
 });
 
 test("مدفوع قبل السيستم: بيتحسب في المدفوع والمتبقي من غير ما يدخل أي يومية، وفحص التطابق بيعدّي", async ({ page, env }) => {
@@ -470,12 +512,6 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   await page.getByTestId("edit-price").first().click();
   await openPaySections(page);
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
-  // محدش يدفع فوق الإجمالي (900): تعديل الدفعة لـ 1000 بيترفض والمدفوع واليومية مابيتغيّروش
-  await page.getByTestId("edit-pay-0-amount-0").fill("1000");
-  await page.getByTestId("edit-payment-save").click();
-  await expect(toast(page)).toContainText("أكتر من الإجمالي");
-  expect(Number((await booking(env, b)).amount_paid)).toBe(500);
-  expect(Number((await rec(env, day, key)).rows.find((x) => x.bookingId === b).collectionAmt)).toBe(500);
   await page.getByTestId("edit-pay-0-amount-0").fill("400");
   await page.getByTestId("edit-pay-0-method-0").selectOption("فيزا");
   await page.getByTestId("edit-pay-0-0-last4").fill("5555");

@@ -91,7 +91,7 @@ describe.skipIf(!enabled)("تكافؤ منطق الواجهة مع دوال ال
     });
   }
 
-  it("التحقق بيتنفّذ في القاعدة نفسها: مبلغ أكبر من المتبقي، حجز ملغي، وسيلة/تفاصيل غلط، غير موظف، من غير شيفت، قفل متفائل", async () => {
+  it("التحقق بيتنفّذ في القاعدة نفسها: حجز ملغي، وسيلة/تفاصيل غلط، غير موظف، من غير شيفت، قفل متفائل", async () => {
     const db = await newDb();
     try {
       const [{ today }] = await db.q("select hotel_today()::text today");
@@ -104,7 +104,6 @@ describe.skipIf(!enabled)("تكافؤ منطق الواجهة مع دوال ال
       expect((await pay("acc1", 10)).err?.message).toContain("موظف الشيفت");
       expect((await pay("st2", 10)).err?.message).toContain("مفيش شيفتك مفتوح");                  // موظف تاني من غير شيفت
       expect((await pay("st1", 0)).ok).toBe(false); expect((await pay("st1", -5)).ok).toBe(false);
-      expect((await pay("st1", 101)).err?.message).toContain("أكبر من المتبقي");
       expect((await pay("st1", 10, "عملة")).err?.message).toContain("وسيلة الدفع");
       expect((await pay("st1", 10, "فيزا", { senderNumber: "12" })).err?.message).toContain("آخر ٤ أرقام");
       expect((await pay("st1", 10, "فودافون كاش", { senderName: "x" })).err?.message).toContain("رقم التليفون");
@@ -113,6 +112,7 @@ describe.skipIf(!enabled)("تكافؤ منطق الواجهة مع دوال ال
       expect((await db.q("select rows from shift_records"))[0].rows.some((r) => Number(r.collectionAmt) !== 0)).toBe(false);
       expect((await pay("st1", 40, "فيزا", { senderNumber: "٤٢٤٢" })).ok).toBe(true);
       const rows = (await db.q("select rows from shift_records"))[0].rows;
+      expect((await pay("st1", 500)).ok).toBe(true);                                               // الدفع الزيادة مسموح (قرار المالك)
       expect(rows[0]).toMatchObject({ collectionAmt: 40, collectionMethod: "فيزا", bookingId: id }); expect(rows[0].paymentDetails.senderNumber).toBe("4242");
       await db.tx("res1", (c) => c.query("update bookings set status = 'ملغي' where id = $1", [id]));
       expect((await pay("st1", 10)).err?.message).toContain("ملغي");

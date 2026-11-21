@@ -21,10 +21,6 @@ test("عربون على حجز بعيد (بعد أكتر من يومين): مو�
   await page.getByTestId("status-filter-all").click();
   const c = card(page, "Far Future");
   await c.getByTestId("quickpay-open").click();
-  // مبلغ أكبر من المتبقي: مرفوض
-  await c.getByTestId("quickpay-amount").fill("500");
-  await c.getByTestId("quickpay-submit").click();
-  await expect(toast(page)).toContainText("أكبر من المتبقي");
   // فيزا من غير 4 أرقام: مرفوض
   await c.getByTestId("quickpay-amount").fill("50");
   await c.getByTestId("quickpay-method").selectOption("فيزا");

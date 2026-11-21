@@ -468,6 +468,18 @@ export function otherDue(b) {
   return out;
 }
 /* كل المتبقي على الحجز لكل عملة: [{ currency, due }] - عملة الحجز الأول */
+/* سعر العملة بالمصري متحدد على الحجز (fxRates = { USD: 50 } يعني الدولار بـ ٥٠ جنيه؛ الجنيه = ١).
+   بترجّع كام وحدة من عملة الدفعة = وحدة واحدة من عملة الحجز، أو null لو السعر مش متحدد - نفس calma_booking_fx_rate في القاعدة. */
+export function bookingFxRate(b, cur) {
+  const r = (c) => (c === "EGP" ? 1 : Number(b?.fxRates?.[c]) > 0 ? Number(b.fxRates[c]) : null);
+  const rb = r(b?.currency), rp = r(cur);
+  return rb && rp ? rb / rp : null;
+}
+/* العملات اللي الجيست يقدر يدفع بيها غير عملة الحجز بسعر الحجز (الجنيه + أي عملة سعرها متحدد) */
+export function fxCurrencies(b) {
+  return ["EGP", ...Object.keys(b?.fxRates || {})].filter((c, i, a) => a.indexOf(c) === i && c !== b?.currency && bookingFxRate(b, c));
+}
+
 export function bookingDueLines(b) {
   const lines = [];
   const d = bookingAmountDue(b);
