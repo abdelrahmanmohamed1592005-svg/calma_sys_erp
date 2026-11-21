@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock, Search, CalendarDays, Moon, Users, CreditCard, Globe, BedDouble, ClipboardList, Wallet, SearchX } from "lucide-react";
 import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown, PayLinesInline, emptyPayLine } from "./shared";
-import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHasDue, bookingDueLines, formatMoneyLines, bookingHotelTotal, refundStatusOf } from "../domain/money";
+import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHasDue, bookingDueLines, formatMoneyLines, refundStatusOf, bookingFxRate, fxCurrencies } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid, arabicDateLong, managerCanCorrect } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, roomLabel, SHIFTS } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
 import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, splitLedgerPaymentRow } from "../data/shifts";
-import { recordBookingPayment, changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError, recordAnyPayment } from "../data/payments";
+import { changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError, recordAnyPayment } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
 import { searchBookings, getBookingsOverlapping, bookingsWindowStart } from "../data/bookings";
 import { guarded } from "../lib/busy";
@@ -132,7 +132,7 @@ function EditPayments({ booking, scope, me, onDone, showToast, onLog }) {
       {rows && rows.map((e) => {
         const k = keyOf(e);
         const fx = e.row.fxCovered != null && e.row.fxBookingCurrency;
-        const allowed = canEdit(e) && !fx;
+        const allowed = canEdit(e);
         const cur = e.row.collectionCurrency || booking.currency;
         const label = <span style={{ fontSize: 12.5, fontWeight: 700 }}><bdi dir="ltr">{e.date}</bdi> · {SHIFTS.find((x) => x.key === e.shiftKey)?.label}{e.list === "cafeteriaRows" ? " · كافيتيريا" : ""}{e.row.visaFee ? " · رسوم فيزا" : ""}</span>;
         return (
@@ -140,7 +140,7 @@ function EditPayments({ booking, scope, me, onDone, showToast, onLog }) {
             {label}
             {allowed ? (<>
               <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
-                <PayLinesInline lines={drafts[k] || []} onChange={(ls) => setDrafts({ ...drafts, [k]: ls })} bookingCurrency={e.row.visaFee || e.list !== "rows" ? "__none__" : booking.currency} currencies={[...new Set([cur, booking.currency, ...Object.keys(booking.otherCharges || {})])]} testid={"edit-pay-" + rows.indexOf(e)} />
+                <PayLinesInline lines={drafts[k] || []} onChange={(ls) => setDrafts({ ...drafts, [k]: ls })} bookingCurrency={e.row.visaFee || e.list !== "rows" ? "__none__" : booking.currency} currencies={[...new Set([cur, booking.currency, ...fxCurrencies(booking), ...Object.keys(booking.otherCharges || {})])]} testid={"edit-pay-" + rows.indexOf(e)} />
                 <button className="cx-btn cx-btn-gold" data-testid="edit-payment-save" style={{ fontSize: 12.5, height: 34 }} onClick={() => save(e)}>حفظ</button>
               </div>
             </>) : (
@@ -288,8 +288,9 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
   const grandTotal = form ? roomTotalNow + (Number(form.extras.laundry) || 0) + (Number(form.extras.cafeteria) || 0) + (Number(form.extras.tours) || 0) + (Number(form.extras.pickup) || 0) + (Number(form.extras.visaFee) || 0) + earlyFee : 0;
   // اللي اتدفع قبل كده (حجز موجود) + الدفعة المقدّمة دلوقتي (حجز جديد بس)
   const paidBefore = isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : 0;
-  const extraLineCovered = (l) => Math.max(0, Number(l.amount) || 0);   // سعر الليالي بعملة الحجز بس - كل الدفعات بنفس العملة
-  const advanceNow = form && !collectionLocked ? Math.max(0, Number(form.payNow?.amount) || 0) + (form.payMore || []).reduce((t, l) => t + extraLineCovered(l), 0) : 0;
+  // سطر بعملة تانية (الجنيه أو عملة سعرها متحدد على الحجز) بيتحسب بمقابله بعملة الحجز
+  const extraLineCovered = (l) => { const a = Math.max(0, Number(l.amount) || 0); const c = l.currency || form?.currency; return c && form && c !== form.currency ? a / (bookingFxRate(form, c) || Infinity) : a; };
+  const advanceNow = form && !collectionLocked ? extraLineCovered(form.payNow || {}) + (form.payMore || []).reduce((t, l) => t + extraLineCovered(l), 0) : 0;
   // مدفوع قبل السيستم بيتكتب من الفورم (حجز جديد أو تعديل): في التعديل المدفوع الحالي فيه القديم، فبنحسب الفرق بس
   const priorOld = isExistingBooking ? Number(originalBooking?.paymentDetails?.priorPaid) || 0 : 0;
   // مدفوع قبل السيستم: موظف الشيفت بيكتبه مع الحجز الجديد، والتعديل على حجز موجود لمدير الشيفت والمطوّر
@@ -417,7 +418,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
     const priorNote = sanitizeText(form.prior?.note, 200);
     const priorChanged = isExistingBooking ? canPrior && !online && (prior !== priorOld || priorNote !== (originalBooking?.paymentDetails?.priorPaidNote || "")) : prior > 0;
     if (!Number.isFinite(prior) || prior < 0) { showToast("المدفوع قبل السيستم لازم يكون رقم صحيح مش سالب"); return; }
-    const visaFee = advance > 0 && payNow.method === "فيزا" ? Math.round((Number(payNow.fee) || 0) * 100) / 100 : 0;
+    const visaFee = advance > 0 && payNow.method === "فيزا" && (!payNow.currency || payNow.currency === form.currency) ? Math.round((Number(payNow.fee) || 0) * 100) / 100 : 0;
     if (!Number.isFinite(visaFee) || visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
     if (!cleaned.guestName) { showToast("لازم تحدد الغرفة واسم النزيل"); return; }
     cleaned.guestCodes = normalizeGuestCodes(Array.from({ length: cleaned.pax }, (_, i) => sanitizeText(form.guestCodes?.[i] ?? "", 40)), cleaned.pax);
@@ -431,9 +432,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
     if (chargeLocked && originalBooking) {
       cleaned = { ...cleaned, priceNight: originalBooking.priceNight, currency: originalBooking.currency, totalRoom: lockedRepricedTotal, extras: originalBooking.extras, earlyCheckin: originalBooking.earlyCheckin?.applied ? originalBooking.earlyCheckin : cleaned.earlyCheckin, paymentMethod: originalBooking.paymentMethod, paymentDetails: originalBooking.paymentDetails };
     }
-    // الدفعة المقدّمة ماتزيدش عن اللي الفندق مطلوب يحصّله
-    const paidBase = isExistingBooking ? (Number(originalBooking?.amountPaid) || 0) - priorOld + (priorChanged ? prior : priorOld) : prior;
-    if ((advance > 0 || moreLines.length > 0 || !isExistingBooking) && (paidBase + advance + moreLines.reduce((t, l) => t + extraLineCovered(l), 0)) > bookingHotelTotal(cleaned) + 0.01) { showToast(`المدفوع (${fmt(paidBase + advance + moreLines.reduce((t, l) => t + extraLineCovered(l), 0))}) أكبر من الإجمالي (${fmt(bookingHotelTotal(cleaned))} ${cleaned.currency})`); return; }
+    // الجيست يدفع أكتر من اللي عليه عادي (قرار المالك)
     // "تسكين مكرر" (الخطة اتأكدت فوق إنها سليمة): لكل حجز قديم متعارض -
     // - بدأ قبل الجديد: نقصّر تاريخ خروجه لتاريخ دخول الجديد ونعلّمه "غادر مبكرًا"
     //   (مش "ملغي"؛ بيتحاسب على الليالي اللي قعدها، وأي زيادة مدفوعة بتفضل في الفندق).
@@ -507,15 +506,17 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
     }
     // الدفعة المقدّمة بتتسجّل بعملية ذرية في القاعدة (الحجز + اليومية + كافيتيريا النزيل) بعد حفظ الحجز
     if (advance > 0) {
-      const payRes = await recordBookingPayment({ bookingId: savedId, amount: advance, method: advMethod, details: advDetails, note: isExistingBooking ? "تحصيل" : "تحصيل حجز جديد", expectedUpdatedAt: curChangeDone ? null : res.data?.updatedAt });
+      const advCur = payNow.currency && payNow.currency !== cleaned.currency ? payNow.currency : cleaned.currency;
+      const payRes = await recordAnyPayment({ ...cleaned, ...(res.data || {}), id: savedId }, { amount: advance, currency: advCur, method: advMethod, details: advDetails, note: isExistingBooking ? "تحصيل" : "تحصيل حجز جديد", expectedUpdatedAt: curChangeDone ? null : res.data?.updatedAt });
       if (!payRes.error) advanceOk = true;
       if (payRes.error) { payFailed = `⚠ الحجز اتحفظ لكن الدفعة (${fmt(advance)} ${cleaned.currency} - ${payMethod}) ماتسجّلتش: ${payRes.error} - سجّلها من زرار "تسجيل دفعة" على الحجز في القايمة`.replace(` - ${payMethod})`, ` - ${advMethod})`); }
       else if (onRefresh) await onRefresh();
     }
     for (const l of moreLines) {
       const det = cleanPaymentDetailsFor(l.method, l.details);
-      const r2 = await recordBookingPayment({ bookingId: savedId, amount: Number(l.amount), method: l.method, details: det, note: isExistingBooking ? "تحصيل" : "تحصيل حجز جديد" });
-      if (r2.error) { payFailed += `${payFailed ? " | " : "⚠ "}الدفعة (${fmt(Number(l.amount))} ${cleaned.currency} - ${l.method}) ماتسجّلتش: ${r2.error}`; }
+      const lc = l.currency && l.currency !== cleaned.currency ? l.currency : cleaned.currency;
+      const r2 = await recordAnyPayment({ ...cleaned, ...(res.data || {}), id: savedId }, { amount: Number(l.amount), currency: lc, method: l.method, details: det, note: isExistingBooking ? "تحصيل" : "تحصيل حجز جديد" });
+      if (r2.error) { payFailed += `${payFailed ? " | " : "⚠ "}الدفعة (${fmt(Number(l.amount))} ${lc} - ${l.method}) ماتسجّلتش: ${r2.error}`; }
     }
     // رسوم الفيزا اللي اتدفعت مع الدفعة المقدّمة: صف "رسوم فيزا" في اليومية وبتتحسب على النزيل
     if (visaFee > 0 && advanceOk) {
@@ -744,16 +745,18 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
                 <div data-testid="advance-payment" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{isExistingBooking ? "تحصيل دلوقتي (اختياري) - بوسيلة أو أكتر، وبيتسجّل في اليومية" : "المدفوع حتى الآن (اختياري) - بيتسجّل في اليومية بوسيلته وتفاصيله"}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8, alignItems: "start" }}>
-                    <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ المدفوع / ديبوزيت ({form.currency})</label><input className="cx-input" data-testid="advance-amount" type="number" min="0" value={form.payNow?.amount ?? ""} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, amount: e.target.value } })} /></div>
+                    <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ المدفوع / ديبوزيت ({form.payNow?.currency || form.currency})</label><input className="cx-input" data-testid="advance-amount" type="number" min="0" value={form.payNow?.amount ?? ""} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, amount: e.target.value } })} /></div>
+                    {fxCurrencies(form).length > 0 && <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>العملة (بسعر الحجز)</label><select className="cx-select" data-testid="advance-currency" value={form.payNow?.currency || form.currency} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, currency: e.target.value, fee: "" } })}>{[form.currency, ...fxCurrencies(form)].map((c) => <option key={c} value={c}>{c}</option>)}</select></div>}
                     <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>طريقة الدفع</label><select className="cx-select" data-testid="advance-method" value={form.payNow?.method || "كاش"} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, method: e.target.value, details: emptyPaymentDetails() } })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
                     <div><PaymentDetailsInline compact={false} testid="advance" method={form.payNow?.method || "كاش"} details={form.payNow?.details} onChange={(d) => setForm({ ...form, payNow: { ...form.payNow, details: d } })} /></div>
-                    {form.payNow?.method === "فيزا" && <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>رسوم فيزا ({form.currency}) - بتتدفع مع المبلغ</label><input className="cx-input" data-testid="advance-visa-fee" type="number" min="0" placeholder="0" value={form.payNow?.fee ?? ""} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, fee: e.target.value } })} /></div>}
+                    {form.payNow?.method === "فيزا" && (!form.payNow?.currency || form.payNow.currency === form.currency) && <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>رسوم فيزا ({form.currency}) - بتتدفع مع المبلغ</label><input className="cx-input" data-testid="advance-visa-fee" type="number" min="0" placeholder="0" value={form.payNow?.fee ?? ""} onChange={(e) => setForm({ ...form, payNow: { ...form.payNow, fee: e.target.value } })} /></div>}
                   </div>
                   {(form.payMore || []).map((l, i) => {
                     const upd = (patch) => setForm({ ...form, payMore: form.payMore.map((x, j) => j === i ? { ...x, ...patch } : x) });
                     return (
                       <div key={i} data-testid={"advance-extra-" + i} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, alignItems: "start", marginTop: 8, paddingTop: 8, borderTop: "1px dotted var(--hair)" }}>
-                        <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ ({form.currency})</label><input className="cx-input" data-testid={"advance-extra-amount-" + i} type="number" min="0" value={l.amount} onChange={(e) => upd({ amount: e.target.value })} /></div>
+                        <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المبلغ ({l.currency || form.currency})</label><input className="cx-input" data-testid={"advance-extra-amount-" + i} type="number" min="0" value={l.amount} onChange={(e) => upd({ amount: e.target.value })} /></div>
+                        {fxCurrencies(form).length > 0 && <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>العملة (بسعر الحجز)</label><select className="cx-select" data-testid={"advance-extra-currency-" + i} value={l.currency || form.currency} onChange={(e) => upd({ currency: e.target.value })}>{[form.currency, ...fxCurrencies(form)].map((c) => <option key={c} value={c}>{c}</option>)}</select></div>}
                         <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>طريقة الدفع</label><select className="cx-select" data-testid={"advance-extra-method-" + i} value={l.method} onChange={(e) => upd({ method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select></div>
                         <div><PaymentDetailsInline compact={false} testid={"advance-extra-" + i} method={l.method} details={l.details} onChange={(d) => upd({ details: d })} /></div>
                         <div><button type="button" className="cx-btn cx-btn-outline" style={{ marginTop: 18 }} onClick={() => setForm({ ...form, payMore: form.payMore.filter((_, j) => j !== i) })}>شيل</button></div>
