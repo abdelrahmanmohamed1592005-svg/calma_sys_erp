@@ -61,6 +61,12 @@ export function shiftDayNow(now = new Date()) {
 
 export const SHIFT_ORDER = ["morning", "evening", "night"];
 
+/* مدير الشيفت بيصحّح شيفتات يومه + الشيفت الليلي اللي قبله بس (نفس calma_can_correct_shift في القاعدة) */
+export function managerCanCorrect(date, shiftKey, now = new Date()) {
+  const day = shiftDayNow(now);
+  return date >= day || (date === addDays(day, -1) && shiftKey === "night");
+}
+
 /* نهاية معاد الشيفت (توقيت الجهاز = القاهرة): الصباحي ٤م، المسائي ١٢ص، الليلي ٨ص اليوم اللي بعده.
    نفس calma_shift_end في قاعدة البيانات - بعدها اختيار الشيفت ويوميته مايتلغوش. */
 export function shiftEndTime(dateStr, key) {
@@ -68,6 +74,9 @@ export function shiftEndTime(dateStr, key) {
   return new Date(y, m - 1, d, key === "morning" ? 16 : key === "evening" ? 24 : 32, 0, 0);
 }
 export const isShiftOver = (dateStr, key, now = new Date()) => now.getTime() >= shiftEndTime(dateStr, key).getTime();
+/* شيفت فاضل مفتوح من يوم فات (عدّى معاده + ساعتين أوفر تايم) - تنبيه بس، مابيتقفلش لوحده (قرار المالك) */
+export const isStaleOpenShift = (rec, now = new Date()) => !!rec && !rec.closed && rec.date < shiftDayNow(now)
+  && now.getTime() >= shiftEndTime(rec.date, rec.shiftKey).getTime() + 2 * 3600 * 1000;
 
 export function defaultShiftForNow() {
   const h = new Date().getHours();

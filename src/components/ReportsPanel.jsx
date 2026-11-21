@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble } from "lucide-react";
-import { DateRange, Logo, RoomName } from "./shared";
+import { DateRange, Logo, RoomName, StaleShiftsAlert } from "./shared";
 import { emptyMoney, computeShiftTotals, trackBalances, methodTransactions, bookingDueLines, formatMoneyLines, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, GROUP_NAME } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
@@ -246,6 +246,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
 
   return (
     <div className="cx-page">
+      <div className="cx-no-print"><StaleShiftsAlert hotelId={hotelScope} hotels={hotels} refreshKey={dataVersion} /></div>
       <div className="cx-no-print" style={{ marginBottom: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
         {canGroup && (
           <div style={{ display: "flex", gap: 6 }} role="group" aria-label="نطاق التقرير">

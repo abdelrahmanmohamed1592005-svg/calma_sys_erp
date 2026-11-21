@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addDays, nightsBetween, parseDateFlexible, nextShiftOf, prevShiftOf, isSameDay, isShiftActiveNow, shiftDayNow } from "../domain/dates";
+import { addDays, nightsBetween, parseDateFlexible, nextShiftOf, prevShiftOf, isSameDay, isShiftActiveNow, shiftDayNow, managerCanCorrect, isStaleOpenShift } from "../domain/dates";
 
 describe("addDays", () => {
   it("adds positive days across month boundary", () => {
@@ -136,5 +136,36 @@ describe("معاد الخروج الساعة 2 الضهر", () => {
     expect(CHECKOUT_HOUR).toBe(14);
     expect(beforeCheckoutHour(new Date(2026, 10, 18, 13, 30))).toBe(true);
     expect(beforeCheckoutHour(new Date(2026, 10, 18, 14, 0))).toBe(false);
+  });
+});
+
+describe("مدير الشيفت: يومه + الليلي اللي قبله", () => {
+  const at = (s) => new Date(s);
+  it("الساعة ١٠ الصبح: شيفتات النهارده + ليلي امبارح بس", () => {
+    const now = at("2026-11-21T10:00:00");
+    expect(managerCanCorrect("2026-11-21", "morning", now)).toBe(true);
+    expect(managerCanCorrect("2026-11-20", "night", now)).toBe(true);
+    expect(managerCanCorrect("2026-11-20", "evening", now)).toBe(false);
+    expect(managerCanCorrect("2026-11-19", "night", now)).toBe(false);
+  });
+  it("الساعة ٣ الفجر (لسه يوم امبارح): يوم امبارح كله + ليلي اللي قبله", () => {
+    const now = at("2026-11-21T03:00:00");
+    expect(managerCanCorrect("2026-11-20", "morning", now)).toBe(true);
+    expect(managerCanCorrect("2026-11-19", "night", now)).toBe(true);
+    expect(managerCanCorrect("2026-11-19", "evening", now)).toBe(false);
+  });
+});
+
+describe("تنبيه شيفت مفتوح من امبارح", () => {
+  const rec = (date, shiftKey, closed = false) => ({ date, shiftKey, closed });
+  it("الليلي اللي لسه خالص الساعة ٨: مفيش تنبيه لحد ما تعدّي ساعتين", () => {
+    expect(isStaleOpenShift(rec("2026-11-20", "night"), new Date("2026-11-21T09:00:00"))).toBe(false);
+    expect(isStaleOpenShift(rec("2026-11-20", "night"), new Date("2026-11-21T10:30:00"))).toBe(true);
+  });
+  it("مسائي امبارح مفتوح الصبح = تنبيه، والمقفول أو بتاع النهارده لأ", () => {
+    const now = new Date("2026-11-21T09:00:00");
+    expect(isStaleOpenShift(rec("2026-11-20", "evening"), now)).toBe(true);
+    expect(isStaleOpenShift(rec("2026-11-20", "evening", true), now)).toBe(false);
+    expect(isStaleOpenShift(rec("2026-11-21", "morning"), now)).toBe(false);
   });
 });
