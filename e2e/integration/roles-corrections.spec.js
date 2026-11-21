@@ -1,7 +1,7 @@
 // مدير الشيفت + حساب المطوّر المخفي + تصحيح يومية قديمة (والمدفوع والعهدة بيتحدّثوا لوحدهم) + مدفوع قبل السيستم
 // + التقرير بيحسب عهدة الفيزا المكتوبة بالإيد + كروت تحصيل اليوم مفصّلة.
 import { test, expect } from "../fixtures";
-import { login, logout, goTab, toast, addBooking, claimShift, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
+import { login, logout, goTab, toast, addBooking, claimShift, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits, openPaySections } from "../ui";
 import { readFileSync } from "node:fs";
 const addDaysStr = (d, n) => { const t = new Date(d + "T12:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
 
@@ -177,6 +177,7 @@ test("مدفوع قبل السيستم: بيتحسب في المدفوع وال�
   await claimShift(page);
   await goTab(page, "الحجوزات");
   await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
   await page.getByTestId("new-prior-amount").fill("700");
   await page.getByTestId("new-prior-note").fill("دفع كاش يوم 10/11");
   await page.getByRole("button", { name: /حفظ الحجز/ }).click();
@@ -467,6 +468,7 @@ test("مدير الشيفت يعدّل كل تفاصيل الحجز (الغرف�
   // تعديل المدفوع: مش على الكارت - جوه فورم "تعديل الحجز". الدفعة 500 كاش بقت 400 فيزا
   await expect(page.getByTestId("booking-card").getByTestId("edit-payments-open")).toHaveCount(0);
   await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   // محدش يدفع فوق الإجمالي (900): تعديل الدفعة لـ 1000 بيترفض والمدفوع واليومية مابيتغيّروش
   await page.getByTestId("edit-pay-0-amount-0").fill("1000");
@@ -505,6 +507,7 @@ test("دفعة اتمسح مبلغها من اليومية: مابتظهرش ف�
   await login(page, "devo");
   await goTab(page, "الحجوزات");
   await page.getByRole("button", { name: "تعديل الحجز", exact: true }).first().click();
+  await openPaySections(page);
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   await expect(page.getByTestId("edit-payments")).toContainText("مفيش دفعات متسجّلة");
   await expect(page.getByTestId("edit-payment-row")).toHaveCount(0);
@@ -583,6 +586,7 @@ test("مدير الشيفت بيعدّل حجز نزيل مشي (غادر مبك
   await goTab(page, "الحجوزات");
   const card = page.getByTestId("booking-card").filter({ hasText: "Gone Guest" });
   await card.getByTestId("edit-price").click();
+  await openPaySections(page);
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   await page.getByTestId("edit-pay-0-amount-0").fill("550");
   await page.getByTestId("edit-payment-save").click();
@@ -614,6 +618,7 @@ test("تعديل الحجز: مدير الشيفت بيحصّل من الفور�
   await claimShift(page);
   await goTab(page, "الحجوزات");
   await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
   await page.getByTestId("advance-amount").fill("400");                 // 400 كاش
   await page.getByTestId("advance-add-line").click();
   await page.getByTestId("advance-extra-amount-0").fill("300");          // 300 فيزا
@@ -640,6 +645,7 @@ test("تعديل المدفوع مباشر: مدير الشيفت بيعدّل �
   await login(page, "mona");
   await goTab(page, "الحجوزات");
   await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
   await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
   // تعديل مباشر: الدفعة (3600 كاش) بقت 2500 كاش + جزء تاني 1100 فيزا
   await page.getByTestId("edit-pay-0-amount-0").fill("2500");

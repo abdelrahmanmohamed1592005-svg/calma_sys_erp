@@ -112,6 +112,8 @@ export async function setCairoTime(page, hour, minute = 0) {
 // أقسام بطاقة الغرفة مطوية (خدمات/دخول مبكر، تمديد، أكواد، بيانات): بنفتح القسم قبل التعامل مع اللي جواه
 export async function openSec(page, id) {
   const d = page.getByTestId(id);
+  // القسم ممكن يكون جوه "المزيد" المطوي في كارت الغرفة: بنفتح اللي حواليه الأول
+  await d.evaluate((el) => { for (let p = el.parentElement; p; p = p.parentElement) if (p.tagName === "DETAILS") p.open = true; });
   if (!(await d.evaluate((el) => el.open))) await d.locator("summary").click();
   return d;
 }
