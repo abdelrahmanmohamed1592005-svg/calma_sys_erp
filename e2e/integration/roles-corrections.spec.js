@@ -183,6 +183,29 @@ test("سعر العملة بالمصري على الحجز: حجز بالدول�
   expect(Number((await booking(env, b)).amount_paid)).toBe(110);
 });
 
+test("تعديل المدفوع بسعر الحجز: حجز 33 دولار والدولار بـ 54 - دفع 31 دولار والباقي 108 جنيه = اتدفع بالكامل", async ({ page, env }) => {
+  await users(env);
+  const day = shiftDay(), key = myShiftKey();
+  const b = await env.seedBooking({ room: 608, guest: "Split FX", start: 0, nights: 1, price: 33, paid: 31, currency: "USD", anchor: "shift" });
+  await env.q("update bookings set fx_rates = '{\"USD\": 54}'::jsonb where id = $1", [b]);
+  await env.seedShift("mona", { day, key, closed: false, handover: {}, collections: [{ room: 608, amount: 31, currency: "USD", bookingId: b }] });
+  await page.goto("/");
+  await login(page, "mona");
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
+  await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
+  await page.getByTestId("edit-pay-0-add").click();
+  await page.getByTestId("edit-pay-0-amount-1").fill("108");
+  await page.getByTestId("edit-pay-0-currency-1").selectOption("EGP");
+  await page.getByTestId("edit-payment-save").click();
+  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(33);
+  expect((await booking(env, b)).settled).toBe(true);
+  const egp = (await rec(env, day, key)).rows.find((x) => x.bookingId === b && x.collectionCurrency === "EGP");
+  expect(egp).toMatchObject({ collectionAmt: 108, fxCovered: 2, fxBookingCurrency: "USD" });   // الخزينة 108 جنيه فعلي
+});
+
 test("فورم الحجز: خانة سعر العملة بالمصري بتتحفظ على الحجز", async ({ page, env }) => {
   await users(env);
   const b = await env.seedBooking({ room: 607, guest: "Rate Form", start: 0, nights: 1, price: 40, paid: 0, currency: "USD", anchor: "shift" });

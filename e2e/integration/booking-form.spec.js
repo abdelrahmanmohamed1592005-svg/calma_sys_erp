@@ -31,10 +31,7 @@ test.describe("التحقق من المدخلات", () => {
     await save(page);
     await expect(toast(page)).toContainText("المدفوع لازم يكون رقم صحيح مش سالب");
 
-    // دفع أكتر من الإجمالي مرفوض، وفيزا من غير 4 أرقام مرفوضة، وتحويل من غير رقم مرفوض
-    await page.getByTestId("advance-amount").fill("999");
-    await save(page);
-    await expect(toast(page)).toContainText("أكبر من الإجمالي");
+    // فيزا من غير 4 أرقام مرفوضة، وتحويل من غير رقم مرفوض (الدفع الزيادة مسموح - قرار المالك)
     await page.getByTestId("advance-amount").fill("50");
     await page.getByTestId("advance-method").selectOption("فيزا");
     await page.getByTestId("advance-last4").fill("12");

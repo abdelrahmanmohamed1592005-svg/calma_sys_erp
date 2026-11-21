@@ -3,7 +3,7 @@ import { descWithAmount } from "../domain/ledgerDesc";
 import { fetchAll } from "./page";
 import { friendlyDbError } from "./schemaCheck";
 import { shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
-import { computeShiftTotals, cascadeHandover, stripBookingFromRecord, recordMentionsBooking, cleanPaymentDetailsFor } from "../domain/money";
+import { bookingFxRate, computeShiftTotals, cascadeHandover, stripBookingFromRecord, recordMentionsBooking, cleanPaymentDetailsFor } from "../domain/money";
 import { getActiveHotelId, resolveHotelScope } from "./hotels";
 
 /* القراءات/الكتابات على سجل واحد لازم تكون على فندق واحد: نطاق "all" هنا غلط برمجي فنرميه بدل ما نقع على الفندق الشغال بصمت */
@@ -180,10 +180,15 @@ export async function splitLedgerPaymentRow(entry, lines, booking) {
     if (!(amt > 0)) continue;
     const details = cleanPaymentDetailsFor(l.method, l.details);
     const row = { ...base, collectionAmt: amt, collectionCurrency: l.currency, collectionMethod: l.method, paymentDetails: details };
+    // عملة تانية مالهاش خدمات على الحجز (الجنيه أو عملة سعرها متحدد): بتتحسب بمقابلها بعملة الحجز بسعر الحجز
+    const rate = l.currency !== bc && !(booking.otherCharges || {})[l.currency] ? bookingFxRate(booking, l.currency) : null;
+    if (rate) Object.assign(row, { fxRate: Math.round(rate * 1e6) / 1e6, fxBookingCurrency: bc, fxCovered: Math.round((amt / rate) * 100) / 100 });
     // أول جزء بنفس عملة الدفعة بيحتفظ ببيانها الأصلي (المبلغ بس بيتعدّل)، والأجزاء التانية بيان جديد
-    row.collectionDesc = !made.length && l.currency === (cur.collectionCurrency || bc) && cur.collectionDesc
-      ? descWithAmount(cur.collectionDesc, cur.collectionAmt, amt, l.currency)
-      : `تحصيل${who} (+${amt} ${l.currency})`;
+    row.collectionDesc = rate
+      ? `تحصيل${who} (+${amt} ${l.currency} = ${row.fxCovered} ${bc} بسعر الحجز)`
+      : !made.length && l.currency === (cur.collectionCurrency || bc) && cur.collectionDesc
+        ? descWithAmount(cur.collectionDesc, cur.collectionAmt, amt, l.currency)
+        : `تحصيل${who} (+${amt} ${l.currency})`;
     made.push(row);
     const fee = l.method === "فيزا" && l.currency === bc ? Math.round((Number(l.fee) || 0) * 100) / 100 : 0;
     if (fee > 0) fees.push({ ...base, visaFee: true, collectionAmt: fee, collectionCurrency: bc, collectionMethod: "فيزا", paymentDetails: details, collectionDesc: `رسوم فيزا${who} (+${fee} ${bc})` });
