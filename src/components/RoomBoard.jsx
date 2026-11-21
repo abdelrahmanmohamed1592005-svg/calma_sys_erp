@@ -309,8 +309,10 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         id: uid(), room: booking.room, guestName: booking.guestName, phone: booking.phone || "", pax: booking.pax || 1,
         checkin: booking.checkout, checkout: newCheckout, priceNight: price, totalRoom: Math.round(price * n * 100) / 100, currency: extCur,
         extras: { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 }, otherCharges: {}, earlyCheckin: { applied: false, fee: 0, note: "" },
-        paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: 0, source: booking.source || "مباشر", status: "تم تسجيل الدخول",
-        approvalStatus: "approved", notes: `تكملة إقامة${booking.code ? " حجز " + booking.code : ""} بالـ ${extCur} (${n} ليلة)`, guestCodes: [],
+        // الحالة حسب التاريخ: التكملة بتبدأ يوم خروج الأصل - لو لسه ماجاش "مؤكد" والقاعدة بتظبطها لما يومها ييجي
+        paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: 0, source: booking.source || "مباشر", status: booking.checkout > date ? "مؤكد" : "تم تسجيل الدخول",
+        // أكواد الأفراد بتتنقل من الحجز الأصلي (ومش تكرار - نفس السلسلة)، والربط بالأصل
+        approvalStatus: "approved", notes: `تكملة إقامة${booking.code ? " حجز " + booking.code : ""} بالـ ${extCur} (${n} ليلة)`, guestCodes: [...(booking.guestCodes || [])], continuesFrom: booking.id,
       };
       const ins = await onInsertBooking(cont);
       if (ins?.error) { showToast(ins.error); return; }

@@ -681,6 +681,7 @@ test("الدفع من كارت الغرفة بأكتر من وسيلة في نف
 test("تمديد بعملة تانية: الليالي الجديدة بتتسجّل حجز تكملة بالجنيه (سعر الليلة بعملة واحدة) وبتتدفع بيها", async ({ page, env }) => {
   await users(env);
   const b = await env.seedBooking({ room: 616, guest: "Dollar Guest", start: -1, nights: 2, price: 40, paid: 80, currency: "USD", anchor: "shift" });
+  await env.q("update bookings set guest_codes = '[\"DG1\"]'::jsonb, status = 'تم تسجيل الدخول' where id = $1", [b]);
   await page.goto("/");
   await login(page, "ahmed");
   await claimShift(page);
@@ -696,6 +697,27 @@ test("تمديد بعملة تانية: الليالي الجديدة بتتسج
   expect(orig).toEqual({ checkout: cairoDate(1), currency: "USD", total_room: 80 });            // الحجز الأصلي زي ما هو
   const cont = (await env.q("select checkin::text, checkout::text, currency, total_room::float, amount_paid::float from bookings where guest_name = 'Dollar Guest' and id <> $1", [b]))[0];
   expect(cont).toEqual({ checkin: cairoDate(1), checkout: cairoDate(2), currency: "EGP", total_room: 1900, amount_paid: 1900 });
+  // مربوطة بالأصل وأخدت أكواده، وحالتها "مؤكد" لحد ما يومها ييجي
+  const link = (await env.q("select continues_from, guest_codes, status from bookings where guest_name = 'Dollar Guest' and id <> $1", [b]))[0];
+  expect(link).toEqual({ continues_from: b, guest_codes: ["DG1"], status: "مؤكد" });
+  // يومها جه: الحالة بتتظبط لوحدها مع التحميل
+  await env.q("update bookings set checkout = $2 where id = $1", [b, cairoDate(0)]);
+  await env.q("update bookings set checkin = $2 where continues_from = $1", [b, cairoDate(0)]);
+  await page.reload();
+  await expect.poll(async () => (await env.q("select status from bookings where continues_from = $1", [b]))[0].status).toBe("تم تسجيل الدخول");
+});
+
+test("الحجوزات: الشاشة بتحمّل آخر ٣ شهور، والحجز القديم بيظهر بالبحث", async ({ page, env }) => {
+  await users(env);
+  await env.seedBooking({ room: 601, guest: "Ancient Guest", start: -200, nights: 2, price: 100, paid: 0, currency: "EGP" });
+  await env.seedBooking({ room: 602, guest: "Recent Guest", start: -10, nights: 2, price: 100, paid: 0, currency: "EGP" });
+  await page.goto("/");
+  await login(page, "boss");
+  await goTab(page, "الحجوزات");
+  await expect(page.getByText("Recent Guest").first()).toBeVisible();
+  await expect(page.getByText("Ancient Guest")).toHaveCount(0);
+  await page.getByLabel("بحث في الحجوزات").fill("Ancient");
+  await expect(page.getByText("Ancient Guest").first()).toBeVisible();
 });
 
 test("مدير الشيفت بيعدّل ويمسح الكافيتيريا: استهلاك الاستاف وتحصيل الكافيتيريا (المبلغ والوسيلة)", async ({ page, env }) => {

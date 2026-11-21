@@ -15,7 +15,7 @@ import { supabaseConfigured } from "./lib/supabaseClient";
 import { subscribeToAllChanges } from "./lib/realtime";
 import { signUpUser, signIn, signOut, getSession, onAuthStateChange, getMyProfile, listProfiles, checkSetupNeeded, changeOwnPassword as authChangeOwnPassword } from "./lib/auth";
 import { getRooms, getRoomOverrides, setRoomOverride } from "./data/rooms";
-import { getBookings, insertBooking, updateBookingIfUnchanged } from "./data/bookings";
+import { getBookings, insertBooking, updateBookingIfUnchanged, promoteContinuations } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
 import { getHotels, DEFAULT_HOTELS, setActiveHotelId, getActiveHotelId } from "./data/hotels";
 import { getMyClaims } from "./data/shifts";
@@ -184,6 +184,7 @@ export default function App() {
   // لما المستخدم يتغيّر (خروج/دخول بحساب تاني على نفس الجهاز) بنفضّي كل بياناته: من غير كده مستخدم جديد كان بيشوف لحظيًا
   // حجوزات وحركات اللي قبله، ولو قراءاته فشلت أو اتفلترت بالصلاحيات كانت بتفضل ظاهرة
   const loadedOnce = useRef(false);
+  const promotedRef = useRef("");
   useEffect(() => {
     setBookings([]); setActivity([]); setOverrides({}); setAllProfiles([]); setLoadingData(true); setTab("board");
     setSchemaState({ ok: null }); loadedOnce.current = false; setJump(null); setPaletteOpen(false);
@@ -210,6 +211,13 @@ export default function App() {
         return;
       }
       setLoadingData(false);
+      // حجوزات التكملة اللي يومها جه: القاعدة بتظبط حالتها (مرة لكل فندق في اليوم)
+      const pk = `${getActiveHotelId()}|${new Date().toDateString()}`;
+      if (["staff", "shift_manager", "reservations", "dev"].includes(currentProfile.role) && promotedRef.current !== pk
+          && (b || []).some((x) => x.continuesFrom && x.status === "مؤكد")) {
+        promotedRef.current = pk;
+        if ((await promoteContinuations(getActiveHotelId())) > 0 && !cancelled) setDataVersion((v) => v + 1);
+      }
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- مربوط بهوية المستخدم وdataVersion عمدًا - إضافة كائن الـ profile كانت هتعمل تحميل زيادة لكل تحديث ملف

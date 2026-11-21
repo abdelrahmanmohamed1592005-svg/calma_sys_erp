@@ -10,6 +10,7 @@ import { useHotel } from "../lib/hotelContext";
 import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, splitLedgerPaymentRow } from "../data/shifts";
 import { recordBookingPayment, recordBookingPaymentOther, changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
+import { searchBookings, getBookingsOverlapping, bookingsWindowStart } from "../data/bookings";
 import { guarded } from "../lib/busy";
 import { sanitizeText } from "../domain/security";
 
@@ -183,7 +184,7 @@ function DevDeleteBooking({ booking, onDone, showToast }) {
   return <TwoStepButton label="مسح نهائي" confirmLabel="مسح الحجز وكل تحصيله نهائيًا؟" onConfirm={run} />;
 }
 
-export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, role, profile, onInsertBooking, onUpdateBooking, onRefresh, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
+export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBookings, perms, role, profile, onInsertBooking, onUpdateBooking, onRefresh, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
   const { hotel } = useHotel();
   const [form, setForm] = useState(null);
   const formBaseRef = React.useRef(null);   // نسخة الحجز اللي الفورم اتفتح عليها (لدمج تعديلاتي مع آخر نسخة لو اتغيّر من مكان تاني)
@@ -191,6 +192,27 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");      // all | active | cancelled
+  const sq = filter.trim().toLowerCase();
+  // الشاشة محمّلة آخر ٣ شهور + الساكن والجاي بس: البحث (حرفين أو أكتر) أو فترة أقدم بيجيبوا القديم من السيرفر
+  const [older, setOlder] = useState([]);
+  const winStart = bookingsWindowStart();
+  useEffect(() => {
+    let alive = true;
+    const t = setTimeout(async () => {
+      const parts = [];
+      if (sq.length >= 2) parts.push(searchBookings(filter.trim(), hotel?.id ?? null));
+      if (dateFrom && dateFrom < winStart) parts.push(getBookingsOverlapping(dateFrom, dateTo && dateTo < winStart ? dateTo : winStart));
+      const res = parts.length ? await Promise.all(parts) : [];
+      if (alive) setOlder(res.flatMap((r) => r || []).filter((b) => hotel?.id == null || (b.hotelId ?? 1) === hotel.id));
+    }, 350);
+    return () => { alive = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sq, dateFrom, dateTo, hotel?.id, dataVersion]);
+  const bookings = React.useMemo(() => {
+    if (!older.length) return loadedBookings;
+    const have = new Set(loadedBookings.map((b) => b.id));
+    return [...loadedBookings, ...older.filter((b) => !have.has(b.id) && (have.add(b.id), true))];
+  }, [loadedBookings, older]);
   // بحث جاي من البحث السريع (Ctrl+K)
   useEffect(() => { if (jumpQuery?.query != null) { setFilter(jumpQuery.query); setStatusFilter("all"); setDateFrom(""); setDateTo(""); onJumpDone?.(); } }, [jumpQuery?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const [payIndex, setPayIndex] = useState(null);                // المدفوع بالوسيلة لكل حجز (من اليومية)
@@ -558,6 +580,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
             إلى <input className="cx-input" type="date" title="إلى تاريخ" aria-label="إلى تاريخ" style={{ flex: "1 1 0", minWidth: 0 }} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </span>
           {(dateFrom || dateTo) && <button className="cx-btn cx-btn-outline" onClick={() => { setDateFrom(""); setDateTo(""); }}>مسح الفترة</button>}
+          <span data-testid="bookings-window-note" style={{ fontSize: 12, color: "var(--muted)", flexBasis: "100%" }}>القايمة فيها آخر ٣ شهور + الساكن والجاي - الحجوزات الأقدم بتظهر بالبحث أو باختيار فترة قديمة</span>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="cx-btn cx-btn-outline" onClick={() => window.print()}><Printer size={13} /> طباعة القائمة</button>

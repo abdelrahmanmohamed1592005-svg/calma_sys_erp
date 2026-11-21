@@ -107,10 +107,9 @@ export async function applyCorrection(oldRec, newRec, opts = {}) {
 
 /* بتشيل كل تحصيل حجز من كل اليوميات (قبل مسحه نهائيًا): كل يومية بتتصحّح والعهدة بتتنقل، فالخزينة تبقى كأن الحجز ماكانش */
 export async function purgeBookingFromLedgers(booking) {
-  const hotelId = booking.hotelId ?? getActiveHotelId();
   let touched = 0;
   for (let i = 0; i < 200; i++) {
-    const recs = await getShiftRecordsInRange("2000-01-01", addDays(shiftDayNow(), 2), hotelId);
+    const recs = await getShiftRecordsForBooking(booking.id);   // اليوميات اللي فيها الحجز بس
     if (!recs) return { error: "تعذر قراءة اليوميات (مشكلة اتصال) - جرّب تاني" };
     const rec = recs.find((r) => recordMentionsBooking(r, booking.id));
     if (!rec) return { touched };
@@ -124,9 +123,7 @@ export async function purgeBookingFromLedgers(booking) {
 /* كل صفوف الدفع بتاعة حجز في اليوميات (صف صف، مش متجمّعة) - لتعديل المدفوع من مدير الشيفت/المطوّر.
    كل صف معاه مكانه (يومية + نوع الصف + رقمه) عشان يتصحّح بنفس آلية تصحيح اليومية. */
 export async function getBookingLedgerRows(booking) {
-  const from = booking.createdAt ? new Date(booking.createdAt).toISOString().slice(0, 10) : booking.checkin;
-  const start = (from < booking.checkin ? from : booking.checkin);
-  const recs = await getShiftRecordsInRange(addDays(start < "2000-01-02" ? "2000-01-02" : start, -1), addDays(shiftDayNow(), 1), booking.hotelId ?? getActiveHotelId());
+  const recs = await getShiftRecordsForBooking(booking.id);   // اليوميات اللي فيها الحجز ده بس
   if (!recs) return null;
   const out = [];
   recs.forEach((r) => ["rows", "cafeteriaRows"].forEach((list) => (r[list] || []).forEach((x, idx) => {
@@ -223,6 +220,14 @@ export async function getStaleOpenShifts(hotelId) {
   return data.map((r) => ({ hotelId: r.hotel_id, date: r.date, shiftKey: r.shift_key, staffName: r.staff_name, closed: r.closed })).filter((r) => isStaleOpenShift(r));
 }
 
+/* اليوميات اللي فيها حجز معيّن بس (مش كل اليوميات من أول السيستم) - null لو القراءة فشلت */
+export async function getShiftRecordsForBooking(bookingId) {
+  const { data, error } = await supabase.rpc("calma_booking_ledgers", { p_booking: bookingId });
+  if (error || !Array.isArray(data)) return null;
+  const order = { morning: 0, evening: 1, night: 2 };
+  return data.map(shiftFromRow).sort((a, b) => (a.date === b.date ? (a.hotelId - b.hotelId || order[a.shiftKey] - order[b.shiftKey]) : a.date < b.date ? -1 : 1));
+}
+
 export async function getClaimsForDate(date, hotelId) {
   const { data, error } = await supabase.from("shift_claims").select("*").eq("date", date).eq("hotel_id", oneHotel(hotelId));
   if (error || !data) return {};
@@ -300,7 +305,7 @@ const firstPayDay = (b) => {
   return created && created < b.checkin ? created : b.checkin;
 };
 export async function getBookingPayments(booking) {
-  const recs = await getShiftRecordsInRange(earliest(addDays(firstPayDay(booking), -1)), addDays(shiftDayNow(), 1), booking.hotelId ?? getActiveHotelId());
+  const recs = await getShiftRecordsForBooking(booking.id);   // اليوميات اللي فيها الحجز ده بس
   if (!recs) return null;
   return paymentsFromRecords(recs, [booking]).get(booking.id) || [];
 }
@@ -317,11 +322,9 @@ export async function getPaymentsIndex(bookings) {
    بتستخدمها عشان تحصيل نفس الحجز مايتحسبش مرتين: مرة من اليومية (في تاريخها)
    ومرة تاني من قيمة amountPaid على الحجز في تاريخ تاني. بترجع null لو القراءة فشلت. */
 export async function getJournaledBookingIds() {
-  const { data, error } = await fetchAll(() => supabase.from("shift_records").select("hotel_id,date,shift_key,booking_collections", { count: "exact" }).order("date").order("hotel_id").order("shift_key"), 1000, (r) => `${r.hotel_id}|${r.date}|${r.shift_key}`);
-  if (error || !data) return null;
-  const set = new Set();
-  data.forEach((r) => (r.booking_collections || []).forEach((e) => { if (e.bookingId) set.add(e.bookingId); }));
-  return set;
+  const { data, error } = await supabase.rpc("calma_journaled_booking_ids");
+  if (error || !Array.isArray(data)) return null;
+  return new Set(data.filter(Boolean));
 }
 
 /* شيفت الموظف الشغال دلوقتي + التاريخ اللي مسجّل عليه: يوم الشيفتات بيبدأ ٨ص،
