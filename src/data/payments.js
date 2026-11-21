@@ -1,6 +1,6 @@
 import { supabase } from "../lib/supabaseClient";
 import { isMissingFunctionError, OUTDATED_SCHEMA_MESSAGE } from "./schemaCheck";
-import { bookingFxRate, otherDue } from "../domain/money";
+import { bookingFxRate, otherDue, fxRatesNeeded } from "../domain/money";
 
 /* تسجيل الفلوس بعملية واحدة ذرية في قاعدة البيانات (كله أو ولا حاجة): الحجز + صف الوسيلة في اليومية + كافيتيريا النزيل.
    التحقق (المبلغ ≤ المتبقي، الوسيلة، آخر ٤ أرقام الفيزا، رقم تليفون التحويل) بيتنفّذ في القاعدة نفسها كمان.
@@ -105,4 +105,24 @@ export async function recordAnyPayment(booking, { amount, currency, method, deta
   if ((otherDue(booking)[currency] || 0) > 0) return recordBookingPaymentOther({ ...req, currency });
   if (bookingFxRate(booking, currency)) return recordBookingPaymentFx({ ...req, currency });
   return recordBookingPaymentOther({ ...req, currency });
+}
+
+/* تحديد سعر عملة بالمصري على الحجز (مرة واحدة - الدفعات القديمة بتفضل بسعرها) */
+export const setBookingFxRate = ({ bookingId, currency, egp }) => rpc("set_booking_fx_rate", { p_booking: bookingId, p_currency: currency, p_egp: Number(egp) });
+
+/* قبل تسجيل/تعديل دفعات: أي سعر عملة ناقص اتكتب جنب السطر (l.rates = { USD: "54" }) بيتحفظ على الحجز الأول.
+   بترجّع { booking } بأسعاره الجديدة أو { error } */
+export async function ensureLineRates(booking, lines) {
+  let b = booking;
+  for (const l of lines || []) {
+    if (!(Number(l.amount) > 0)) continue;
+    for (const c of fxRatesNeeded(b, l.currency)) {
+      const v = Number(l.rates?.[c]);
+      if (!(v > 0)) return { error: `اكتب سعر الـ ${c} بالمصري جنب الدفعة (مرة واحدة للحجز ده)` };
+      const r = await setBookingFxRate({ bookingId: b.id, currency: c, egp: v });
+      if (r.error) return { error: r.error };
+      b = { ...b, fxRates: { ...(b.fxRates || {}), [c]: v } };
+    }
+  }
+  return { booking: b };
 }

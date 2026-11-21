@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send, PencilLine, Check, X } from "lucide-react";
 import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel, TwoStepButton, PayLinesInline, emptyPayLine } from "./shared";
 import { guarded } from "../lib/busy";
-import { devDeleteShift, payLinesError } from "../data/payments";
+import { devDeleteShift, payLinesError, ensureLineRates } from "../data/payments";
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { OwnerReport } from "./OwnerReport";
 import { listStaffCafeteria } from "../data/staffCafeteria";
@@ -78,7 +78,7 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, lockLinked = false, b
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       <div style={{ fontSize: 12.5 }}>{row.collectionDesc}</div>
                         <div data-testid="ledger-linked-edit" style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
-                          <PayLinesInline lines={editLines} onChange={setEditLines} bookingCurrency={bk?.currency || "__none__"} currencies={curs} testid="ledger-pay" />
+                          <PayLinesInline lines={editLines} onChange={setEditLines} bookingCurrency={bk?.currency || "__none__"} currencies={curs} testid="ledger-pay" booking={bk || null} />
                           <button className="cx-btn cx-btn-gold" data-testid="ledger-linked-save" style={{ fontSize: 12.5, height: 34 }} onClick={async () => { const ok = await onSaveLinked(idx, row, editLines, bk); if (ok) setEditIdx(null); }}>حفظ</button>
                           <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5, height: 34 }} onClick={() => setEditIdx(null)}>إلغاء</button>
                         </div>
@@ -535,6 +535,9 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
       if (!bk) { showToast("الحجز بتاع الدفعة دي مش موجود في الفندق ده"); return false; }
       const err = payLinesError(bk, lines, validatePaymentDetailsFor);
       if (err) { showToast(err); return false; }
+      const rated = await ensureLineRates(bk, lines);      // سعر عملة ناقص اتكتب جنب السطر: بيتحفظ على الحجز الأول
+      if (rated.error) { showToast(rated.error); return false; }
+      bk = rated.booking;
       await flushNow();
       const entry = { date: record.date, shiftKey: record.shiftKey, hotelId: record.hotelId, list: "rows", idx, row };
       const total = lines.reduce((t, l) => t + (Number(l.amount) || 0), 0);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import { bookingFxRate, fxCurrencies, currencyKeysOf, otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails, PAYMENT_METHODS } from "../domain/money";
+import { bookingFxRate, fxCurrencies, fxRatesNeeded, COMMON_CURRENCIES, currencyKeysOf, otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails, PAYMENT_METHODS } from "../domain/money";
 import { PRINT_FIT_CSS } from "../lib/printFit";
 import { roomLabel, roomDisplay } from "../domain/constants";
 
@@ -567,6 +567,8 @@ export function payCurrencyOptions(b) {
   // الجنيه أو أي عملة سعرها بالمصري متحدد على الحجز: الدفعة بتتحوّل لعملة الحجز بالسعر ده
   const roomDue = bookingAmountDue(b);
   fxCurrencies(b).forEach((c) => { if (!out.some((o) => o.currency === c)) out.push({ currency: c, due: Math.round(Math.max(0, roomDue) * bookingFxRate(b, c) * 100) / 100, fx: true }); });
+  // أي عملة تانية: سعرها بالمصري بيتكتب جنب الدفعة مرة واحدة
+  COMMON_CURRENCIES.forEach((c) => { if (!out.some((o) => o.currency === c)) out.push({ currency: c, due: null, fx: true }); });
   return out;
 }
 export function PayCurrencySelect({ booking, value, onChange, testid = "pay" }) {
@@ -574,7 +576,7 @@ export function PayCurrencySelect({ booking, value, onChange, testid = "pay" }) 
   if (opts.length < 2) return null;
   return (
     <select className="cx-select" aria-label="عملة الدفعة" data-testid={testid + "-currency"} style={{ width: 150, fontSize: 13 }} value={value || opts[0].currency} onChange={(e) => onChange(e.target.value)}>
-      {opts.map((o) => <option key={o.currency} value={o.currency}>{o.currency} (متبقي {fmt(o.due)}{o.fx ? " بسعر الحجز" : ""})</option>)}
+      {opts.map((o) => <option key={o.currency} value={o.currency}>{o.currency}{o.due == null ? " (بسعرها بالمصري)" : ` (متبقي ${fmt(o.due)}${o.fx ? " بسعر الحجز" : ""})`}</option>)}
     </select>
   );
 }
@@ -718,8 +720,21 @@ export function PayLines({ lines, onChange, bookingCurrency, currencies, testid 
 }
 
 /* محرّر دفعة في سطر واحد: المبلغ | العملة | الوسيلة | (آخر 4 أرقام / اسم ورقم) | رسوم فيزا - ولو اتدفعت بأكتر من وسيلة "+ جزء تاني" */
-export function PayLinesInline({ lines, onChange, bookingCurrency, currencies, testid = "payline", removableFirst = false }) {
-  const curs = currencies && currencies.length ? currencies : [bookingCurrency];
+/* خانات سعر العملة بالمصري الناقصة لدفعة بعملة cur على الحجز (بتظهر بس لو السعر مش متحدد) */
+export function FxRateInputs({ booking, currency, rates, onChange, testid = "fx" }) {
+  const need = fxRatesNeeded(booking, currency);
+  if (!need.length) return null;
+  return need.map((c) => (
+    <span key={c} style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12.5, color: "var(--muted)" }}>
+      سعر الـ {c} بالمصري
+      <input className="cx-input" aria-label={`سعر ${c} بالمصري`} data-testid={`${testid}-rate-${c}`} type="number" min="0" placeholder="جنيه" style={{ width: 80, height: 34, padding: "4px 8px", fontSize: 13 }} value={rates?.[c] ?? ""} onChange={(e) => onChange({ ...(rates || {}), [c]: e.target.value })} />
+    </span>
+  ));
+}
+
+export function PayLinesInline({ lines, onChange, bookingCurrency, currencies, testid = "payline", removableFirst = false, booking = null }) {
+  // مع الحجز: أي عملة (عملة الحجز أو أي عملة تانية بسعرها بالمصري على الحجز)
+  const curs = booking ? [...new Set([...(currencies || []), booking.currency, ...COMMON_CURRENCIES])] : currencies && currencies.length ? currencies : [bookingCurrency];
   const upd = (i, patch) => onChange(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const inp = { height: 34, padding: "4px 8px", fontSize: 13 };
   return (
@@ -732,6 +747,7 @@ export function PayLinesInline({ lines, onChange, bookingCurrency, currencies, t
             : <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{curs[0]}</span>}
           <select className="cx-select" aria-label="طريقة الدفع" data-testid={`${testid}-method-${i}`} style={{ ...inp, width: 128 }} value={l.method} onChange={(e) => upd(i, { method: e.target.value, details: emptyPaymentDetails(), fee: "" })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
           <PaymentDetailsInline testid={`${testid}-${i}`} method={l.method} details={l.details} onChange={(d) => upd(i, { details: d })} />
+          {booking && <FxRateInputs booking={booking} currency={l.currency} rates={l.rates} onChange={(r) => upd(i, { rates: r })} testid={`${testid}-${i}`} />}
           {l.method === "فيزا" && l.currency === bookingCurrency && <input className="cx-input" aria-label="رسوم فيزا" data-testid={`${testid}-fee-${i}`} type="number" min="0" placeholder="رسوم فيزا" style={{ ...inp, width: 90 }} value={l.fee} onChange={(e) => upd(i, { fee: e.target.value })} />}
           {(lines.length > 1 || removableFirst) && <button type="button" className="cx-btn cx-btn-outline" aria-label="شيل الجزء ده" style={{ ...inp, padding: "2px 8px" }} onClick={() => onChange(lines.filter((_, j) => j !== i))}>✕</button>}
         </div>

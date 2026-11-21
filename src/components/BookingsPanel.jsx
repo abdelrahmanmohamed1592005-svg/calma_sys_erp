@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock, Search, CalendarDays, Moon, Users, CreditCard, Globe, BedDouble, ClipboardList, Wallet, SearchX } from "lucide-react";
-import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown, PayLinesInline, emptyPayLine } from "./shared";
+import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown, PayLinesInline, emptyPayLine, FxRateInputs } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHasDue, bookingDueLines, formatMoneyLines, refundStatusOf, bookingFxRate, fxCurrencies } from "../domain/money";
 import { todayStr, addDays, nightsBetween, uid, arabicDateLong, managerCanCorrect } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, roomLabel, SHIFTS } from "../domain/constants";
@@ -8,7 +8,7 @@ import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, ea
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
 import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, splitLedgerPaymentRow } from "../data/shifts";
-import { changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError, recordAnyPayment } from "../data/payments";
+import { changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError, recordAnyPayment, ensureLineRates } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
 import { searchBookings, getBookingsOverlapping, bookingsWindowStart } from "../data/bookings";
 import { guarded } from "../lib/busy";
@@ -41,6 +41,7 @@ function QuickPay({ booking, onDone, showToast }) {
   const [details, setDetails] = useState(emptyPaymentDetails());
   const [currency, setCurrency] = useState("");
   const [fee, setFee] = useState("");
+  const [rates, setRates] = useState({});   // سعر العملة بالمصري لو الجيست دفع بعملة مالهاش سعر على الحجز
   // كل عملة لوحدها (من غير سعر صرف): عملة الحجز + أي عملة عليها خدمات لسه ماتحصّلتش
   const opts = payCurrencyOptions(booking);
   const cur = opts.some((o) => o.currency === currency) ? currency : opts[0].currency;
@@ -54,7 +55,9 @@ function QuickPay({ booking, onDone, showToast }) {
       const req = { bookingId: booking.id, amount: amt, method, details: cleanPaymentDetailsFor(method, details), note: "تحصيل", expectedUpdatedAt: booking.updatedAt };
       const visaFee = method === "فيزا" && cur === booking.currency ? Math.round((Number(fee) || 0) * 100) / 100 : 0;
       if (visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
-      const res = await recordAnyPayment(booking, { ...req, currency: cur });
+      const rated = await ensureLineRates(booking, [{ amount: amt, currency: cur, rates }]);   // سعر العملة بالمصري لو اتكتب
+      if (rated.error) { showToast(rated.error); return; }
+      const res = await recordAnyPayment(rated.booking, { ...req, currency: cur });
       if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
       let feeNote = "";
       if (visaFee > 0) {
@@ -73,6 +76,7 @@ function QuickPay({ booking, onDone, showToast }) {
       <span style={{ fontSize: 13 }}>المتبقي <bdi dir="ltr">{formatMoneyLines(bookingDueLines(booking))}</bdi></span>
       <input className="cx-input" data-testid="quickpay-amount" type="number" min="0" placeholder={`المبلغ (${fmt(due)} ${cur})`} style={{ width: 160 }} value={amount} onChange={(e) => setAmount(e.target.value)} />
       <PayCurrencySelect testid="quickpay" booking={booking} value={cur} onChange={(c) => { setCurrency(c); setAmount(""); }} />
+      <FxRateInputs booking={booking} currency={cur} rates={rates} onChange={setRates} testid="quickpay" />
       <select className="cx-select" data-testid="quickpay-method" style={{ width: 130 }} value={method} onChange={(e) => { setMethod(e.target.value); setDetails(emptyPaymentDetails()); }}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
       <PaymentDetailsInline method={method} details={details} onChange={setDetails} testid="quickpay" />
       {method === "فيزا" && cur === booking.currency && <input className="cx-input" data-testid="quickpay-visa-fee" type="number" min="0" placeholder={`رسوم فيزا (${cur})`} aria-label="رسوم الفيزا" style={{ width: 130 }} value={fee} onChange={(e) => setFee(e.target.value)} />}
@@ -107,8 +111,11 @@ function EditPayments({ booking, scope, me, onDone, showToast, onLog }) {
     const err = payLinesError(booking, lines, validatePaymentDetailsFor);
     if (err) { showToast(err); return; }
     const total = lines.reduce((t, l) => t + (Number(l.amount) || 0), 0);
+    // سعر عملة ناقص اتكتب جنب السطر: بيتحفظ على الحجز الأول (مرة واحدة)
+    const rated = await ensureLineRates(booking, lines);
+    if (rated.error) { showToast(rated.error); return; }
     let res;
-    if (e.list === "rows" && !e.row.visaFee && total > 0) res = await splitLedgerPaymentRow(e, lines, booking);
+    if (e.list === "rows" && !e.row.visaFee && total > 0) res = await splitLedgerPaymentRow(e, lines, rated.booking);
     else {
       // صف رسوم فيزا / كافيتيريا، أو الدفعة كلها اتشالت (صفر): تعديل المبلغ والوسيلة في نفس الصف
       const l = lines[0] || lineOf(e.row);
@@ -140,7 +147,7 @@ function EditPayments({ booking, scope, me, onDone, showToast, onLog }) {
             {label}
             {allowed ? (<>
               <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
-                <PayLinesInline lines={drafts[k] || []} onChange={(ls) => setDrafts({ ...drafts, [k]: ls })} bookingCurrency={e.row.visaFee || e.list !== "rows" ? "__none__" : booking.currency} currencies={[...new Set([cur, booking.currency, ...fxCurrencies(booking), ...Object.keys(booking.otherCharges || {})])]} testid={"edit-pay-" + rows.indexOf(e)} />
+                <PayLinesInline lines={drafts[k] || []} onChange={(ls) => setDrafts({ ...drafts, [k]: ls })} bookingCurrency={e.row.visaFee || e.list !== "rows" ? "__none__" : booking.currency} currencies={[...new Set([cur, booking.currency, ...fxCurrencies(booking), ...Object.keys(booking.otherCharges || {})])]} booking={e.list === "rows" && !e.row.visaFee ? booking : null} testid={"edit-pay-" + rows.indexOf(e)} />
                 <button className="cx-btn cx-btn-gold" data-testid="edit-payment-save" style={{ fontSize: 12.5, height: 34 }} onClick={() => save(e)}>حفظ</button>
               </div>
             </>) : (

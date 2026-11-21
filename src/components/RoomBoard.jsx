@@ -5,9 +5,9 @@ import { todayStr, shiftDayNow, nightsBetween, addDays, beforeCheckoutHour, befo
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomStart, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
-import { moveBookingRoom, recordVisaFee, recordPayLines, payLinesError, recordAnyPayment } from "../data/payments";
+import { moveBookingRoom, recordVisaFee, recordPayLines, payLinesError, recordAnyPayment, ensureLineRates } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
-import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown, MoneyStack, PayLinesInline, emptyPayLine } from "./shared";
+import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown, MoneyStack, PayLinesInline, emptyPayLine, FxRateInputs } from "./shared";
 import { sanitizeText } from "../domain/security";
 import { withBusy, guarded } from "../lib/busy";
 
@@ -177,7 +177,8 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
   async function recordPaymentInner(booking) {
     if (offShift) { showToast(shiftClosed ? "شيفتك مقفول - لازم يُفتح تاني الأول" : "مش شيفتك دلوقتي"); return; }
     // كل عملة لوحدها: الموظف بيختار العملة اللي هيدفع بيها والمبلغ بيتخصم من متبقي نفس العملة (من غير تحويل)
-    const opts = payCurrencyOptions(booking);
+    const typedRates = Object.fromEntries(Object.entries(pay.rates || {}).filter(([, v]) => Number(v) > 0).map(([c, v]) => [c, Number(v)]));
+    const opts = payCurrencyOptions({ ...booking, fxRates: { ...(booking.fxRates || {}), ...typedRates } });
     const cur = pay.currency && opts.some((o) => o.currency === pay.currency) ? pay.currency : opts[0].currency;
     const due = opts.find((o) => o.currency === cur)?.due || 0;
     const other = cur !== booking.currency;
@@ -205,7 +206,10 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     const req = { bookingId: booking.id, amount, method, details: rawDetails, note: "تحصيل", expectedUpdatedAt: booking.updatedAt };
     let res = { data: {} };
     if (amount > 0) {
-      res = await recordAnyPayment(booking, { ...req, currency: cur });   // عملة تانية: خدماتها أو بسعر الحجز بالمصري
+      // عملة مالهاش سعر بالمصري على الحجز: السعر اللي اتكتب جنب الدفعة بيتحفظ الأول (مرة واحدة)
+      const rated = await ensureLineRates(booking, [{ amount, currency: cur, rates: before.rates }]);
+      if (rated.error) { showToast(rated.error); setPay({ ...before }); return; }
+      res = await recordAnyPayment(rated.booking, { ...req, currency: cur });   // عملة تانية: خدماتها أو بسعر الحجز بالمصري
       if (res?.error) { showToast(res.error); if (onRefresh) onRefresh(); setPay({ ...before, amount: String(amount) }); return; }
     }
     let moreNote = "";
@@ -231,7 +235,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     const cafe = Number(out.cafeteria) || 0;
     // دفعة بسعر الحجز بالمصري (fx): بتتخصم من متبقي عملة الحجز بالمقابل
     const curOpt = opts.find((o) => o.currency === cur);
-    const paidIn = curOpt?.fx ? { currency: booking.currency, amount: (amount + moreSum) / (bookingFxRate(booking, cur) || 1) } : { currency: cur, amount: amount + moreSum };
+    const paidIn = curOpt?.fx ? { currency: booking.currency, amount: (amount + moreSum) / (bookingFxRate({ ...booking, fxRates: { ...(booking.fxRates || {}), ...typedRates } }, cur) || 1) } : { currency: cur, amount: amount + moreSum };
     const left = opts.filter((o) => !o.fx).map((o) => (o.currency === paidIn.currency ? { ...o, due: Math.max(0, Math.round((o.due - paidIn.amount) * 100) / 100) } : o)).filter((o) => o.due > 0.004);
     showToast(`تم تسجيل ${paidText}${moreNote}${feeNote} (${method}${detailsText ? " " + detailsText : ""})${cafe > 0 ? ` - منها ${fmt(cafe)} ${cur} كافيتيريا` : ""} - ${left.length ? `المتبقي ${formatMoneyLines(left)}` : "الحجز مدفوع بالكامل"}`);
   }
@@ -518,7 +522,9 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
         const dueLines = b ? bookingDueLines(b) : [];
         const payOpts = b ? payCurrencyOptions(b) : [];
         const payCur = payOpts.some((o) => o.currency === pay.currency) ? pay.currency : payOpts[0]?.currency;
-        const payDue = payOpts.find((o) => o.currency === payCur)?.due || 0;
+        // السعر اللي اتكتب جنب الدفعة (لسه ماتحفظش) بيتحسب بيه المتبقي بالعملة دي على طول
+        const typedRates = Object.fromEntries(Object.entries(pay.rates || {}).filter(([, v]) => Number(v) > 0).map(([c, v]) => [c, Number(v)]));
+        const payDue = (b ? payCurrencyOptions({ ...b, fxRates: { ...(b.fxRates || {}), ...typedRates } }) : payOpts).find((o) => o.currency === payCur)?.due || 0;
         // الخدمات اللي على الحجز - كل خدمة بعملتها (عملة الحجز + أي عملة تانية) من غير تحويل
         const chip = (label, amt, cur, paidPart) => [label, amt, cur, paidPart];
         const extrasList = b ? [
@@ -590,6 +596,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start" }}>
                       <input className="cx-input" data-testid="pay-amount" type="number" min="0" placeholder={`المبلغ (${fmt(payDue)} ${payCur})`} style={{ width: 160 }} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} />
                       <PayCurrencySelect booking={b} value={payCur} onChange={(c) => setPay({ ...pay, currency: c, amount: "" })} />
+                      <FxRateInputs booking={b} currency={payCur} rates={pay.rates} onChange={(r) => setPay({ ...pay, rates: r })} testid="pay" />
                       <select className="cx-select" aria-label="وسيلة الدفع" data-testid="collect-method" style={{ fontSize: 13, width: 150 }} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value, details: emptyPaymentDetails() })}>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
                       <PaymentDetailsInline compact={false} testid="pay" method={pay.method} details={pay.details} onChange={(d) => setPay({ ...pay, details: d })} />
                       {pay.method === "فيزا" && payCur === b.currency && <input className="cx-input" data-testid="pay-visa-fee" type="number" min="0" placeholder={`رسوم فيزا (${payCur})`} aria-label="رسوم الفيزا" style={{ width: 140 }} value={pay.fee || ""} onChange={(e) => setPay({ ...pay, fee: e.target.value })} />}
@@ -608,7 +615,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                 )}
               </div>
               {canAct && occupiedNow && (
-                <Sec id="sec-extend" title="تمديد الإقامة" open>
+                <Sec id="sec-extend" title="تمديد الإقامة">
                   <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>حدد عدد الليالي الإضافية - تاريخ الخروج والإجمالي والمتبقي بيتحدثوا لوحدهم (لو الغرفة محجوزة لحد تاني في التاريخ الجديد مش هيتسمحلك)</div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <input className="cx-input" aria-label="عدد ليالي التمديد" type="number" min="1" value={extendNights} onChange={(e) => setExtendNights(e.target.value)} style={{ width: 70 }} />
