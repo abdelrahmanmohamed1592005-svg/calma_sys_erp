@@ -66,20 +66,20 @@ test("EV1 تحصيل صحيح: واجهة + RPC + حجز + يومية + تقري
   r.save();
 });
 
-test("EV2 مدخلات غلط: صفر/سالب/أكبر من المتبقي/فيزا بلا 4 أرقام - مفيش تغيير في القاعدة", async ({ page, env }) => {
+test("EV2 مدخلات غلط: صفر/سالب/فيزا بلا 4 أرقام (الدفع الزيادة مسموح) - مفيش تغيير في القاعدة", async ({ page, env }) => {
   await base(env);
   const id = await env.seedBooking({ room: 601, guest: "Invalid Guest", nights: 1, price: 100 });
   await env.seedShift("ahmed");
   const r = recorder(page, env, "EV2-invalid-input");
   await page.goto("/"); await login(page, "ahmed");
   await goTab(page, "لوحة الغرف"); await openRoom(page, 601);
-  for (const [amount, method] of [["0", "كاش"], ["-5", "كاش"], ["500", "كاش"], ["50", "فيزا"]]) {
+  for (const [amount, method] of [["0", "كاش"], ["-5", "كاش"], ["50", "فيزا"]]) {
     await payOnBoard(page, { amount, method });
     await r.step(`مبلغ ${amount} بوسيلة ${method}`, { db: "select amount_paid from bookings" });
   }
   expect(await env.q("select amount_paid from bookings where id=$1", [id])).toEqual([{ amount_paid: 0 }]);
   // نفس الحاجة على مستوى الـ API مباشرة (القاعدة هي اللي بتحمي)
-  for (const amt of [0, -5, 500, "abc"]) {
+  for (const amt of [0, -5, "abc"]) {
     const res = await env.api("ahmed", "POST", "/rest/v1/rpc/record_booking_payment", { p_booking: id, p_amount: amt, p_method: "كاش", p_details: {}, p_expected: null, p_note: null });
     r.api.push({ method: "POST", path: "rpc/record_booking_payment (direct)", request: { p_amount: amt }, status: res.status, response: res.body });
     expect(res.status).toBeGreaterThanOrEqual(400);
