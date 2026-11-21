@@ -2,7 +2,7 @@ import { supabase } from "../lib/supabaseClient";
 import { descWithAmount } from "../domain/ledgerDesc";
 import { fetchAll } from "./page";
 import { friendlyDbError } from "./schemaCheck";
-import { shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
+import { shiftDayNow, addDays, isShiftActiveNow, isStaleOpenShift } from "../domain/dates";
 import { computeShiftTotals, cascadeHandover, stripBookingFromRecord, recordMentionsBooking, cleanPaymentDetailsFor } from "../domain/money";
 import { getActiveHotelId, resolveHotelScope } from "./hotels";
 
@@ -121,25 +121,6 @@ export async function purgeBookingFromLedgers(booking) {
   return { error: "الحجز ليه تحصيل في يوميات كتير قوي - كلّم الدعم" };
 }
 
-/* المطوّر بيغيّر عملة حجز ليه تحصيل في يوميات مقفولة: القاعدة بتغيّر العملة في الصفوف، وبعدها كل يومية مقفولة اتأثرت
-   أرقامها بتتحسب من جديد والعهدة بتتنقل للشيفتات اللي بعدها (نفس التصحيح). change = الدالة اللي بتغيّر العملة في القاعدة. */
-/* تغيير عملة حجز في كل اليوميات (المفتوحة والمقفولة) + إعادة حساب أرقام الشيفتات المقفولة والعهدة اللي بعدها - لأي حد بيعدّل الحجز */
-export async function devChangeCurrencyAcrossLedgers(booking, change) {
-  const hotelId = booking.hotelId ?? getActiveHotelId();
-  const all = await getShiftRecordsInRange("2000-01-01", addDays(shiftDayNow(), 2), hotelId);
-  if (!all) return { error: "تعذر قراءة اليوميات (مشكلة اتصال) - جرّب تاني" };
-  const before = all.filter((r) => r.closed && recordMentionsBooking(r, booking.id));
-  const res = await change();
-  if (res?.error) return res;
-  for (const old of before) {
-    const fresh = await getShiftRecord(old.date, old.shiftKey, hotelId);
-    if (!fresh) return { ...res, warn: `العملة اتغيّرت، لكن أرقام يومية ${old.date} ماتحسبتش من جديد - افتحها وصحّحها` };
-    const r = await applyCorrection({ ...old, updatedAt: fresh.updatedAt }, fresh, { rpc: "currency_fix_correct" });   // إذن مؤقت بعد تغيير العملة
-    if (!r.data) return { ...res, warn: `العملة اتغيّرت، لكن أرقام يومية ${old.date} ماتحسبتش من جديد - افتحها وصحّحها` };
-  }
-  return res;
-}
-
 /* كل صفوف الدفع بتاعة حجز في اليوميات (صف صف، مش متجمّعة) - لتعديل المدفوع من مدير الشيفت/المطوّر.
    كل صف معاه مكانه (يومية + نوع الصف + رقمه) عشان يتصحّح بنفس آلية تصحيح اليومية. */
 export async function getBookingLedgerRows(booking) {
@@ -229,6 +210,17 @@ export async function getShiftRecordsInRange(fromDate, toDate, hotelId) {
   if (error || !data) return null;
   const order = { morning: 0, evening: 1, night: 2 };
   return data.map(shiftFromRow).sort((a, b) => (a.date === b.date ? (a.hotelId - b.hotelId || order[a.shiftKey] - order[b.shiftKey]) : a.date < b.date ? -1 : 1));
+}
+
+/* الشيفتات اللي فاضلة مفتوحة من أيام فاتت (آخر ٦٠ يوم) - للتنبيه الأحمر في اليومية والتقارير. null لو القراءة فشلت */
+export async function getStaleOpenShifts(hotelId) {
+  const h = resolveHotelScope(hotelId);
+  const today = shiftDayNow();
+  let q = supabase.from("shift_records").select("hotel_id, date, shift_key, staff_name, closed").eq("closed", false).lt("date", today).gte("date", addDays(today, -60));
+  if (h != null) q = q.eq("hotel_id", h);
+  const { data, error } = await q.order("date");
+  if (error || !data) return null;
+  return data.map((r) => ({ hotelId: r.hotel_id, date: r.date, shiftKey: r.shift_key, staffName: r.staff_name, closed: r.closed })).filter((r) => isStaleOpenShift(r));
 }
 
 export async function getClaimsForDate(date, hotelId) {

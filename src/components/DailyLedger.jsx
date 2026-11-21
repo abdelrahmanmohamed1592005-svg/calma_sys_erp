@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send, PencilLine, Check, X } from "lucide-react";
-import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel, TwoStepButton, PayLinesInline, emptyPayLine } from "./shared";
+import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel, TwoStepButton, PayLinesInline, emptyPayLine, StaleShiftsAlert } from "./shared";
 import { guarded } from "../lib/busy";
 import { devDeleteShift, payLinesError } from "../data/payments";
 import { CafeteriaSection } from "./CafeteriaPanel";
@@ -9,7 +9,7 @@ import { listStaffCafeteria } from "../data/staffCafeteria";
 import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, blankShiftRecord, describePaymentDetails, validatePaymentDetailsFor, cleanPaymentDetailsFor } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
-import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow } from "../domain/dates";
+import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, managerCanCorrect } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
 import { resolveMyShift, getShiftRecordsInRange, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection, splitLedgerPaymentRow, editLedgerPaymentRow } from "../data/shifts";
 
@@ -639,7 +639,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // الموظف يقدر يكمل في شيفت اتفتح تاني بس لو الشيفت لسه في وقته (أو في هامش الأوفر تايم)؛ غير كده بيتقفل تلقائيًا عند فتح اليومية
   function staffCanContinue(date) { return date >= addDays(shiftDayNow(), -1); }
 
-  const canCorrect = (rec) => !!rec && (perms.correctLedger === "any" || (perms.correctLedger === "today" && rec.date >= shiftDayNow()));   // مدير الشيفت: شيفتات يومه بس
+  const canCorrect = (rec) => !!rec && (perms.correctLedger === "any" || (perms.correctLedger === "today" && managerCanCorrect(rec.date, rec.shiftKey)));   // مدير الشيفت: شيفتات يومه + الليلي اللي قبله
   function corrUpdateRow(idx, patch) {
     setCorr((c) => ({ ...c, rows: c.rows.map((r, i) => {
       if (i !== idx) return r;
@@ -686,6 +686,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
 
   return (
     <div className="cx-page">
+      <div className="cx-no-print"><StaleShiftsAlert hotelId={hotelId} hotels={hotels} refreshKey={`${dataVersion}|${mode}|${record?.closed}`} /></div>
       <div className="cx-no-print" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         {perms.editLedger && <button className={"cx-btn " + (mode === "live" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("live")}>{perms.devTools ? "الشيفت المفتوح" : "شيفتي النهارده"}</button>}
         <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> {perms.correctLedger ? "استعراض وتصحيح شيفتات سابقة" : "استعراض شيفتات سابقة (قراءة فقط)"}</button>

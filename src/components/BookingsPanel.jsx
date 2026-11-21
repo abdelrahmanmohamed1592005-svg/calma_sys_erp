@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from "react";
 import { Pencil, Ban, AlertTriangle, Check, Plus, Printer, Lock, Search, CalendarDays, Moon, Users, CreditCard, Globe, BedDouble, ClipboardList, Wallet, SearchX } from "lucide-react";
 import { PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, roomShortLabel, EmptyState, AutoText, TwoStepButton, PaymentDetailsInline, Logo, GuestCodeChips, GuestCodeHits, RefundBox, MoneyBox, PayBreakdown, PayLinesInline, emptyPayLine } from "./shared";
 import { fmt, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, bookingAmountDue, bookingGrandTotal, bookingHasDue, bookingDueLines, formatMoneyLines, bookingHotelTotal, refundStatusOf } from "../domain/money";
-import { todayStr, addDays, nightsBetween, uid, arabicDateLong, shiftDayNow } from "../domain/dates";
+import { todayStr, addDays, nightsBetween, uid, arabicDateLong, managerCanCorrect } from "../domain/dates";
 import { sourceOptionsFor, BOOKING_STATUSES, roomLabel, SHIFTS } from "../domain/constants";
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
-import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, devChangeCurrencyAcrossLedgers, splitLedgerPaymentRow } from "../data/shifts";
+import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, splitLedgerPaymentRow } from "../data/shifts";
 import { recordBookingPayment, recordBookingPaymentOther, changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
 import { guarded } from "../lib/busy";
@@ -101,7 +101,7 @@ function EditPayments({ booking, scope, me, onDone, showToast, onLog }) {
     setDrafts(Object.fromEntries(live.map((e) => [keyOf(e), [lineOf(e.row)]])));
   };
   // مين يعدّل إيه: المطوّر أي يوم، مدير الشيفت شيفتات يومه، موظف الشيفت شيفته المفتوح بس
-  const canEdit = (e) => scope === "any" || (scope === "today" && e.date >= shiftDayNow()) || (scope === "own" && !e.closed && (e.staffUsername === me || (e.helpers || []).includes(me)));
+  const canEdit = (e) => scope === "any" || (scope === "today" && managerCanCorrect(e.date, e.shiftKey)) || (scope === "own" && !e.closed && (e.staffUsername === me || (e.helpers || []).includes(me)));
   const save = (e) => guarded("edit-pay:" + keyOf(e), async () => {
     const lines = drafts[keyOf(e)] || [];
     const err = payLinesError(booking, lines, validatePaymentDetailsFor);
@@ -430,6 +430,16 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     // تغيير عملة حجز موجود من الفورم: الحجز بيتحفظ بعملته القديمة الأول، وبعدين العملة بتتغيّر بدالتها (الحجز + صفوف اليومية بتاعته)
     const curTo = isExistingBooking && originalBooking && cleaned.currency !== originalBooking.currency ? cleaned.currency : null;
     if (curTo) cleaned = { ...cleaned, currency: originalBooking.currency };
+    // حجز ليه تحصيل في شيفت اتقفل: تغيير عملته من مدير الشيفت أو المطوّر بس (القاعدة بترفض برضه) - بنوقف قبل الحفظ
+    if (curTo && !["any", "today"].includes(perms.correctLedger)) {
+      const led = await getBookingLedgerRows(originalBooking);
+      const inClosed = (led || []).some((e) => e.closed && (Number(e.row.collectionAmt) || 0) !== 0 && (e.row.collectionCurrency || "EGP") === originalBooking.currency);
+      if (!led || inClosed) {
+        if (resolved.length) await rollbackResolved(resolved);
+        showToast(!led ? "تعذر قراءة اليوميات (مشكلة اتصال) - جرّب تاني" : "الحجز ليه تحصيل في شيفت اتقفل - تغيير العملة من مدير الشيفت أو المطوّر");
+        return;
+      }
+    }
     const res = isExistingBooking ? await onUpdateBooking(cleaned.id, cleaned) : await onInsertBooking(cleaned);
     if (res?.error) {
       if (resolved.length) {
@@ -454,12 +464,12 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
     let advanceOk = false;
     let curChangeDone = false;
     if (curTo) {
-      const change = () => changeBookingCurrency({ bookingId: savedId, currency: curTo, expectedUpdatedAt: res.data?.updatedAt });
-      const cr = await devChangeCurrencyAcrossLedgers(res.data || cleaned, change);   // كل اليوميات (والمقفولة كمان) لأي حد بيعدّل الحجز
+      // القاعدة بتغيّر العملة في كل اليوميات وبتحسب أرقام الشيفتات المقفولة والعهدة اللي بعدها بنفسها
+      const cr = await changeBookingCurrency({ bookingId: savedId, currency: curTo, expectedUpdatedAt: res.data?.updatedAt });
       if (cr?.error) { showToast(`⚠ الحجز اتحفظ لكن العملة ماتغيّرتش: ${cr.error}`); if (onRefresh) await onRefresh(); setForm(null); return; }
       curChangeDone = true;
       onLog(`تعديل عملة الحجز - ${roomLabel(rooms, cleaned.room)} - ${cleaned.guestName}: من ${originalBooking.currency} إلى ${curTo}`);
-      note += ` — العملة اتغيّرت من ${originalBooking.currency} لـ ${curTo} (الأرقام زي ما هي)${cr?.warn ? " ⚠ " + cr.warn : ""}`;
+      note += ` — العملة اتغيّرت من ${originalBooking.currency} لـ ${curTo} (الأرقام زي ما هي)`;
       cleaned = { ...cleaned, currency: curTo };
       if (onRefresh) await onRefresh();
     }
@@ -620,7 +630,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings, perms, r
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>تاريخ الخروج</label><input className="cx-input" type="date" min={form.checkin ? addDays(form.checkin, 1) : undefined} value={form.checkout} onChange={(e) => setForm({ ...form, checkout: e.target.value })} /></div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>السعر لليلة {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><div style={{ display: "flex", gap: 4 }}><input className="cx-input" type="number" disabled={chargeLocked} value={form.priceNight} onChange={(e) => setForm({ ...form, priceNight: e.target.value, ...(form.totalRoom !== "" && Math.abs((Number(form.totalRoom) || 0) - (Number(form.priceNight) || 0) * nights) < 0.005 ? { totalRoom: "" } : {}) })} /><select className="cx-select" disabled={chargeLocked} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} style={{ width: 90 }}>{COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
               {isExistingBooking && originalBooking && form.currency !== originalBooking.currency && (
-                <div data-testid="currency-change-warning" style={{ marginTop: 4, fontSize: 12.5, fontWeight: 700, color: "var(--rust)", background: "#F4E7E2", borderRadius: 6, padding: "4px 6px" }}>⚠ العملة اتغيّرت من {originalBooking.currency} لـ {form.currency} - اكتب سعر الليلة بالـ {form.currency} (الرقم مابيتحوّلش لوحده)</div>
+                <div data-testid="currency-change-warning" style={{ marginTop: 4, fontSize: 12.5, fontWeight: 700, color: "var(--rust)", background: "#F4E7E2", borderRadius: 6, padding: "4px 6px" }}>⚠ العملة اتغيّرت من {originalBooking.currency} لـ {form.currency} - اكتب سعر الليلة بالـ {form.currency} (الرقم مابيتحوّلش لوحده){!["any", "today"].includes(perms.correctLedger) && " - ولو الحجز ليه تحصيل في شيفت اتقفل التغيير من مدير الشيفت أو المطوّر"}</div>
               )}</div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={chargeLocked} placeholder={String(autoTotalRoom)} value={lockedRepricedTotal != null ? lockedRepricedTotal : form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
 

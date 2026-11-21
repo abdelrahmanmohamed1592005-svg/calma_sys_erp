@@ -1,7 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { currencyKeysOf, otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails, PAYMENT_METHODS } from "../domain/money";
 import { PRINT_FIT_CSS } from "../lib/printFit";
-import { roomLabel, roomDisplay } from "../domain/constants";
+import { roomLabel, roomDisplay, SHIFTS } from "../domain/constants";
+import { getStaleOpenShifts } from "../data/shifts";
 
 /* حقل نص بيكبر لوحده: لو البيان طويل بينزل على سطر تاني بدل ما يتقصّ (نفس شكل وسلوك الـ <input> العادي:
    Enter مابيعملش سطر جديد). بيتقاس تاني لما النص أو عرض الصفحة يتغيّر. */
@@ -732,6 +733,29 @@ export function PayLinesInline({ lines, onChange, bookingCurrency, currencies, t
         </div>
       ))}
       <button type="button" data-testid={`${testid}-add`} style={{ alignSelf: "flex-start", background: "none", border: 0, padding: 0, color: "var(--teal)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }} onClick={() => onChange([...lines, emptyPayLine(lines[0]?.currency || curs[0])])}>+ جزء تاني بوسيلة تانية</button>
+    </div>
+  );
+}
+
+/* تنبيه أحمر: شيفت فاضل مفتوح من امبارح (أو قبله) - مابيتقفلش لوحده، لازم صاحبه أو المدير يقفله */
+export function StaleShiftsAlert({ hotelId, hotels, refreshKey }) {
+  const [list, setList] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    getStaleOpenShifts(hotelId).then((r) => { if (alive) setList(r || []); });
+    return () => { alive = false; };
+  }, [hotelId, refreshKey]);
+  if (!list.length) return null;
+  const label = (k) => SHIFTS.find((s) => s.key === k)?.label || k;
+  const hotelName = (id) => (hotels || []).find((h) => h.id === id)?.name;
+  return (
+    <div data-testid="stale-open-shift" role="alert" style={{ background: "#F4E7E2", border: "1px solid var(--rust)", color: "var(--rust)", borderRadius: 10, padding: "10px 12px", marginBottom: 12, fontWeight: 700, fontSize: 13.5 }}>
+      ⚠ فيه شيفت مفتوح من امبارح - لازم يتقفل:
+      <ul style={{ margin: "6px 0 0", paddingInlineStart: 20, fontWeight: 600 }}>
+        {list.map((r) => (
+          <li key={`${r.hotelId}|${r.date}|${r.shiftKey}`}>{label(r.shiftKey)} يوم <bdi dir="ltr">{r.date}</bdi>{r.staffName ? ` (${r.staffName})` : ""}{hotels && hotels.length > 1 && hotelName(r.hotelId) ? ` - ${hotelName(r.hotelId)}` : ""}</li>
+        ))}
+      </ul>
     </div>
   );
 }

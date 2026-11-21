@@ -3,6 +3,7 @@
 import { test, expect } from "../fixtures";
 import { login, logout, goTab, toast, addBooking, claimShift, openRoom, cairoDate, shiftDay, myShiftKey, SHIFT_LABEL, digits } from "../ui";
 import { readFileSync } from "node:fs";
+const addDaysStr = (d, n) => { const t = new Date(d + "T12:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
 
 // الإجراءات الثانوية في كارت الحجز (مدفوع قبل السيستم وأدوات المطوّر) تحت "⋯ المزيد"
 async function openMoreMenus(page) {
@@ -115,6 +116,43 @@ test("مدير الشيفت: تاباته، يصحّح يومية النهارد
   // مدير الشيفت يلغي اختيار شيفت اتاخد بالغلط من الـ API (القاعدة بتسمح)، ومايقدرش يدير مستخدمين
   await env.api("mona", "PATCH", "/rest/v1/profiles?username=eq.ahmed", { active: false });
   expect((await env.q("select active from profiles where username = 'ahmed'"))[0].active).toBe(true);
+});
+
+test("مدير الشيفت: الليلي اللي قبل يومه بيتصحّح، والمسائي اللي قبله لأ - وتغيير عملة حجز ليه تحصيل في شيفت مقفول منه هو أو المطوّر بس", async ({ env }) => {
+  await users(env);
+  const prev = addDaysStr(shiftDay(), -1);
+  await env.seedShift("ahmed", { day: prev, key: "night", closed: true, handover: { EGP: 0 }, closingCash: { EGP: 0 } });
+  await env.seedShift("sara", { day: prev, key: "evening", closed: true, handover: { EGP: 0 }, closingCash: { EGP: 0 } });
+  const ok = await env.api("mona", "POST", "/rest/v1/rpc/correct_shift_record", { p_hotel: 1, p_date: prev, p_key: "night", p_expected: null, p_record: { shift_notes: "مراجعة" } });
+  expect(ok.status).toBeLessThan(300);
+  expect((await rec(env, prev, "night")).shift_notes).toBe("مراجعة");
+  const denied = await env.api("mona", "POST", "/rest/v1/rpc/correct_shift_record", { p_hotel: 1, p_date: prev, p_key: "evening", p_expected: null, p_record: { shift_notes: "x" } });
+  expect(denied.status).toBeGreaterThanOrEqual(400);
+
+  // تحصيل في شيفت مقفول: مدير الحجوزات مرفوض، والموظف مرفوض
+  await env.seedUser("resv", "reservations", "الحجوزات");
+  const b = await env.seedBooking({ room: 605, guest: "Closed Cur", start: -1, nights: 3, price: 100, paid: 100, currency: "EGP" });
+  await env.seedShift("ahmed", { day: cairoDate(-3), key: "morning", closed: true, handover: { EGP: 0 }, closingCash: { EGP: 100 }, collections: [{ room: 605, amount: 100, currency: "EGP", bookingId: b }] });
+  const r1 = await env.api("resv", "POST", "/rest/v1/rpc/change_booking_currency", { p_booking: b, p_currency: "USD", p_expected: null });
+  expect(r1.status).toBeGreaterThanOrEqual(400);
+  expect(JSON.stringify(r1.body)).toContain("مدير الشيفت أو المطوّر");
+  expect((await env.q("select currency from bookings where id = $1", [b]))[0].currency).toBe("EGP");
+  const r2 = await env.api("devo", "POST", "/rest/v1/rpc/change_booking_currency", { p_booking: b, p_currency: "USD", p_expected: null });
+  expect(r2.status).toBeLessThan(300);
+  expect((await env.q("select currency from bookings where id = $1", [b]))[0].currency).toBe("USD");
+});
+
+test("تنبيه أحمر: شيفت مفتوح من امبارح بيظهر في اليومية والتقارير، ومابيتقفلش لوحده", async ({ page, env }) => {
+  await users(env);
+  await env.seedShift("sara", { day: cairoDate(-2), key: "evening", closed: false, handover: { EGP: 0 } });
+  await page.goto("/");
+  await login(page, "mona");
+  await goTab(page, "اليومية");
+  await expect(page.getByTestId("stale-open-shift")).toContainText("فيه شيفت مفتوح من امبارح");
+  await expect(page.getByTestId("stale-open-shift")).toContainText("سارة");
+  await goTab(page, "التقارير");
+  await expect(page.getByTestId("stale-open-shift")).toBeVisible();
+  expect((await rec(env, cairoDate(-2), "evening")).closed).toBe(false);
 });
 
 test("مدفوع قبل السيستم: بيتحسب في المدفوع والمتبقي من غير ما يدخل أي يومية، وفحص التطابق بيعدّي", async ({ page, env }) => {

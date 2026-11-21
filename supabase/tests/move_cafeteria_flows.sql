@@ -299,8 +299,26 @@ select t.pass('CC5 تغيير', t.cur('res1', 'CC5', 'SAR'));
 -- تحصيل في شيفت اتقفل: ممنوع (آخر حاجة في الملف عشان بنقفل الشيفتات)
 select t.pass('CC6 حجز وتحصيل', t.ins('st1', 'CC6', t.cr(5), 20, 22, 100, 200));
 select t.pass('CC6 تحصيل ٥٠', t.pay('st1', 'CC6', 50));
-select t.pass('CC6 قفل الشيفتات', t.maint_sql($q$update shift_records set closed = true where closed = false$q$));
-select t.pass('CC6 تغيير العملة مسموح حتى لو التحصيل في شيفت مقفول (قرار المالك)', t.cur('res1', 'CC6', 'EGP'));
+-- أرقام الإقفال زي ما الواجهة بتسجّلها + شيفت بعده عهدته منقولة من رصيد المقفول بالظبط
+select t.pass('CC6 قفل الشيفتات بأرقام الإقفال زي الواجهة', t.maint_sql($q$update shift_records set closed = true,
+  closing_cash = calma_shift_totals(rows, cafeteria, cafeteria_rows, hotel_rows, handover, method_handover) -> 'closing_cash',
+  method_closing = calma_shift_totals(rows, cafeteria, cafeteria_rows, hotel_rows, handover, method_handover) -> 'method_closing',
+  total_collections = calma_shift_totals(rows, cafeteria, cafeteria_rows, hotel_rows, handover, method_handover) -> 'total_collections' where closed = false$q$));
+create table t.cc6 as select s.hotel_id, s.date, s.shift_key, s.closing_cash from shift_records s, jsonb_array_elements(s.rows) e
+  where e ->> 'bookingId' = t.gid('CC6')::text limit 1;
+grant select on t.cc6 to public;
+select t.pass('CC6 شيفت بعده (بكرة الصبح) عهدته = رصيد المقفول', t.maint_sql($q$insert into shift_records(hotel_id, date, shift_key, staff_name, staff_username, rows, handover, closed)
+  select hotel_id, date + 1, 'morning', 'st2', 'st2', '[]'::jsonb, closing_cash, false from t.cc6
+  on conflict (hotel_id, date, shift_key) do update set handover = excluded.handover$q$));
+select t.reject('CC6 مدير الحجوزات مايغيّرش عملة حجز ليه تحصيل في شيفت مقفول', t.cur('res1', 'CC6', 'EGP'), 'مدير الشيفت أو المطوّر');
+insert into auth.users(id, email) values (gen_random_uuid(), 'dv1@calma.internal');
+insert into profiles(id, username, name, role) values ((select id from auth.users where email = 'dv1@calma.internal'), 'dv1', 'dv1', 'dev');
+select t.pass('CC6 المطوّر يغيّر العملة (تحصيل في شيفت مقفول)', t.cur('dv1', 'CC6', 'EGP'));
 select t.eq('CC6 العملة بقت جنيه', t.f('CC6', 'currency'), 'EGP');
 select t.eqn('CC6 صف التحصيل في اليومية المقفولة بقى بالجنيه', (select count(*) from shift_records s, jsonb_array_elements(s.rows) e where s.closed and e ->> 'bookingId' = t.gid('CC6')::text and e ->> 'collectionCurrency' = 'EGP'), 1);
-select t.eqn('CC6 إذن إعادة حساب أرقام اليومية المقفولة اتسجّل', (select count(*) from currency_fix_grants where username = 'res1'), 1);
+select t.eqn('CC6 رصيد الإقفال اتحسب على السيرفر: الدولار نقص ٥٠', (select calma_num(c.closing_cash ->> 'USD') - calma_num(s.closing_cash ->> 'USD') from t.cc6 c join shift_records s using (hotel_id, date, shift_key)), 50);
+select t.eqn('CC6 رصيد الإقفال: الجنيه زاد ٥٠', (select calma_num(s.closing_cash ->> 'EGP') - calma_num(c.closing_cash ->> 'EGP') from t.cc6 c join shift_records s using (hotel_id, date, shift_key)), 50);
+select t.chk('CC6 رصيد الإقفال المتسجّل = الحساب من الصفوف', (select calma_money_same(s.closing_cash, calma_shift_totals(s.rows, s.cafeteria, s.cafeteria_rows, s.hotel_rows, s.handover, s.method_handover) -> 'closing_cash') from t.cc6 c join shift_records s using (hotel_id, date, shift_key)));
+select t.chk('CC6 عهدة الشيفت اللي بعده اتنقلت بالرصيد الجديد', (select calma_money_same(n.handover, s.closing_cash) from t.cc6 c join shift_records s using (hotel_id, date, shift_key)
+  join shift_records n on n.hotel_id = c.hotel_id and n.date = c.date + 1 and n.shift_key = 'morning'));
+select t.chk('CC6 أثر في سجل التدقيق', exists (select 1 from money_audit where action = 'currency_fix' and actor = 'dv1'));
