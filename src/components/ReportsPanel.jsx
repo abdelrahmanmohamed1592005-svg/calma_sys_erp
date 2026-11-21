@@ -6,6 +6,14 @@ import { SHIFTS, GROUP_NAME } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
 import { todayStr, shiftDayNow, addDays, arabicWeekday, arabicDateLong, nightsBetween } from "../domain/dates";
 import { getJournaledBookingIds, getShiftRecordsInRange } from "../data/shifts";
+
+/* مبلغ بأكتر من عملة: كل عملة في سطر لوحدها (اتجاهها من الشمال لليمين) عشان الأرقام والعملات ماتتلخبطش جوه النص العربي */
+const curSuffix = (c) => (c === "EGP" ? "ج" : c === "USD" ? "$" : " " + c);
+function MoneyLines({ obj }) {
+  const cs = currencyKeysOf(obj);
+  if (!cs.length) return <bdi dir="ltr">0</bdi>;
+  return cs.map((c, i) => <bdi key={c} dir="ltr" style={{ display: "block", textAlign: "right", whiteSpace: "nowrap" }}>{i ? "+ " : ""}{money(obj, c)}{curSuffix(c)}</bdi>);
+}
 import { listStaffCafeteria, staffOwed } from "../data/staffCafeteria";
 
 // أقصى مدة لتقرير الفترة - بيحمي الشاشة من فترة ضخمة (أو تاريخ غلط) تعلّقها.
@@ -223,7 +231,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
     return Math.round((sum / daySpan) * 100);
   }, [bookings, effFrom, daySpan, rooms.length, rangeError]);
 
-  function moneyLine(obj, currencies) { const cs = currencies || currencyKeysOf(obj); return cs.length ? cs.map((c) => `${money(obj, c)}${c === "EGP" ? "ج" : c === "USD" ? "$" : " " + c}`).join(" + ") : "0"; }
+  function moneyLine(obj, currencies) { const cs = currencies || currencyKeysOf(obj); return cs.length ? cs.map((c) => `\u2066${money(obj, c)}${curSuffix(c)}\u2069`).join(" + ") : "0"; }   // نص التقرير المبعوت: كل مبلغ معزول الاتجاه
 
   function buildSummaryText() {
     let txt = `تقرير ${reportTitleName}\n${rangeMode === "day" ? `${arabicWeekday(date)} ${arabicDateLong(date)}` : `من ${fromDate} إلى ${toDate}`}\n\n`;
@@ -285,7 +293,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
                 <thead><tr><th className="cx-th">الشيفت</th><th className="cx-th">الموظف</th><th className="cx-th">الحالة</th><th className="cx-th">التحصيل</th><th className="cx-th">المصاريف</th><th className="cx-th">رصيد الخزينة</th><th className="cx-th">متابعة</th></tr></thead>
                 <tbody>
                   {dayHotels.flatMap((h) => SHIFTS.map((s) => { const r = dayRecord(h.id, s.key); const lbl = group ? `${h.name} - ${s.label}` : s.label; if (!r) return (<tr key={h.id + s.key}><td>{lbl}</td><td colSpan={6} style={{ color: "var(--muted)" }}>لا يوجد سجل</td></tr>); const t = r.closed ? r : computeShiftTotals(r);
-                    return (<tr key={h.id + s.key}><td>{lbl}</td><td>{r.staffName}</td><td>{r.closed ? "مقفول" : "مفتوح"}</td><td>{moneyLine(t.totalCollections)}</td><td>{moneyLine(t.totalExpenses)}</td><td style={{ fontWeight: 700 }}>{moneyLine(t.closingCash)}</td><td>{r.flagged ? <AlertTriangle size={14} color="#A8503B" /> : "—"}</td></tr>);
+                    return (<tr key={h.id + s.key}><td>{lbl}</td><td>{r.staffName}</td><td>{r.closed ? "مقفول" : "مفتوح"}</td><td><MoneyLines obj={t.totalCollections} /></td><td><MoneyLines obj={t.totalExpenses} /></td><td style={{ fontWeight: 700 }}><MoneyLines obj={t.closingCash} /></td><td>{r.flagged ? <AlertTriangle size={14} color="#A8503B" /> : "—"}</td></tr>);
                   }))}
                 </tbody>
               </table>
@@ -296,15 +304,15 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
             <div className="cx-card" style={{ padding: 12, marginBottom: 14 }} data-testid="report-per-hotel">
               <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 6, color: "var(--ink)" }}>ملخص كل فندق</div>
               <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">الفندق</th><th className="cx-th">التحصيل</th><th className="cx-th">المصاريف</th><th className="cx-th">الصافي</th></tr></thead>
-                <tbody>{perHotel.map(({ hotel: h, agg: a }) => <tr key={h.id}><td style={{ fontWeight: 700 }}>{h.name}</td><td>{moneyLine(a.totalCollections)}</td><td>{moneyLine(a.totalExpenses)}</td><td>{moneyLine(a.netCash)}</td></tr>)}</tbody></table></div>
+                <tbody>{perHotel.map(({ hotel: h, agg: a }) => <tr key={h.id}><td style={{ fontWeight: 700 }}>{h.name}</td><td><MoneyLines obj={a.totalCollections} /></td><td><MoneyLines obj={a.totalExpenses} /></td><td><MoneyLines obj={a.netCash} /></td></tr>)}</tbody></table></div>
               <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 6 }}>التحصيل هنا من اليوميات؛ الأرقام التفصيلية تحت مجمّعة لكل الفنادق. اختار فندق من الزرار فوق لتقريره لوحده.</div>
             </div>
           )}
 
           <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 14 }}>
-            <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-green" aria-hidden="true"><Wallet size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>إجمالي التحصيل</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(combinedTotalCollections)}</div></div></div>
-            <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-red" aria-hidden="true"><Receipt size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>إجمالي المصاريف</div><div style={{ fontWeight: 800, fontSize: 16 }}>{moneyLine(agg.totalExpenses)}</div></div></div>
-            <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-teal" aria-hidden="true"><Landmark size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>صافي التحصيل بعد المصاريف</div><div style={{ fontWeight: 800, fontSize: 16, color: "var(--teal)" }}>{moneyLine(agg.netCash)}</div></div></div>
+            <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-green" aria-hidden="true"><Wallet size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>إجمالي التحصيل</div><div style={{ fontWeight: 800, fontSize: 16 }}><MoneyLines obj={combinedTotalCollections} /></div></div></div>
+            <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-red" aria-hidden="true"><Receipt size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>إجمالي المصاريف</div><div style={{ fontWeight: 800, fontSize: 16 }}><MoneyLines obj={agg.totalExpenses} /></div></div></div>
+            <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-teal" aria-hidden="true"><Landmark size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>صافي التحصيل بعد المصاريف</div><div style={{ fontWeight: 800, fontSize: 16, color: "var(--teal)" }}><MoneyLines obj={agg.netCash} /></div></div></div>
             <div className="cx-card" style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "center" }}><span className="cx-ico ic-indigo" aria-hidden="true"><BedDouble size={19} /></span><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, color: "var(--muted)" }}>متوسط نسبة الإشغال</div><div style={{ fontWeight: 800, fontSize: 20 }}>{avgOccupancy}%</div></div></div>
           </div>
 
@@ -363,9 +371,9 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
             <div className="cx-card" data-testid="report-cafeteria" style={{ padding: 12, marginBottom: 14 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 6 }}>الكافيتيريا</div>
               <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 8 }}>
-                <div><div style={{ fontSize: 12.5, color: "var(--muted)" }}>تحصيل من النزلاء</div><div style={{ fontWeight: 800 }}>{moneyLine(cafeBySource.guest)}</div></div>
-                <div><div style={{ fontSize: 12.5, color: "var(--muted)" }}>سداد الاستاف</div><div style={{ fontWeight: 800 }}>{moneyLine(cafeBySource.staff)}</div></div>
-                <div><div style={{ fontSize: 12.5, color: "var(--muted)" }}>مبيعات مباشرة</div><div style={{ fontWeight: 800 }}>{moneyLine(cafeBySource.direct)}</div></div>
+                <div><div style={{ fontSize: 12.5, color: "var(--muted)" }}>تحصيل من النزلاء</div><div style={{ fontWeight: 800 }}><MoneyLines obj={cafeBySource.guest} /></div></div>
+                <div><div style={{ fontSize: 12.5, color: "var(--muted)" }}>سداد الاستاف</div><div style={{ fontWeight: 800 }}><MoneyLines obj={cafeBySource.staff} /></div></div>
+                <div><div style={{ fontSize: 12.5, color: "var(--muted)" }}>مبيعات مباشرة</div><div style={{ fontWeight: 800 }}><MoneyLines obj={cafeBySource.direct} /></div></div>
               </div>
               {staffPeriod.length > 0 && (
                 <div style={{ overflowX: "auto", marginBottom: 8 }}>
@@ -394,7 +402,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
             <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 2, color: "var(--ink)" }}>الحجوزات الأونلاين ({bAgg.count} حجز مدفوع أونلاين من إجمالي {bAgg.totalCount} حجز في الفترة)</div>
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>الحجوزات المدفوعة أونلاين (سعر الغرفة بس - الخدمات بتتحصّل في الفندق وبتدخل في التحصيل فوق).</div>
             <div className="cx-report-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 12 }}>
-              <div><div style={{ fontSize: 12.5, color: "var(--muted)" }}>إجمالي الحجوزات الأونلاين</div><div style={{ fontWeight: 800 }}>{moneyLine(bAgg.grossRevenue)}</div></div>
+              <div><div style={{ fontSize: 12.5, color: "var(--muted)" }}>إجمالي الحجوزات الأونلاين</div><div style={{ fontWeight: 800 }}><MoneyLines obj={bAgg.grossRevenue} /></div></div>
             </div>
             {bAgg.items.length > 0 ? (
               <div style={{ overflowX: "auto" }}>
