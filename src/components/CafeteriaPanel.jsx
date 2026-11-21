@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Plus, Check, Coffee } from "lucide-react";
-import { PaymentDetailsInline, SectionHead, RoomName } from "./shared";
+import { PaymentDetailsInline, SectionHead, RoomName, stackLabels } from "./shared";
 import { COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, cafeteriaOutstandingLines, fmt } from "../domain/money";
 import { roomLabel } from "../domain/constants";
 import { staffOwed, updateStaffCafeteriaEntry, deleteStaffCafeteriaEntry } from "../data/staffCafeteria";
@@ -157,7 +157,7 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
       )}
       {rows.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 10 }}>
-          <table className="cx-table" data-testid="cafeteria-rows" style={{ fontSize: 13, minWidth: 620 }}>
+          <table ref={stackLabels} className="cx-table cx-stack" data-testid="cafeteria-rows" style={{ fontSize: 13, minWidth: 620 }}>
             <thead><tr><th className="cx-th">النوع</th><th className="cx-th">الجهة</th><th className="cx-th">الوسيلة</th><th className="cx-th">تفاصيل الدفع</th><th className="cx-th">المبلغ</th>{devRows && <th className="cx-th cx-no-print">تعديل</th>}</tr></thead>
             <tbody>
               {rows.map((r, i) => (
@@ -218,7 +218,7 @@ export function CafeteriaSection({ record, rooms, bookings, onUpdateCafeteria, l
 
       {shownEntries.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 10 }}>
-          <table className="cx-table" data-testid="staff-cafe-shift" style={{ fontSize: 13, minWidth: 520 }}>
+          <table ref={stackLabels} className="cx-table cx-stack" data-testid="staff-cafe-shift" style={{ fontSize: 13, minWidth: 520 }}>
             <thead><tr><th className="cx-th">الموظف</th><th className="cx-th">البيان</th><th className="cx-th">المبلغ</th><th className="cx-th">اتدفع</th><th className="cx-th">الباقي عليه</th>{isDev && <th className="cx-th cx-no-print">تعديل</th>}</tr></thead>
             <tbody>{shownEntries.map((e) => (
               <tr key={e.id} data-testid="staff-cafe-entry"><td>{e.consumerName}{isDev && e.day !== record.date ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}> ({e.day})</span> : null}</td>
