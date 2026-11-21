@@ -759,3 +759,29 @@ export function StaleShiftsAlert({ hotelId, hotels, refreshKey }) {
     </div>
   );
 }
+
+/* الجداول الكبيرة على الموبايل بتبقى كروت (cx-stack): كل خانة بعنوان عمودها. الـ ref ده بيكتب عنوان العمود
+   (من رأس الجدول) على كل خانة لوحده، وبيتحدّث مع أي تغيير في الصفوف - من غير ما نكتب data-label في كل جدول بإيدينا */
+export function stackLabels(table) {
+  if (!table || table.__stackObs) return;
+  const apply = () => {
+    const heads = [];
+    const hr = table.tHead?.rows?.[0];
+    if (hr) Array.from(hr.cells).forEach((th) => { for (let k = 0; k < (th.colSpan || 1); k++) heads.push(th.textContent.trim()); });
+    if (!heads.length) return;
+    Array.from(table.querySelectorAll(":scope > tbody > tr, :scope > tfoot > tr")).forEach((tr) => {
+      let col = 0;
+      Array.from(tr.cells).forEach((td) => {
+        if (!td.hasAttribute("data-label") || td.dataset.autoLabel) {
+          const lbl = (td.colSpan || 1) > 1 ? "" : heads[col] || "";
+          if (lbl) { td.setAttribute("data-label", lbl); td.dataset.autoLabel = "1"; }
+        }
+        col += td.colSpan || 1;
+      });
+    });
+  };
+  apply();
+  const obs = new MutationObserver(apply);
+  obs.observe(table, { childList: true, subtree: true });
+  table.__stackObs = obs;
+}

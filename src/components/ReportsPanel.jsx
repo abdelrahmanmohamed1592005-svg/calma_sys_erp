@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Copy, Printer, Wallet, Receipt, Landmark, BedDouble } from "lucide-react";
-import { DateRange, Logo, RoomName, StaleShiftsAlert } from "./shared";
+import { DateRange, Logo, RoomName, StaleShiftsAlert, stackLabels } from "./shared";
 import { getBookingsOverlapping, bookingsWindowStart } from "../data/bookings";
 import { emptyMoney, computeShiftTotals, trackBalances, methodTransactions, bookingDueLines, formatMoneyLines, onlineRoomCovered, directBookingPaymentsByMethod, fmt, money, currencyKeysOf, PAYMENT_METHODS, EXPENSE_CATEGORIES } from "../domain/money";
 import { SHIFTS, GROUP_NAME } from "../domain/constants";
@@ -307,7 +307,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
 
           {rangeMode === "day" && (
             <div style={{ overflowX: "auto", marginBottom: 14 }}>
-              <table className="cx-table" style={{ fontSize: 13, minWidth: 700 }}>
+              <table ref={stackLabels} className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 700 }}>
                 <thead><tr><th className="cx-th">الشيفت</th><th className="cx-th">الموظف</th><th className="cx-th">الحالة</th><th className="cx-th">التحصيل</th><th className="cx-th">المصاريف</th><th className="cx-th">رصيد الخزينة</th><th className="cx-th">متابعة</th></tr></thead>
                 <tbody>
                   {dayHotels.flatMap((h) => SHIFTS.map((s) => { const r = dayRecord(h.id, s.key); const lbl = group ? `${h.name} - ${s.label}` : s.label; if (!r) return (<tr key={h.id + s.key}><td>{lbl}</td><td colSpan={6} style={{ color: "var(--muted)" }}>لا يوجد سجل</td></tr>); const t = r.closed ? r : computeShiftTotals(r);
@@ -321,7 +321,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
           {group && (
             <div className="cx-card" style={{ padding: 12, marginBottom: 14 }} data-testid="report-per-hotel">
               <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 6, color: "var(--ink)" }}>ملخص كل فندق</div>
-              <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">الفندق</th><th className="cx-th">التحصيل</th><th className="cx-th">المصاريف</th><th className="cx-th">الصافي</th></tr></thead>
+              <div style={{ overflowX: "auto" }}><table ref={stackLabels} className="cx-table cx-stack" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">الفندق</th><th className="cx-th">التحصيل</th><th className="cx-th">المصاريف</th><th className="cx-th">الصافي</th></tr></thead>
                 <tbody>{perHotel.map(({ hotel: h, agg: a }) => <tr key={h.id}><td style={{ fontWeight: 700 }}>{h.name}</td><td><MoneyLines obj={a.totalCollections} /></td><td><MoneyLines obj={a.totalExpenses} /></td><td><MoneyLines obj={a.netCash} /></td></tr>)}</tbody></table></div>
               <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 6 }}>التحصيل هنا من اليوميات؛ الأرقام التفصيلية تحت مجمّعة لكل الفنادق. اختار فندق من الزرار فوق لتقريره لوحده.</div>
             </div>
@@ -337,7 +337,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
           <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 2, color: "var(--ink)" }}>التحصيل حسب طريقة الدفع والعملة</div>
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>كل تحصيل أو رد فلوس بيتسجّل من اليومية تلقائيًا.</div>
-            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{allMethods.filter((m) => reportCurrencies.some((c) => Math.abs(Number(combinedByMethodCurrency[m]?.[c]) || 0) > 0.004)).map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
+            <div style={{ overflowX: "auto" }}><table ref={stackLabels} className="cx-table cx-stack" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">طريقة الدفع</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{allMethods.filter((m) => reportCurrencies.some((c) => Math.abs(Number(combinedByMethodCurrency[m]?.[c]) || 0) > 0.004)).map((m) => <tr key={m}><td>{m}</td>{reportCurrencies.map((c) => <td key={c}>{money(combinedByMethodCurrency[m], c)}</td>)}</tr>)}</tbody></table></div>
           </div>
 
           {allMethods.some((m) => currencyKeysOf(agg.balances?.[m]?.opening, agg.balances?.[m]?.closing, m === "كاش" ? agg.cashCollections : agg.byMethodCurrency?.[m]).length > 0) && (
@@ -345,7 +345,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
               <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 2, color: "var(--ink)" }}>متابعة العهدة والتحصيل حسب وسيلة الدفع والعملة</div>
               <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>"الإجمالي دلوقتي" = رصيد آخر شيفت في الفترة (بالعهدة اللي فاتح الشيفت كتبها).</div>
               <div style={{ overflowX: "auto" }}>
-                <table className="cx-table" style={{ fontSize: 13 }}>
+                <table ref={stackLabels} className="cx-table cx-stack" style={{ fontSize: 13 }}>
                   <thead><tr><th className="cx-th">الوسيلة</th><th className="cx-th">العملة</th><th className="cx-th">كانت قبل</th><th className="cx-th">حصلت في الفترة</th><th className="cx-th">مصاريف الفترة</th><th className="cx-th">الإجمالي دلوقتي</th></tr></thead>
                   <tbody>
                     {allMethods.flatMap((m) => {
@@ -375,7 +375,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
               <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 2, color: "var(--ink)" }}>تفاصيل عمليات الفيزا والتحويلات</div>
               <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>كل عملية بتفاصيلها: الفيزا بآخر 4 أرقام من الكارت، والتحويل (فودافون كاش / انستاباي / بنكي) باسم المرسل ورقمه.</div>
               <div style={{ overflowX: "auto" }}>
-                <table className="cx-table" style={{ fontSize: 13, minWidth: 640 }}>
+                <table ref={stackLabels} className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 640 }}>
                   <thead><tr><th className="cx-th">التاريخ</th><th className="cx-th">الشيفت</th><th className="cx-th">الوسيلة</th><th className="cx-th">التفاصيل</th><th className="cx-th">الجهة</th><th className="cx-th">المبلغ</th></tr></thead>
                   <tbody>{nonCashTx.map((t, i) => (
                     <tr key={i}><td style={{ whiteSpace: "nowrap" }}><bdi dir="ltr" className="cx-rn">{t.date}</bdi></td><td>{SHIFTS.find((x) => x.key === t.shiftKey)?.label}</td><td>{t.method}</td><td dir="ltr" style={{ textAlign: "right" }}>{t.details || "—"}</td><td>{t.where}</td><td style={{ fontWeight: 700 }}>{fmt(t.amount)} {t.currency}</td></tr>
@@ -395,7 +395,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
               </div>
               {staffPeriod.length > 0 && (
                 <div style={{ overflowX: "auto", marginBottom: 8 }}>
-                  <table className="cx-table" style={{ fontSize: 13, minWidth: 520 }}>
+                  <table ref={stackLabels} className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 520 }}>
                     <thead><tr><th className="cx-th">التاريخ</th><th className="cx-th">الموظف</th><th className="cx-th">البيان</th><th className="cx-th">المبلغ</th><th className="cx-th">اتدفع</th><th className="cx-th">الباقي</th></tr></thead>
                     <tbody>{staffPeriod.map((e) => <tr key={e.id}><td>{e.day}</td><td>{e.consumerName}</td><td>{e.description || "—"}</td><td>{fmt(e.amount)} {e.currency}</td><td>{fmt(e.paidAmount)}</td><td style={{ fontWeight: 700, color: staffOwed(e) > 0 ? "var(--rust)" : "var(--sage)" }}>{staffOwed(e) > 0 ? fmt(staffOwed(e)) : "مسدّد"}</td></tr>)}</tbody>
                   </table>
@@ -412,7 +412,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
 
           {Object.keys(agg.byCategory).length > 0 && <div className="cx-card" style={{ padding: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 6 }}>المصاريف حسب البند</div>
-            <div style={{ overflowX: "auto" }}><table className="cx-table" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">البند</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{Object.keys(agg.byCategory).filter((c) => reportCurrencies.some((cur) => Math.abs(Number(agg.byCategory[c]?.[cur]) || 0) > 0.004)).sort((a, b) => EXPENSE_CATEGORIES.indexOf(a) - EXPENSE_CATEGORIES.indexOf(b)).map((c) => <tr key={c}><td>{c}</td>{reportCurrencies.map((cur) => <td key={cur}>{money(agg.byCategory[c], cur)}</td>)}</tr>)}</tbody></table></div>
+            <div style={{ overflowX: "auto" }}><table ref={stackLabels} className="cx-table cx-stack" style={{ fontSize: 13 }}><thead><tr><th className="cx-th">البند</th>{reportCurrencies.map((c) => <th className="cx-th" key={c}>{c}</th>)}</tr></thead><tbody>{Object.keys(agg.byCategory).filter((c) => reportCurrencies.some((cur) => Math.abs(Number(agg.byCategory[c]?.[cur]) || 0) > 0.004)).sort((a, b) => EXPENSE_CATEGORIES.indexOf(a) - EXPENSE_CATEGORIES.indexOf(b)).map((c) => <tr key={c}><td>{c}</td>{reportCurrencies.map((cur) => <td key={cur}>{money(agg.byCategory[c], cur)}</td>)}</tr>)}</tbody></table></div>
           </div>}
 
           {bAgg.count > 0 && (
@@ -424,7 +424,7 @@ export function ReportsPanel({ rooms: hotelRoomsProp, bookings: hotelBookingsPro
             </div>
             {bAgg.items.length > 0 ? (
               <div style={{ overflowX: "auto" }}>
-                <table className="cx-table" style={{ fontSize: 13, minWidth: 620 }}>
+                <table ref={stackLabels} className="cx-table cx-stack" style={{ fontSize: 13, minWidth: 620 }}>
                   <thead><tr><th className="cx-th">الغرفة / النزيل</th><th className="cx-th">التواريخ</th><th className="cx-th">الإجمالي</th><th className="cx-th">ملاحظة / تأكيد الحجز</th></tr></thead>
                   <tbody>
                     {bAgg.items.map((it) => (

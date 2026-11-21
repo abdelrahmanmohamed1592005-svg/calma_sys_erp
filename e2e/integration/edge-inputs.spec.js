@@ -99,4 +99,21 @@ test.describe("شاشة موبايل صغيرة", () => {
     await goTab(page, "الحجوزات");
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
   });
+
+  test("التقارير واليومية على 360px: الجداول بتبقى كروت، مفيش جدول محتاج سحب يمين وشمال", async ({ page, env }) => {
+    await users(env);
+    await env.seedShift("ahmed", { collections: [{ room: 601, amount: 300, currency: "EGP", method: "فيزا" }] });
+    await page.goto("/"); await login(page, "boss");
+    const wideTables = () => page.evaluate(() => Array.from(document.querySelectorAll("table.cx-table")).filter((t) => t.getBoundingClientRect().width > 0)
+      .map((t) => { let el = t.parentElement; while (el && getComputedStyle(el).overflowX !== "auto") el = el.parentElement; return el ? el.scrollWidth - el.clientWidth : 0; })
+      .filter((d) => d > 2).length);
+    await goTab(page, "التقارير");
+    await expect(page.locator("table.cx-table").first()).toBeVisible();
+    expect(await wideTables()).toBe(0);
+    // كل خانة في الكارت بعنوان عمودها
+    expect(await page.locator("table.cx-stack td[data-label]").count()).toBeGreaterThan(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+    await goTab(page, "اليومية");
+    expect(await wideTables()).toBe(0);
+  });
 });
