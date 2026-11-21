@@ -70,27 +70,18 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, lockLinked = false, b
               {/* ممكن يكون لنفس الغرفة أكتر من صف (لو اتحصّل عليها بوسيلتين دفع أو
                   عملتين مختلفتين، أو اتردّ ليها فلوس) - الصف الإضافي بيتعلّم. */}
               <td data-label="الغرفة" style={{ textAlign: "center", fontWeight: 700, position: "sticky", right: 0, background: "#fff", whiteSpace: "nowrap" }}><RoomName rooms={rooms} number={row.room} />{record.rows.findIndex((r) => r.room === row.room) !== idx && <div style={{ fontSize: 11.5, fontWeight: 400, color: "var(--muted)" }}>صف إضافي</div>}</td>
-              {rl && !locked && onSaveLinked ? (() => {
+              {rl && !locked && onSaveLinked && editIdx === idx ? (() => {
                 const bk = bookings.find((x) => x.id === row.bookingId);
                 const curs = [...new Set([row.collectionCurrency || "EGP", ...(bk ? [bk.currency, ...Object.keys(bk.otherCharges || {})] : [])])];
                 return (
                   <td data-label="التحصيل" colSpan={2}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       <div style={{ fontSize: 12.5 }}>{row.collectionDesc}</div>
-                      {editIdx === idx ? (
                         <div data-testid="ledger-linked-edit" style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
                           <PayLinesInline lines={editLines} onChange={setEditLines} bookingCurrency={bk?.currency || "__none__"} currencies={curs} testid="ledger-pay" />
                           <button className="cx-btn cx-btn-gold" data-testid="ledger-linked-save" style={{ fontSize: 12.5, height: 34 }} onClick={async () => { const ok = await onSaveLinked(idx, row, editLines, bk); if (ok) setEditIdx(null); }}>حفظ</button>
                           <button className="cx-btn cx-btn-outline" style={{ fontSize: 12.5, height: 34 }} onClick={() => setEditIdx(null)}>إلغاء</button>
                         </div>
-                      ) : (
-                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                          <b><bdi dir="ltr">{fmt(row.collectionAmt)} {row.collectionCurrency}</bdi></b> · {row.collectionMethod}
-                          {describePaymentDetails(row.collectionMethod, row.paymentDetails) && <span dir="ltr" style={{ color: "var(--muted)" }}>{describePaymentDetails(row.collectionMethod, row.paymentDetails)}</span>}
-                          <button className="cx-btn cx-btn-outline cx-no-print" data-testid="ledger-linked-open" style={{ fontSize: 12.5, padding: "2px 10px" }} onClick={() => startEdit(idx, row)}>تعديل الدفعة</button>
-                          <span data-testid="ledger-linked-note" style={{ fontSize: 11.5, color: "var(--muted)" }}>دفعة على حجز - التعديل بيظبط المدفوع على الحجز كمان</span>
-                        </div>
-                      )}
                       {(Number(row.expenseAmt) || 0) !== 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>مصروف قديم مسجّل على الغرفة: {row.expenseDesc || row.expenseCategory} - {fmt(row.expenseAmt)} {row.expenseCurrency}</div>}
                     </div>
                   </td>
@@ -104,7 +95,13 @@ function LedgerTable({ record, rooms, locked, onUpdateRow, lockLinked = false, b
                       <input className="cx-input" type="number" placeholder="المبلغ" disabled={rl} value={row.collectionAmt} onChange={(e) => updateRow(idx, { collectionAmt: e.target.value })} style={{ flex: 1 }} />
                       <CurrencyPicker value={row.collectionCurrency} disabled={rl} onChange={(v) => updateRow(idx, { collectionCurrency: v })} />
                     </div>
-                    {rl && !locked && <div data-testid="ledger-linked-note" style={{ fontSize: 11.5, color: "var(--muted)", display: "flex", gap: 4, alignItems: "center" }}><Lock size={10} aria-hidden="true" /> دفعة مسجّلة على حجز - تتعدّل من "تعديل المدفوع" (مدير الشيفت)، ودفعة جديدة من "تسجيل دفعة"</div>}
+                    {rl && !locked && onSaveLinked && (
+                      <div className="cx-no-print" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <button className="cx-btn cx-btn-outline" data-testid="ledger-linked-open" style={{ fontSize: 12.5, padding: "2px 10px" }} onClick={() => startEdit(idx, row)}>تعديل الدفعة</button>
+                        <span data-testid="ledger-linked-note" style={{ fontSize: 11.5, color: "var(--muted)", display: "flex", gap: 4, alignItems: "center" }}><Lock size={10} aria-hidden="true" /> دفعة على حجز - التعديل بيظبط المدفوع على الحجز كمان</span>
+                      </div>
+                    )}
+                    {rl && !locked && !onSaveLinked && <div data-testid="ledger-linked-note" style={{ fontSize: 11.5, color: "var(--muted)", display: "flex", gap: 4, alignItems: "center" }}><Lock size={10} aria-hidden="true" /> دفعة مسجّلة على حجز - تتعدّل من "تعديل المدفوع" (مدير الشيفت)، ودفعة جديدة من "تسجيل دفعة"</div>}
                     {(Number(row.expenseAmt) || 0) !== 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>مصروف قديم مسجّل على الغرفة: {row.expenseDesc || row.expenseCategory} - {fmt(row.expenseAmt)} {row.expenseCurrency}</div>}
                   </div>
                 </td>

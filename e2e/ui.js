@@ -173,3 +173,9 @@ export async function addExtraOnBoard(page, label, amount) {
   await card.getByTestId("extra-add").click();
   await waitIdle(page);
 }
+
+// أقسام الدفع في "تعديل الحجز" مقفولة (تتفتح بضغطة): بنفتحها قبل التعامل مع التحصيل/تعديل المدفوع/مدفوع قبل السيستم
+export async function openPaySections(page) {
+  await page.getByTestId("payment-block").waitFor();
+  await page.evaluate(() => document.querySelectorAll('details[data-paysec="1"]').forEach((d) => { d.open = true; }));
+}

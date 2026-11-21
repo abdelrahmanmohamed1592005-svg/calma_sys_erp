@@ -184,6 +184,17 @@ function DevDeleteBooking({ booking, onDone, showToast }) {
   return <TwoStepButton label="مسح نهائي" confirmLabel="مسح الحجز وكل تحصيله نهائيًا؟" onConfirm={run} />;
 }
 
+/* أقسام الدفع في "تعديل الحجز" مقفولة وبتتفتح بضغطة (title = null: حجز جديد، القسم ظاهر على طول) */
+function PaySec({ id, title, children }) {
+  if (!title) return children;
+  return (
+    <details data-testid={id} data-paysec="1" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
+      <summary style={{ cursor: "pointer", fontSize: 13.5, fontWeight: 700, color: "var(--teal)" }}>{title}</summary>
+      {children}
+    </details>
+  );
+}
+
 export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBookings, perms, role, profile, onInsertBooking, onUpdateBooking, onRefresh, onLog, showToast, pendingEditId, onConsumeEditRequest, dataVersion }) {
   const { hotel } = useHotel();
   const [form, setForm] = useState(null);
@@ -708,11 +719,14 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
                 <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>المتبقي على النزيل</label><div data-testid="balance-due" style={{ fontWeight: 800, fontSize: 15, padding: "6px 0", color: balanceDue > 0 ? "var(--rust)" : "var(--sage)" }}>{fmt(balanceDue)} {form.currency}</div></div>
               </div>
               {isExistingBooking && perms.correctLedger && originalBooking && (
+                <PaySec id="pay-sec-edit" title="تعديل المدفوع (الدفعات المتسجّلة)">
                 <div data-testid="form-edit-payments" style={{ marginTop: 8 }}>
                   <EditPayments booking={originalBooking} scope={perms.correctLedger} me={profile?.username} onDone={async () => { payEditedRef.current = true; if (onRefresh) await onRefresh(); }} showToast={showToast} onLog={onLog} />
                 </div>
+                </PaySec>
               )}
               {!collectionLocked && (
+                <PaySec id="pay-sec-now" title={isExistingBooking ? "تحصيل دلوقتي" : null}>
                 <div data-testid="advance-payment" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{isExistingBooking ? "تحصيل دلوقتي (اختياري) - بوسيلة أو أكتر، وبيتسجّل في اليومية" : "المدفوع حتى الآن (اختياري) - بيتسجّل في اليومية بوسيلته وتفاصيله"}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8, alignItems: "start" }}>
@@ -734,8 +748,10 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
                   })}
                   <button type="button" className="cx-btn cx-btn-outline" data-testid="advance-add-line" style={{ marginTop: 8, fontSize: 13 }} onClick={() => setForm({ ...form, payMore: [...(form.payMore || []), { amount: "", currency: form.currency, method: "كاش", details: emptyPaymentDetails() }] })}><Plus size={13} /> دفعة تانية بوسيلة تانية</button>
                 </div>
+                </PaySec>
               )}
               {canPrior && !form.paymentDetails?.onlinePaid && (
+                <PaySec id="pay-sec-prior" title={isExistingBooking ? "مدفوع قبل السيستم" : null}>
                 <div data-testid="new-prior-paid" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--hair)" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>مدفوع قبل السيستم (اختياري) - بيتكتب على الحجز ومش بيدخل اليومية ولا الخزينة</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
@@ -743,6 +759,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
                     <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>ملاحظة (اتدفع إمتى / إزاي)</label><input className="cx-input" data-testid="new-prior-note" value={form.prior?.note ?? ""} onChange={(e) => setForm({ ...form, prior: { ...form.prior, note: e.target.value } })} /></div>
                   </div>
                 </div>
+                </PaySec>
               )}
               {collectionLocked && <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}><Lock size={11} /> تسجيل التحصيل (كاش / فيزا / تحويل) من صلاحية موظف الشيفت بس - إنت بتحدد سعر الحجز، وحالة الدفع بتتحدّث تلقائيًا أول ما يتحصّل.</div>}
             </div>
