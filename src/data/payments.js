@@ -1,5 +1,6 @@
 import { supabase } from "../lib/supabaseClient";
 import { isMissingFunctionError, OUTDATED_SCHEMA_MESSAGE } from "./schemaCheck";
+import { bookingFxRate, otherDue } from "../domain/money";
 
 /* تسجيل الفلوس بعملية واحدة ذرية في قاعدة البيانات (كله أو ولا حاجة): الحجز + صف الوسيلة في اليومية + كافيتيريا النزيل.
    التحقق (المبلغ ≤ المتبقي، الوسيلة، آخر ٤ أرقام الفيزا، رقم تليفون التحويل) بيتنفّذ في القاعدة نفسها كمان.
@@ -31,7 +32,7 @@ export const recordBookingPaymentOther = ({ bookingId, amount, currency, method,
 
 /* دفعة بعملة غير عملة الحجز بسعر صرف: rate = كام وحدة من عملة الدفعة في كل 1 من عملة الحجز */
 export const recordBookingPaymentFx = ({ bookingId, amount, currency, rate, method, details, note, expectedUpdatedAt }) =>
-  rpc("record_booking_payment_fx", { p_booking: bookingId, p_amount: amount, p_currency: currency, p_rate: rate, p_method: method, p_details: details || {}, p_expected: expectedUpdatedAt || null, p_note: note || "تحصيل" });
+  rpc("record_booking_payment_fx", { p_booking: bookingId, p_amount: amount, p_currency: currency, p_rate: rate ?? null, p_method: method, p_details: details || {}, p_expected: expectedUpdatedAt || null, p_note: note || "تحصيل" });
 
 /* نقل النزيل (الحجز كله) لغرفة تانية فاضية في نفس التواريخ */
 export const moveBookingRoom = ({ bookingId, room, expectedUpdatedAt }) =>
@@ -71,8 +72,7 @@ export async function recordPayLines(booking, lines, note = "تحصيل") {
     const details = l.details || {};
     let r;
     // عملة الحجز = الليالي (والخدمات بنفس العملة)؛ عملة تانية = خدمات بالعملة دي (من غير سعر صرف)
-    if (l.currency === booking.currency) r = await recordBookingPayment({ bookingId: booking.id, amount, method: l.method, details, note });
-    else r = await recordBookingPaymentOther({ bookingId: booking.id, amount, currency: l.currency, method: l.method, details, note });
+    r = await recordAnyPayment(booking, { amount, currency: l.currency, method: l.method, details, note });
     if (r.error) { errors.push(`${label}: ${r.error}`); continue; }
     done.push(label);
     const fee = l.method === "فيزا" && l.currency === booking.currency ? Math.round((Number(l.fee) || 0) * 100) / 100 : 0;
@@ -95,4 +95,14 @@ export function payLinesError(booking, lines, validate) {
     if (Number(l.fee) < 0) return "رسوم الفيزا لازم تكون صفر أو أكتر";
   }
   return null;
+}
+
+/* دفعة بأي عملة: عملة الحجز = عادي؛ عملة عليها خدمات = خدمات العملة دي؛ غير كده (الجنيه أو عملة سعرها متحدد على الحجز)
+   = بتتحوّل لعملة الحجز بسعر الحجز (القاعدة بتاخد السعر من الحجز نفسه) */
+export async function recordAnyPayment(booking, { amount, currency, method, details, note = "تحصيل", expectedUpdatedAt = null }) {
+  const req = { bookingId: booking.id, amount, method, details, note, expectedUpdatedAt };
+  if (!currency || currency === booking.currency) return recordBookingPayment(req);
+  if ((otherDue(booking)[currency] || 0) > 0) return recordBookingPaymentOther({ ...req, currency });
+  if (bookingFxRate(booking, currency)) return recordBookingPaymentFx({ ...req, currency });
+  return recordBookingPaymentOther({ ...req, currency });
 }

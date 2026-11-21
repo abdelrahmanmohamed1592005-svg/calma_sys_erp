@@ -1,8 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
-import { currencyKeysOf, otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails, PAYMENT_METHODS } from "../domain/money";
+import { bookingFxRate, fxCurrencies, currencyKeysOf, otherTotals, otherPaidOf, otherDue, bookingDueLines, onlineRoomCovered, ONLINE_METHODS, refundStatusOf, bookingGrandTotal, bookingAmountDue, fmt, isVisaMethod, normalizeLast4, normalizePhone, emptyPaymentDetails, describePaymentDetails, PAYMENT_METHODS } from "../domain/money";
 import { PRINT_FIT_CSS } from "../lib/printFit";
-import { roomLabel, roomDisplay, SHIFTS } from "../domain/constants";
-import { getStaleOpenShifts } from "../data/shifts";
+import { roomLabel, roomDisplay } from "../domain/constants";
 
 /* حقل نص بيكبر لوحده: لو البيان طويل بينزل على سطر تاني بدل ما يتقصّ (نفس شكل وسلوك الـ <input> العادي:
    Enter مابيعملش سطر جديد). بيتقاس تاني لما النص أو عرض الصفحة يتغيّر. */
@@ -564,14 +563,18 @@ export function PaymentDetailsInline({ method, details, onChange, disabled, comp
    القايمة فيها عملة الحجز + أي عملة عليها خدمات لسه ماتحصّلتش. */
 export function payCurrencyOptions(b) {
   const lines = bookingDueLines(b);
-  return lines.length ? lines : [{ currency: b.currency, due: 0 }];
+  const out = lines.length ? [...lines] : [{ currency: b.currency, due: 0 }];
+  // الجنيه أو أي عملة سعرها بالمصري متحدد على الحجز: الدفعة بتتحوّل لعملة الحجز بالسعر ده
+  const roomDue = bookingAmountDue(b);
+  fxCurrencies(b).forEach((c) => { if (!out.some((o) => o.currency === c)) out.push({ currency: c, due: Math.round(Math.max(0, roomDue) * bookingFxRate(b, c) * 100) / 100, fx: true }); });
+  return out;
 }
 export function PayCurrencySelect({ booking, value, onChange, testid = "pay" }) {
   const opts = payCurrencyOptions(booking);
   if (opts.length < 2) return null;
   return (
     <select className="cx-select" aria-label="عملة الدفعة" data-testid={testid + "-currency"} style={{ width: 150, fontSize: 13 }} value={value || opts[0].currency} onChange={(e) => onChange(e.target.value)}>
-      {opts.map((o) => <option key={o.currency} value={o.currency}>{o.currency} (متبقي {fmt(o.due)})</option>)}
+      {opts.map((o) => <option key={o.currency} value={o.currency}>{o.currency} (متبقي {fmt(o.due)}{o.fx ? " بسعر الحجز" : ""})</option>)}
     </select>
   );
 }
@@ -589,6 +592,7 @@ export function MoneyBox({ b }) {
   if (!online || paid > 0 || due > 0) cells.push([online ? "المتحصّل في الفندق" : "المدفوع", fmt(paid), null]);
   if (Number(b.paymentDetails?.priorPaid) > 0) cells.push([b.paymentDetails.priorPaidNote ? `منها قبل السيستم (${b.paymentDetails.priorPaidNote})` : "منها قبل السيستم", fmt(b.paymentDetails.priorPaid), "var(--muted)"]);
   if (Number(b.extras?.visaFee) > 0) cells.push(["منها رسوم فيزا", fmt(b.extras.visaFee), "var(--muted)"]);
+  Object.entries(b.fxRates || {}).forEach(([c, v]) => { if (Number(v) > 0) cells.push([`سعر الـ ${c} بالمصري`, `${fmt(Number(v))} ج`, "var(--muted)"]); });
   if (b.status !== "ملغي" && (due > 0 || !online)) cells.push([online ? "المتبقي في الفندق (خدمات/دخول مبكر/تمديد)" : "المتبقي", fmt(due), due > 0 ? "var(--rust)" : "var(--sage)"]);
   // خدمات بعملات تانية (كل عملة لوحدها من غير تحويل)
   const oT = otherTotals(b), oP = otherPaidOf(b), oD = otherDue(b);
@@ -733,29 +737,6 @@ export function PayLinesInline({ lines, onChange, bookingCurrency, currencies, t
         </div>
       ))}
       <button type="button" data-testid={`${testid}-add`} style={{ alignSelf: "flex-start", background: "none", border: 0, padding: 0, color: "var(--teal)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }} onClick={() => onChange([...lines, emptyPayLine(lines[0]?.currency || curs[0])])}>+ جزء تاني بوسيلة تانية</button>
-    </div>
-  );
-}
-
-/* تنبيه أحمر: شيفت فاضل مفتوح من امبارح (أو قبله) - مابيتقفلش لوحده، لازم صاحبه أو المدير يقفله */
-export function StaleShiftsAlert({ hotelId, hotels, refreshKey }) {
-  const [list, setList] = useState([]);
-  useEffect(() => {
-    let alive = true;
-    getStaleOpenShifts(hotelId).then((r) => { if (alive) setList(r || []); });
-    return () => { alive = false; };
-  }, [hotelId, refreshKey]);
-  if (!list.length) return null;
-  const label = (k) => SHIFTS.find((s) => s.key === k)?.label || k;
-  const hotelName = (id) => (hotels || []).find((h) => h.id === id)?.name;
-  return (
-    <div data-testid="stale-open-shift" role="alert" style={{ background: "#F4E7E2", border: "1px solid var(--rust)", color: "var(--rust)", borderRadius: 10, padding: "10px 12px", marginBottom: 12, fontWeight: 700, fontSize: 13.5 }}>
-      ⚠ فيه شيفت مفتوح من امبارح - لازم يتقفل:
-      <ul style={{ margin: "6px 0 0", paddingInlineStart: 20, fontWeight: 600 }}>
-        {list.map((r) => (
-          <li key={`${r.hotelId}|${r.date}|${r.shiftKey}`}>{label(r.shiftKey)} يوم <bdi dir="ltr">{r.date}</bdi>{r.staffName ? ` (${r.staffName})` : ""}{hotels && hotels.length > 1 && hotelName(r.hotelId) ? ` - ${hotelName(r.hotelId)}` : ""}</li>
-        ))}
-      </ul>
     </div>
   );
 }

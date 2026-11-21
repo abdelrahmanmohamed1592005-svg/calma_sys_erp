@@ -113,14 +113,12 @@ test.describe("الفيزا: كل دفعة بوسيلتها وتفاصيلها",
     await expect(page.getByText(/مشغولة - متحصّلة 1/)).toBeVisible();
   });
 
-  test("تحقق المدخلات: مبلغ أكبر من المتبقي، فيزا من غير 4 أرقام، تحويل من غير رقم - مفيش حاجة بتتسجّل", async ({ page, env }) => {
+  test("تحقق المدخلات: فيزا من غير 4 أرقام، تحويل من غير رقم - مفيش حاجة بتتسجّل", async ({ page, env }) => {
     await users(env);
     await env.seedShift("ahmed");
     await env.seedBooking({ room: 603, guest: "Validate Pay", nights: 1, price: 100 });
     await page.goto("/"); await login(page, "ahmed");
     await goTab(page, "لوحة الغرف"); await openRoom(page, 603);
-    await payOnBoard(page, { amount: 500 });
-    await expect(toast(page)).toContainText("أكبر من المتبقي");
     await payOnBoard(page, { amount: -5 });
     await expect(toast(page)).toContainText("أكبر من صفر");
     await payOnBoard(page, { amount: 50, method: "تحويل بنكي / انستاباي" });

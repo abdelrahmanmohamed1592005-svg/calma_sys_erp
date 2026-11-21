@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Pencil, Check, X, Plus, ArrowLeftRight, Eye, AlertTriangle, Search, Wallet, Receipt, BedDouble, CalendarDays, Moon, Users, Hash, LogIn, LogOut } from "lucide-react";
-import { fmt, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, bookingDueLines, formatMoneyLines, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
+import { bookingFxRate, fmt, emptyMoney, currencyKeysOf, computeShiftTotals, bookingGrandTotal, bookingAmountDue, bookingDueLines, formatMoneyLines, COMMON_CURRENCIES, PAYMENT_METHODS, emptyPaymentDetails, cleanPaymentDetailsFor, validatePaymentDetailsFor, describePaymentDetails, ONLINE_METHODS } from "../domain/money";
 import { todayStr, shiftDayNow, nightsBetween, addDays, beforeCheckoutHour, beforeExtendCutoff, uid } from "../domain/dates";
 import { SHIFTS, STATUS_COLORS, MANUAL_STATUS_OPTIONS, roomLabel } from "../domain/constants";
 import { computeRoomStatus, roomStart, roomsOverlap, findOverlappingBooking, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries } from "../domain/bookingLogic";
 import { getShiftRecord, getBookingPayments } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentOther, moveBookingRoom, recordVisaFee, recordPayLines, payLinesError } from "../data/payments";
+import { moveBookingRoom, recordVisaFee, recordPayLines, payLinesError, recordAnyPayment } from "../data/payments";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { roomOptionLabel, PayCurrencySelect, payCurrencyOptions, DateRange, RoomName, GuestCodeChips, GuestCodeHits, TwoStepButton, MoneyBox, RefundBox, PaymentDetailsInline, PayBreakdown, MoneyStack, PayLinesInline, emptyPayLine } from "./shared";
 import { sanitizeText } from "../domain/security";
@@ -186,11 +186,10 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     const moreErr = payLinesError(booking, more, validatePaymentDetailsFor);
     if (moreErr) { showToast(moreErr); return; }
     const moreSum = Math.round(more.reduce((t, l) => t + Number(l.amount), 0) * 100) / 100;
-    const typed = pay.amount === "" ? due - moreSum : Number(pay.amount);
+    const typed = pay.amount === "" ? Math.max(0, due - moreSum) : Number(pay.amount);
     const amount = Math.round((Number(typed) || 0) * 100) / 100;
     if (!(amount > 0) && !more.length) { showToast("اكتب مبلغ الدفعة (أكبر من صفر)"); return; }
-    if (amount < 0) { showToast(`الدفعات أكبر من المتبقي على النزيل بالـ ${cur} (${fmt(due)} ${cur})`); return; }
-    if (amount + moreSum > due + 0.004) { showToast(`المبلغ أكبر من المتبقي على النزيل بالـ ${cur} (${fmt(due)} ${cur})`); return; }
+    // الجيست يدفع أكتر من اللي عليه عادي (قرار المالك)
     const detailsErr = validatePaymentDetailsFor(pay.method, pay.details);
     if (detailsErr) { showToast(detailsErr); return; }
     if (!myActiveShiftKey && !perms.devTools) { showToast("مفيش شيفتك شغال دلوقتي - التحصيل لازم يتسجّل في يومية شيفتك"); return; }
@@ -206,7 +205,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     const req = { bookingId: booking.id, amount, method, details: rawDetails, note: "تحصيل", expectedUpdatedAt: booking.updatedAt };
     let res = { data: {} };
     if (amount > 0) {
-      res = other ? await recordBookingPaymentOther({ ...req, currency: cur }) : await recordBookingPayment(req);
+      res = await recordAnyPayment(booking, { ...req, currency: cur });   // عملة تانية: خدماتها أو بسعر الحجز بالمصري
       if (res?.error) { showToast(res.error); if (onRefresh) onRefresh(); setPay({ ...before, amount: String(amount) }); return; }
     }
     let moreNote = "";
@@ -230,7 +229,10 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
     if (onRefresh) await onRefresh();
     getBookingPayments(booking).then((r) => { if (r) setPayBreakdown(r); });     // تفصيل المدفوع بالوسيلة بعد ما اليومية اتحدّثت
     const cafe = Number(out.cafeteria) || 0;
-    const left = opts.map((o) => (o.currency === cur ? { ...o, due: Math.max(0, Math.round((o.due - amount - moreSum) * 100) / 100) } : o)).filter((o) => o.due > 0.004);
+    // دفعة بسعر الحجز بالمصري (fx): بتتخصم من متبقي عملة الحجز بالمقابل
+    const curOpt = opts.find((o) => o.currency === cur);
+    const paidIn = curOpt?.fx ? { currency: booking.currency, amount: (amount + moreSum) / (bookingFxRate(booking, cur) || 1) } : { currency: cur, amount: amount + moreSum };
+    const left = opts.filter((o) => !o.fx).map((o) => (o.currency === paidIn.currency ? { ...o, due: Math.max(0, Math.round((o.due - paidIn.amount) * 100) / 100) } : o)).filter((o) => o.due > 0.004);
     showToast(`تم تسجيل ${paidText}${moreNote}${feeNote} (${method}${detailsText ? " " + detailsText : ""})${cafe > 0 ? ` - منها ${fmt(cafe)} ${cur} كافيتيريا` : ""} - ${left.length ? `المتبقي ${formatMoneyLines(left)}` : "الحجز مدفوع بالكامل"}`);
   }
   // غادر مبكرًا: بيقصّر الإقامة لحد النهارده (الحد الأدنى ليلة). مفيش رد فلوس: لو كان دافع زيادة، الفلوس بتفضل في الفندق.

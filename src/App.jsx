@@ -18,6 +18,7 @@ import { getRooms, getRoomOverrides, setRoomOverride } from "./data/rooms";
 import { getBookings, insertBooking, updateBookingIfUnchanged, promoteContinuations } from "./data/bookings";
 import { getActivity, addActivity } from "./data/activity";
 import { getHotels, DEFAULT_HOTELS, setActiveHotelId, getActiveHotelId } from "./data/hotels";
+import { autoCloseStaleShifts } from "./data/shifts";
 import { getMyClaims } from "./data/shifts";
 import { HotelContext } from "./lib/hotelContext";
 
@@ -185,6 +186,7 @@ export default function App() {
   // حجوزات وحركات اللي قبله، ولو قراءاته فشلت أو اتفلترت بالصلاحيات كانت بتفضل ظاهرة
   const loadedOnce = useRef(false);
   const promotedRef = useRef("");
+  const autoClosedRef = useRef(false);
   useEffect(() => {
     setBookings([]); setActivity([]); setOverrides({}); setAllProfiles([]); setLoadingData(true); setTab("board");
     setSchemaState({ ok: null }); loadedOnce.current = false; setJump(null); setPaletteOpen(false);
@@ -195,6 +197,8 @@ export default function App() {
     let cancelled = false;
     const seqAtStart = mutationSeq.current;
     (async () => {
+      // شيفت فضل مفتوح أكتر من ٢٤ ساعة بعد معاده: بيتقفل لوحده على السيرفر (مرة مع أول تحميل)
+      if (!autoClosedRef.current) { autoClosedRef.current = true; await autoCloseStaleShifts(); }
       const [r, o, b, a, h] = await Promise.all([getRooms(), getRoomOverrides(), getBookings(), getActivity(), getHotels()]);
       if (cancelled) return;
       if (mutationSeq.current !== seqAtStart) { setDataVersion((v) => v + 1); return; }

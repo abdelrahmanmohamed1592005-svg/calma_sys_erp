@@ -9,7 +9,8 @@ function bookingFromRow(r) {
     totalRoom: Number(r.total_room) || 0, extras: r.extras || { laundry: 0, cafeteria: 0, tours: 0, pickup: 0 },
     earlyCheckin: r.early_checkin || { applied: false, fee: 0, note: "" },
     guestCodes: Array.isArray(r.guest_codes) ? r.guest_codes.map((c) => String(c ?? "")) : [],
-    continuesFrom: r.continues_from || null,   // حجز تكملة (تمديد بعملة تانية): رقم الحجز الأصلي
+    continuesFrom: r.continues_from || null,
+    fxRates: r.fx_rates && typeof r.fx_rates === "object" ? r.fx_rates : {},   // سعر العملة بالمصري على الحجز ده: { USD: 50 }   // حجز تكملة (تمديد بعملة تانية): رقم الحجز الأصلي
     paymentMethod: r.payment_method, paymentDetails: r.payment_details || { senderName: "", senderNumber: "", ref: "", onlinePaid: false },
     amountPaid: Number(r.amount_paid) || 0,
     // خدمات ودفعات بعملة غير عملة الحجز (قسم ٤٠): كل عملة لوحدها من غير تحويل
@@ -37,6 +38,12 @@ function bookingFromRow(r) {
   };
 }
 
+/* سعر العملة بالمصري: أرقام موجبة بس لعملات غير الجنيه */
+function cleanFxRates(m) {
+  const out = {};
+  Object.entries(m || {}).forEach(([c, v]) => { const n = Math.round((Number(v) || 0) * 10000) / 10000; if (c && c !== "EGP" && /^[A-Z]{3}$/.test(c) && n > 0) out[c] = n; });
+  return out;
+}
 function bookingToRow(b) {
   return {
     code: b.code || null, room: b.room, guest_name: b.guestName, phone: b.phone, pax: Number(b.pax) || 1,
@@ -50,6 +57,7 @@ function bookingToRow(b) {
     left_early: !!b.leftEarly, duplicate_placement: !!b.duplicatePlacement,
     guest_codes: Array.isArray(b.guestCodes) ? b.guestCodes : [],
     ...(b.continuesFrom ? { continues_from: b.continuesFrom } : {}),
+    fx_rates: cleanFxRates(b.fxRates),
     // حقول رد الفلوس (refund_*) مش بتتبعت من الواجهة خالص: طلب الرد بيتفتح
     // تلقائيًا في قاعدة البيانات، وقراره (رد/إبقاء) بيتم بس عن طريق
     // decideBookingRefund تحت (مدير الحجوزات بس).

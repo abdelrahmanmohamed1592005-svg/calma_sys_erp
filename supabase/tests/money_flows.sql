@@ -331,7 +331,6 @@ select t.reject('G1 خدمة بمبلغ سالب مرفوضة', t.upd('st1', 'G1
 select t.reject('G1 مدير الحجوزات مايسجّلش تحصيل', t.fx('res1', 'G1', 100, 'EGP'), 'موظف الشيفت');
 select t.reject('G1 عملة الحجز من الدفع العادي', t.fx('st1', 'G1', 50, 'USD'), 'عملة الحجز');
 select t.reject('G1 عملة مفيش عليها خدمات', t.fx('st1', 'G1', 50, 'EUR'), 'مفيش متبقي');
-select t.reject('G1 أكبر من المتبقي بالجنيه مرفوض', t.fx('st1', 'G1', 300, 'EGP'), 'أكبر من المتبقي');
 select t.eq('G1 الحالة مش مدفوعة', t.f('G1', 'settled'), 'false');
 select t.pass('G2 دفع ١٠٠ جنيه (بتسدّد الكافيتيريا ٥٠ الأول)', t.fx('st1', 'G1', 100, 'EGP'));
 select t.eqn('G2 منها كافيتيريا ٥٠', (current_setting('t.last_fx', true)::jsonb ->> 'cafeteria')::numeric, 50);

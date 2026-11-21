@@ -74,10 +74,6 @@ export function shiftEndTime(dateStr, key) {
   return new Date(y, m - 1, d, key === "morning" ? 16 : key === "evening" ? 24 : 32, 0, 0);
 }
 export const isShiftOver = (dateStr, key, now = new Date()) => now.getTime() >= shiftEndTime(dateStr, key).getTime();
-/* شيفت فاضل مفتوح من يوم فات (عدّى معاده + ساعتين أوفر تايم) - تنبيه بس، مابيتقفلش لوحده (قرار المالك) */
-export const isStaleOpenShift = (rec, now = new Date()) => !!rec && !rec.closed && rec.date < shiftDayNow(now)
-  && now.getTime() >= shiftEndTime(rec.date, rec.shiftKey).getTime() + 2 * 3600 * 1000;
-
 export function defaultShiftForNow() {
   const h = new Date().getHours();
   if (h >= 8 && h < 16) return "morning";

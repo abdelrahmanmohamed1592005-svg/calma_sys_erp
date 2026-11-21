@@ -2482,7 +2482,7 @@ begin
     raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني';
   end if;
   due := greatest(0, booking_hotel_total(b) - coalesce(b.amount_paid, 0));
-  if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل (%)', trim_scale(due); end if;
+  -- الجيست يدفع أكتر من اللي عليه عادي (قرار المالك - قسم ٦٠)
   perform set_config('calma.dev_hotel', b.hotel_id::text, true);   -- المطوّر: الدفعة بتدخل الشيفت المفتوح في فندق الحجز
   sr := calma_my_open_shift();
   if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
@@ -2865,7 +2865,6 @@ begin
   if not (is_staff() or is_dev()) then raise exception 'تسجيل التحصيل من صلاحية موظف الشيفت بس'; end if;
   if amt is null or amt <= 0 then raise exception 'اكتب مبلغ الدفعة (أكبر من صفر)'; end if;
   if cur !~ '^[A-Z]{3}$' then raise exception 'اختار عملة الدفعة'; end if;
-  if rate is null or rate <= 0 or rate > 1000000 then raise exception 'اكتب سعر الصرف (أكبر من صفر)'; end if;
   if not calma_valid_method(p_method) then raise exception 'وسيلة الدفع غير صالحة'; end if;
   err := calma_details_err(p_method, coalesce(p_details, '{}'::jsonb));
   if err is not null then raise exception '%', err; end if;
@@ -2874,6 +2873,9 @@ begin
   if not found then raise exception 'الحجز مش موجود'; end if;
   if b.status = 'ملغي' then raise exception 'الحجز ملغي - مينفعش يتحصّل عليه'; end if;
   if cur = b.currency then raise exception 'الدفعة بنفس عملة الحجز - سجّلها من غير سعر صرف'; end if;
+  -- سعر العملة بالمصري متحدد على الحجز نفسه (fx_rates - قسم ٦٠): بيتاخد من هناك، مش من الشاشة
+  rate := calma_booking_fx_rate(b, cur);
+  if rate is null or rate <= 0 or rate > 1000000 then raise exception 'حدد سعر العملة بالمصري في الحجز (تعديل الحجز) الأول - % مقابل الجنيه', case when cur = 'EGP' then b.currency else cur end; end if;
   if p_expected is not null and b.updated_at is distinct from p_expected then
     raise exception 'الحجز اتغيّر من حد تاني - حدّث الصفحة وجرّب تاني';
   end if;
@@ -2881,7 +2883,6 @@ begin
   covered := round(amt / rate, 2);
   if covered > due and covered - due <= 0.01 then covered := due; end if;      -- كسور التقريب
   if covered <= 0 then raise exception 'المبلغ صغير جدًا بالنسبة لسعر الصرف'; end if;
-  if covered > due then raise exception 'المبلغ (= % %) أكبر من المتبقي على النزيل (% %)', trim_scale(covered), b.currency, trim_scale(due), b.currency; end if;
   perform set_config('calma.dev_hotel', b.hotel_id::text, true);   -- المطوّر: الدفعة بتدخل الشيفت المفتوح في فندق الحجز
   sr := calma_my_open_shift();
   if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
@@ -3060,7 +3061,6 @@ begin
   c := coalesce(b.other_charges -> cur, '{}'::jsonb);
   due := greatest(0, calma_other_total(c) - calma_num(b.other_paid ->> cur));
   if due <= 0 then raise exception 'مفيش متبقي على النزيل بالـ %', cur; end if;
-  if amt > due then raise exception 'المبلغ أكبر من المتبقي على النزيل بالـ % (%)', cur, trim_scale(due); end if;
   perform set_config('calma.dev_hotel', b.hotel_id::text, true);   -- المطوّر: الدفعة بتدخل الشيفت المفتوح في فندق الحجز
   sr := calma_my_open_shift();
   if sr.hotel_id is distinct from b.hotel_id then raise exception 'الحجز ده تابع لفندق تاني غير فندق شيفتك - التحصيل بيتسجّل في يومية فندق الحجز'; end if;
@@ -5365,7 +5365,62 @@ $$;
 revoke all on function calma_journaled_booking_ids() from public, anon;
 grant execute on function calma_journaled_booking_ids() to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 62 $$;
+-- --------------------------------------------------------------------------
+-- 60) قرار المالك:
+--     (أ) الشيفت اللي فضل مفتوح بيتقفل لوحده بعد ٢٤ ساعة من نهاية معاده (٣ شيفتات) - أرقامه بتتحسب على السيرفر.
+--     (ب) الجيست يدفع أكتر من اللي عليه عادي (قيد bookings_no_overpay اتشال، وقيود "أكبر من المتبقي" في التحصيل).
+--     (ج) سعر العملة بالمصري متحدد على كل حجز (fx_rates = {"USD": 50} يعني الدولار بـ ٥٠ جنيه): الجيست يدفع بالجنيه
+--         أو بالعملة دي والسيستم بيحوّل لعملة الحجز بالسعر ده. الدفعات القديمة بتفضل بسعرها.
+-- --------------------------------------------------------------------------
+drop trigger if exists bookings_zzz_no_overpay on bookings;
+drop function if exists bookings_no_overpay();
+
+alter table bookings add column if not exists fx_rates jsonb not null default '{}'::jsonb;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'bookings_fx_rates_shape') then
+    alter table bookings add constraint bookings_fx_rates_shape check (jsonb_typeof(fx_rates) = 'object' and octet_length(fx_rates::text) <= 500) not valid;
+  end if;
+end $$;
+
+-- كام وحدة من عملة الدفعة = وحدة واحدة من عملة الحجز (بسعر كل عملة بالمصري على الحجز؛ الجنيه = ١). null لو السعر مش متحدد
+create or replace function calma_booking_fx_rate(b bookings, p_cur text)
+returns numeric language plpgsql immutable as $$
+declare rb numeric; rp numeric;
+begin
+  rb := case when b.currency = 'EGP' then 1 else nullif(calma_num(b.fx_rates ->> b.currency), 0) end;
+  rp := case when p_cur = 'EGP' then 1 else nullif(calma_num(b.fx_rates ->> p_cur), 0) end;
+  if rb is null or rp is null then return null; end if;
+  return rb / rp;
+end;
+$$;
+
+-- قفل تلقائي: أي شيفت مفتوح عدّى ٢٤ ساعة على نهاية معاده - الأرقام والإقفال على السيرفر
+create or replace function calma_auto_close_stale_shifts()
+returns integer language plpgsql security definer set search_path = public as $$
+declare sr shift_records%rowtype; t jsonb; n int := 0;
+begin
+  if auth.uid() is not null and not is_active_user() then return 0; end if;
+  perform set_config('calma.currency_fix', '1', true);       -- إقفال من السيستم نفسه (مش من موظف)
+  for sr in select * from shift_records where closed = false and now() >= calma_shift_end(date, shift_key) + interval '24 hours'
+    order by date, calma_shift_ord(shift_key) for update skip locked
+  loop
+    t := calma_shift_totals(sr.rows, sr.cafeteria, sr.cafeteria_rows, sr.hotel_rows, sr.handover, sr.method_handover);
+    update shift_records set closed = true, closed_by = 'إقفال تلقائي', closed_at = now(),
+      total_expenses = t -> 'total_expenses', total_collections = t -> 'total_collections', cash_collections = t -> 'cash_collections',
+      by_method_currency = t -> 'by_method_currency', by_category = t -> 'by_category', closing_cash = t -> 'closing_cash', method_closing = t -> 'method_closing'
+    where hotel_id = sr.hotel_id and date = sr.date and shift_key = sr.shift_key;
+    insert into activity_log(action, hotel_id) values ('إقفال تلقائي لشيفت ' || case sr.shift_key when 'morning' then 'الصباحي' when 'evening' then 'المسائي' else 'الليلي' end
+      || ' يوم ' || sr.date || ' (' || coalesce(sr.staff_name, '') || ') - فضل مفتوح أكتر من ٢٤ ساعة بعد معاده', sr.hotel_id);
+    n := n + 1;
+  end loop;
+  perform set_config('calma.currency_fix', '', true);
+  return n;
+end;
+$$;
+revoke all on function calma_auto_close_stale_shifts() from public, anon;
+grant execute on function calma_auto_close_stale_shifts() to authenticated;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 63 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

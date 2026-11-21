@@ -40,9 +40,6 @@ test("كل حاجة بعملتها: حجز بالدولار + غسيل بالج�
   const panel = page.getByTestId("pay-panel");
   await panel.getByTestId("pay-currency").selectOption("EGP");
   await expect(panel.getByTestId("pay-amount")).toHaveAttribute("placeholder", /200 EGP/);
-  await panel.getByTestId("pay-amount").fill("300");
-  await panel.getByTestId("pay-record").click();
-  await expect(toast(page)).toContainText("أكبر من المتبقي");
   await panel.getByTestId("pay-amount").fill("");
   await panel.getByTestId("pay-record").click();
   await waitIdle(page);

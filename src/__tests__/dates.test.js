@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addDays, nightsBetween, parseDateFlexible, nextShiftOf, prevShiftOf, isSameDay, isShiftActiveNow, shiftDayNow, managerCanCorrect, isStaleOpenShift } from "../domain/dates";
+import { addDays, nightsBetween, parseDateFlexible, nextShiftOf, prevShiftOf, isSameDay, isShiftActiveNow, shiftDayNow, managerCanCorrect } from "../domain/dates";
 
 describe("addDays", () => {
   it("adds positive days across month boundary", () => {
@@ -153,19 +153,5 @@ describe("مدير الشيفت: يومه + الليلي اللي قبله", () 
     expect(managerCanCorrect("2026-11-20", "morning", now)).toBe(true);
     expect(managerCanCorrect("2026-11-19", "night", now)).toBe(true);
     expect(managerCanCorrect("2026-11-19", "evening", now)).toBe(false);
-  });
-});
-
-describe("تنبيه شيفت مفتوح من امبارح", () => {
-  const rec = (date, shiftKey, closed = false) => ({ date, shiftKey, closed });
-  it("الليلي اللي لسه خالص الساعة ٨: مفيش تنبيه لحد ما تعدّي ساعتين", () => {
-    expect(isStaleOpenShift(rec("2026-11-20", "night"), new Date("2026-11-21T09:00:00"))).toBe(false);
-    expect(isStaleOpenShift(rec("2026-11-20", "night"), new Date("2026-11-21T10:30:00"))).toBe(true);
-  });
-  it("مسائي امبارح مفتوح الصبح = تنبيه، والمقفول أو بتاع النهارده لأ", () => {
-    const now = new Date("2026-11-21T09:00:00");
-    expect(isStaleOpenShift(rec("2026-11-20", "evening"), now)).toBe(true);
-    expect(isStaleOpenShift(rec("2026-11-20", "evening", true), now)).toBe(false);
-    expect(isStaleOpenShift(rec("2026-11-21", "morning"), now)).toBe(false);
   });
 });

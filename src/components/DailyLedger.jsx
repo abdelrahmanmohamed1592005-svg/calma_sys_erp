@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Lock, Unlock, AlertTriangle, History, Plus, Printer, LockOpen, DoorOpen, Building2, Landmark, MessageSquareText, CalendarClock, Coffee, FileX, Send, PencilLine, Check, X } from "lucide-react";
-import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel, TwoStepButton, PayLinesInline, emptyPayLine, StaleShiftsAlert } from "./shared";
+import { Logo, AutoText, SectionHead, EmptyState, RoomName, roomOptionLabel, TwoStepButton, PayLinesInline, emptyPayLine } from "./shared";
 import { guarded } from "../lib/busy";
 import { devDeleteShift, payLinesError } from "../data/payments";
 import { CafeteriaSection } from "./CafeteriaPanel";
@@ -683,7 +683,6 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
 
   return (
     <div className="cx-page">
-      <div className="cx-no-print"><StaleShiftsAlert hotelId={hotelId} hotels={hotels} refreshKey={`${dataVersion}|${mode}|${record?.closed}`} /></div>
       <div className="cx-no-print" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         {perms.editLedger && <button className={"cx-btn " + (mode === "live" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("live")}>{perms.devTools ? "الشيفت المفتوح" : "شيفتي النهارده"}</button>}
         <button className={"cx-btn " + (mode === "history" ? "cx-btn-gold" : "cx-btn-outline")} onClick={() => setMode("history")}><History size={14} /> {perms.correctLedger ? "استعراض وتصحيح شيفتات سابقة" : "استعراض شيفتات سابقة (قراءة فقط)"}</button>

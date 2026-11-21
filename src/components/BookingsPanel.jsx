@@ -8,7 +8,7 @@ import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, ea
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
 import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, splitLedgerPaymentRow } from "../data/shifts";
-import { recordBookingPayment, recordBookingPaymentOther, changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError } from "../data/payments";
+import { recordBookingPayment, changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError, recordAnyPayment } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
 import { searchBookings, getBookingsOverlapping, bookingsWindowStart } from "../data/bookings";
 import { guarded } from "../lib/busy";
@@ -25,7 +25,7 @@ function StepHead({ n, title, hint, done, optional }) {
 }
 
 function emptyBooking() {
-  return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, guestCodes: [""], checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "EGP", totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", notes: "", imported: false, needsRoomReview: false,
+  return { id: uid(), code: "", room: "", guestName: "", phone: "", pax: 1, guestCodes: [""], checkin: todayStr(), checkout: addDays(todayStr(), 1), priceNight: "", currency: "EGP", fxRates: {}, totalRoom: "", extras: { laundry: "", cafeteria: "", tours: "", pickup: "" }, earlyCheckin: { applied: false, fee: "", note: "" }, paymentMethod: "كاش", paymentDetails: emptyPaymentDetails(), amountPaid: "", source: "مباشر", status: "مؤكد", approvalStatus: "approved", notes: "", imported: false, needsRoomReview: false,
     // دفعة مقدّمة (اختيارية) وقت إضافة الحجز - كل دفعة ليها وسيلتها وتفاصيلها (آخر ٤ أرقام الفيزا / اسم ورقم المحوِّل) وبتتسجّل في اليومية بيهم
     payNow: { amount: "", method: "كاش", details: emptyPaymentDetails(), fee: "" }, payMore: [],
     // مدفوع قبل السيستم (اختياري): اتدفع برّه السيستم - بيتكتب على الحجز ومابيدخلش اليومية ولا الخزينة
@@ -49,13 +49,12 @@ function QuickPay({ booking, onDone, showToast }) {
     return guarded("quickpay:" + booking.id, async () => {
       const amt = Math.round((amount === "" ? due : Number(amount) || 0) * 100) / 100;
       if (!(amt > 0)) { showToast("اكتب مبلغ الدفعة (أكبر من صفر)"); return; }
-      if (amt > due + 0.005) { showToast(`المبلغ (${fmt(amt)} ${cur}) أكبر من المتبقي على النزيل (${fmt(due)} ${cur})`); return; }
       const err = validatePaymentDetailsFor(method, details);
       if (err) { showToast(err); return; }
       const req = { bookingId: booking.id, amount: amt, method, details: cleanPaymentDetailsFor(method, details), note: "تحصيل", expectedUpdatedAt: booking.updatedAt };
       const visaFee = method === "فيزا" && cur === booking.currency ? Math.round((Number(fee) || 0) * 100) / 100 : 0;
       if (visaFee < 0) { showToast("رسوم الفيزا لازم تكون صفر أو أكتر"); return; }
-      const res = cur !== booking.currency ? await recordBookingPaymentOther({ ...req, currency: cur }) : await recordBookingPayment(req);
+      const res = await recordAnyPayment(booking, { ...req, currency: cur });
       if (res.error) { showToast(res.error); if (onDone) await onDone(); return; }
       let feeNote = "";
       if (visaFee > 0) {
@@ -413,7 +412,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
       pax: Math.max(1, Math.floor(Number(form.pax) || 1)), priceNight: priceNightNum, totalRoom: totalRoomNum, amountPaid: isExistingBooking ? Number(originalBooking?.amountPaid) || 0 : 0,
       extras: clampedExtras, earlyCheckin: { ...clampedEarlyCheckin, note: sanitizeText(clampedEarlyCheckin.note, 300) }, paymentMethod: payMethod, paymentDetails: cleanPaymentDetails, needsRoomReview: false, approvalStatus: "approved",
     };
-    delete cleaned.payNow; delete cleaned.payMore; delete cleaned.prior;
+    delete cleaned.payNow; delete cleaned.payMore; delete cleaned.prior; delete cleaned.__fxCur;
     const prior = canPrior && !online ? Math.round((Number(form.prior?.amount) || 0) * 100) / 100 : 0;
     const priorNote = sanitizeText(form.prior?.note, 200);
     const priorChanged = isExistingBooking ? canPrior && !online && (prior !== priorOld || priorNote !== (originalBooking?.paymentDetails?.priorPaidNote || "")) : prior > 0;
@@ -667,6 +666,21 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
                 <div data-testid="currency-change-warning" style={{ marginTop: 4, fontSize: 12.5, fontWeight: 700, color: "var(--rust)", background: "#F4E7E2", borderRadius: 6, padding: "4px 6px" }}>⚠ العملة اتغيّرت من {originalBooking.currency} لـ {form.currency} - اكتب سعر الليلة بالـ {form.currency} (الرقم مابيتحوّلش لوحده){!["any", "today"].includes(perms.correctLedger) && " - ولو الحجز ليه تحصيل في شيفت اتقفل التغيير من مدير الشيفت أو المطوّر"}</div>
               )}</div>
             <div><label style={{ fontSize: 12.5, color: "var(--muted)" }}>إجمالي الغرفة ({nights} ليلة) {chargeLocked && <Lock size={10} style={{ verticalAlign: -1 }} />}</label><input className="cx-input" type="number" disabled={chargeLocked} placeholder={String(autoTotalRoom)} value={lockedRepricedTotal != null ? lockedRepricedTotal : form.totalRoom} onChange={(e) => setForm({ ...form, totalRoom: e.target.value })} /></div>
+            {(() => {
+              // سعر العملة بالمصري للحجز ده (مرة واحدة): الجيست يدفع بالجنيه أو بالعملة دي والسيستم بيحوّل بالسعر ده
+              const fxCur = Object.keys(form.fxRates || {})[0] || form.__fxCur || (form.currency !== "EGP" ? form.currency : "USD");
+              const fxVal = (form.fxRates || {})[fxCur] ?? "";
+              return (
+                <div data-testid="fx-rate"><label style={{ fontSize: 12.5, color: "var(--muted)" }}>سعر العملة بالمصري (لو هيدفع بعملة تانية)</label>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <select className="cx-select" aria-label="العملة" data-testid="fx-currency" style={{ width: 90 }} value={fxCur} onChange={(e) => setForm({ ...form, fxRates: fxVal === "" ? {} : { [e.target.value]: fxVal } , __fxCur: e.target.value })}>{COMMON_CURRENCIES.filter((c) => c !== "EGP").map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    <span style={{ fontSize: 12.5, color: "var(--muted)" }}>=</span>
+                    <input className="cx-input" aria-label="سعرها بالجنيه" data-testid="fx-egp" type="number" min="0" placeholder="بالجنيه" value={fxVal} onChange={(e) => setForm({ ...form, fxRates: e.target.value === "" ? {} : { [fxCur]: e.target.value } })} />
+                    <span style={{ fontSize: 12.5, color: "var(--muted)" }}>ج</span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* الحالة (ومعاها "ملغي") من صلاحية مدير الحجوزات بس - موظف
                 الشيفت وقت إضافة حجز جديد (walk-in) مش بيشوف الاختيار ده
