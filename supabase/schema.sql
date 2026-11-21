@@ -5420,7 +5420,31 @@ $$;
 revoke all on function calma_auto_close_stale_shifts() from public, anon;
 grant execute on function calma_auto_close_stale_shifts() to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 63 $$;
+-- --------------------------------------------------------------------------
+-- 61) سعر العملة بالمصري بيتحدد من أي خانة دفع (مرة واحدة للحجز): لو الجيست دفع بعملة مالهاش سعر،
+--     الموظف بيكتب سعرها جنب الدفعة وبيتحفظ على الحجز. الدفعات القديمة بتفضل بسعرها.
+-- --------------------------------------------------------------------------
+create or replace function set_booking_fx_rate(p_booking uuid, p_currency text, p_egp numeric)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare b bookings%rowtype; cur text := upper(btrim(coalesce(p_currency, ''))); v numeric := round(p_egp, 4);
+begin
+  if not is_staff_or_reservations() then raise exception 'تحديد سعر العملة من صلاحية موظف الشيفت أو مدير الحجوزات'; end if;
+  if cur not in ('USD', 'EUR', 'SAR', 'GBP') then raise exception 'اختار عملة غير الجنيه'; end if;
+  if v is null or v <= 0 or v > 100000 then raise exception 'اكتب سعر % بالمصري (أكبر من صفر)', cur; end if;
+  select * into b from bookings where id = p_booking for update;
+  if not found then raise exception 'الحجز مش موجود'; end if;
+  if calma_num(b.fx_rates ->> cur) = v then return b.fx_rates; end if;
+  perform set_config('calma.pay_rpc', '1', true);
+  update bookings set fx_rates = coalesce(fx_rates, '{}'::jsonb) || jsonb_build_object(cur, v) where id = p_booking;
+  perform set_config('calma.pay_rpc', '', true);
+  insert into activity_log(action, hotel_id) values ('سعر ' || cur || ' بالمصري على حجز ' || coalesce(b.guest_name, '') || ' (غرفة ' || b.room || '): ' || trim_scale(v) || ' جنيه', b.hotel_id);
+  return (select fx_rates from bookings where id = p_booking);
+end;
+$$;
+revoke all on function set_booking_fx_rate(uuid, text, numeric) from public, anon;
+grant execute on function set_booking_fx_rate(uuid, text, numeric) to authenticated;
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 64 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

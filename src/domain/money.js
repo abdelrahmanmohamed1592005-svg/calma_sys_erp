@@ -475,6 +475,13 @@ export function bookingFxRate(b, cur) {
   const rb = r(b?.currency), rp = r(cur);
   return rb && rp ? rb / rp : null;
 }
+/* دفعة بعملة cur على الحجز ده محتاجة سعر أنهي عملات بالمصري لسه مش متحدد (عملة الحجز و/أو عملة الدفعة).
+   عملة الحجز نفسها أو عملة عليها خدمات = مش محتاجة سعر. */
+export function fxRatesNeeded(b, cur) {
+  if (!b || !cur || cur === b.currency || (b.otherCharges || {})[cur]) return [];
+  return [b.currency, cur].filter((c, i, a) => c !== "EGP" && a.indexOf(c) === i && !(Number(b.fxRates?.[c]) > 0));
+}
+
 /* العملات اللي الجيست يقدر يدفع بيها غير عملة الحجز بسعر الحجز (الجنيه + أي عملة سعرها متحدد) */
 export function fxCurrencies(b) {
   return ["EGP", ...Object.keys(b?.fxRates || {})].filter((c, i, a) => a.indexOf(c) === i && c !== b?.currency && bookingFxRate(b, c));
