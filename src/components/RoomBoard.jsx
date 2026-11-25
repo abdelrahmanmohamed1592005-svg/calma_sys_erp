@@ -504,7 +504,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
             {s.booking && <div data-testid={"tile-price-" + r.number} style={{ fontSize: 12.5, color: "var(--muted)" }}><bdi dir="ltr">{fmt(s.booking.priceNight)} {s.booking.currency}</bdi> / ليلة</div>}
             {dueT.length > 0 && <div style={{ fontSize: 12.5, color: "var(--rust)", fontWeight: 600, marginTop: "auto" }}>متبقي <bdi dir="ltr">{formatMoneyLines(dueT)}</bdi></div>}
             {s.departingToday && <span className="cx-pill" style={{ background: "#FBE9DA", color: "#8F4A12", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>خروج 2 الضهر</span>}
-            {s.booking?.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>تسكين مكرر</span>}
+            {s.booking?.duplicatePlacement && s.booking.checkin === date && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", fontSize: 11.5, marginTop: 3, alignSelf: "flex-start" }}>تسكين مكرر</span>}
           </div>
         ); })}
       </div>
@@ -572,7 +572,7 @@ export function RoomBoard({ jumpRoom, onJumpDone, rooms, overrides, bookings, pe
                 <div style={{ fontWeight: 800, fontSize: 15 }}>
                   {b.guestName}
                   {online && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 12.5 }}>مدفوع أونلاين</span>}
-                  {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 12.5 }}>تسكين مكرر</span>}
+                  {b.duplicatePlacement && b.checkin === date && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6, fontSize: 12.5 }}>تسكين مكرر</span>}
                 </div>
                 <div className="cx-meta" style={{ marginTop: 4 }}>
                   <span><CalendarDays size={14} aria-hidden="true" /><DateRange from={b.checkin} to={b.checkout} /></span>
