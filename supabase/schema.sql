@@ -5444,7 +5444,35 @@ $$;
 revoke all on function set_booking_fx_rate(uuid, text, numeric) from public, anon;
 grant execute on function set_booking_fx_rate(uuid, text, numeric) to authenticated;
 
-create or replace function calma_schema_version() returns int language sql immutable as $$ select 64 $$;
+-- --------------------------------------------------------------------------
+-- 62) حماية دفعات سعر الصرف في اليومية: أي صف جديد/متعدّل بسعر صرف (fxBookingCurrency) لازم مقابله بعملة الحجز
+--     (fxCovered) يطابق المبلغ ÷ السعر - التصحيح من الشاشة مايقدرش يكتب مقابل غلط.
+-- --------------------------------------------------------------------------
+create or replace function shift_records_fx_guard()
+returns trigger language plpgsql as $$
+declare e jsonb; amt numeric; rate numeric; cov numeric;
+begin
+  for e in
+    select x from jsonb_array_elements(coalesce(new.rows, '[]'::jsonb) || coalesce(new.cafeteria_rows, '[]'::jsonb)) x
+    where btrim(coalesce(x ->> 'fxBookingCurrency', '')) <> ''
+      and (TG_OP = 'INSERT' or not exists (
+        select 1 from jsonb_array_elements(coalesce(old.rows, '[]'::jsonb) || coalesce(old.cafeteria_rows, '[]'::jsonb)) o where o = x))
+  loop
+    amt := calma_num(e ->> 'collectionAmt'); rate := calma_num(e ->> 'fxRate'); cov := calma_num(e ->> 'fxCovered');
+    if amt = 0 then continue; end if;
+    if rate <= 0 then raise exception 'دفعة بسعر صرف من غير سعر - صحّح الصف'; end if;
+    if abs(cov - amt / rate) > 0.011 and abs(cov * rate - amt) > 0.011 then
+      raise exception 'مقابل الدفعة بعملة الحجز (%) مش مطابق للمبلغ ÷ السعر (% ÷ %)', trim_scale(cov), trim_scale(amt), trim_scale(rate);
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+drop trigger if exists shift_records_fx_guard on shift_records;
+create trigger shift_records_fx_guard before insert or update of rows, cafeteria_rows on shift_records
+  for each row execute function shift_records_fx_guard();
+
+create or replace function calma_schema_version() returns int language sql immutable as $$ select 65 $$;
 revoke all on function calma_schema_version() from public, anon;
 grant execute on function calma_schema_version() to authenticated;
 -- PostgREST بيحمّل الدوال الجديدة في الـ cache؛ من غير ده ممكن تفضل "مش موجودة" لحد ما الخدمة تتعمل لها restart

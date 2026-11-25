@@ -3,7 +3,7 @@ import { descWithAmount } from "../domain/ledgerDesc";
 import { fetchAll } from "./page";
 import { friendlyDbError } from "./schemaCheck";
 import { shiftDayNow, addDays, isShiftActiveNow } from "../domain/dates";
-import { bookingFxRate, computeShiftTotals, cascadeHandover, stripBookingFromRecord, recordMentionsBooking, cleanPaymentDetailsFor } from "../domain/money";
+import { bookingFxRate, emptyLedgerRow, computeShiftTotals, cascadeHandover, stripBookingFromRecord, recordMentionsBooking, cleanPaymentDetailsFor } from "../domain/money";
 import { getActiveHotelId, resolveHotelScope } from "./hotels";
 
 /* القراءات/الكتابات على سجل واحد لازم تكون على فندق واحد: نطاق "all" هنا غلط برمجي فنرميه بدل ما نقع على الفندق الشغال بصمت */
@@ -133,6 +133,22 @@ export async function getBookingLedgerRows(booking) {
   return out;
 }
 
+/* دفعة اتعدّلت لصفر: الصف بيتشال من اليومية خالص (مش بيفضل صف بصفر) - المدفوع على الحجز والخزينة بيتظبطوا
+   بالتصحيح، والدفعة الجديدة بعد كده بتتسجّل صف جديد. لو مافضلش للغرفة أي صف بيرجع صفها فاضي. */
+export async function removeLedgerPaymentRow(entry) {
+  const old = await getShiftRecord(entry.date, entry.shiftKey, entry.hotelId);
+  if (!old) return { error: "تعذر قراءة اليومية (مشكلة اتصال) - جرّب تاني" };
+  const list = entry.list === "cafeteriaRows" ? "cafeteriaRows" : "rows";
+  const cur = (old[list] || [])[entry.idx];
+  if (!cur || cur.bookingId !== entry.row.bookingId) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
+  const items = [...old[list]];
+  items.splice(entry.idx, 1);
+  if (list === "rows" && !items.some((r) => r.room === cur.room)) items.splice(entry.idx, 0, emptyLedgerRow(cur.room));
+  const res = await applyCorrection(old, { ...old, [list]: items });
+  if (res.conflict) return { error: "اليومية اتغيّرت من مكان تاني - حدّث وجرّب تاني" };
+  return res;
+}
+
 /* تعديل صف دفع واحد في يومية (المبلغ/الوسيلة/التفاصيل) - المدفوع على الحجز والعهدة بيتظبطوا لوحدهم (تصحيح) */
 export async function editLedgerPaymentRow(entry, patch, opts = {}) {
   const old = await getShiftRecord(entry.date, entry.shiftKey, entry.hotelId);
@@ -181,7 +197,9 @@ export async function splitLedgerPaymentRow(entry, lines, booking) {
     const details = cleanPaymentDetailsFor(l.method, l.details);
     const row = { ...base, collectionAmt: amt, collectionCurrency: l.currency, collectionMethod: l.method, paymentDetails: details };
     // عملة تانية مالهاش خدمات على الحجز (الجنيه أو عملة سعرها متحدد): بتتحسب بمقابلها بعملة الحجز بسعر الحجز
-    const rate = l.currency !== bc && !(booking.otherCharges || {})[l.currency] ? bookingFxRate(booking, l.currency) : null;
+    // دفعة قديمة بسعر صرف وبنفس عملتها: بتفضل بسعرها القديم (تغيير سعر العملة على الحجز مابيمسّش القديم)
+    const keepOld = cur.fxRate > 0 && cur.fxBookingCurrency === bc && l.currency === cur.collectionCurrency ? Number(cur.fxRate) : null;
+    const rate = l.currency !== bc && !(booking.otherCharges || {})[l.currency] ? keepOld || bookingFxRate(booking, l.currency) : null;
     if (rate) Object.assign(row, { fxRate: Math.round(rate * 1e6) / 1e6, fxBookingCurrency: bc, fxCovered: Math.round((amt / rate) * 100) / 100 });
     // أول جزء بنفس عملة الدفعة بيحتفظ ببيانها الأصلي (المبلغ بس بيتعدّل)، والأجزاء التانية بيان جديد
     row.collectionDesc = rate

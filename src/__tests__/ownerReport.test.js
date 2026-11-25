@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRoomsSheet, buildShiftSheet, buildOwnerReport, bookingsForDay, paidNights, moneyText, dayMonth, stripMarks } from "../domain/ownerReport";
+import { buildRoomsSheet, buildShiftSheet, buildOwnerReport, bookingsForDay, paidNights, moneyText, dayMonth, stripMarks, nightOf } from "../domain/ownerReport";
 import { freshShiftRecord, emptyLedgerRow, computeShiftTotals, stripBookingFromRecord, blankShiftRecord } from "../domain/money";
 
 const rooms = [{ number: 610, name: "(W)610(D)" }, { number: 611, name: "(W)611(D)" }, { number: 612, name: "(b)612(D)" }];
@@ -127,5 +127,15 @@ describe("الكافيتيريا في إجماليات الشيفت ومسح أ�
     expect(out.bookingCollections).toEqual([{ id: "2", bookingId: "good" }]);
     expect(computeShiftTotals(out).totalCollections).toEqual({ EGP: 300 });
     expect(computeShiftTotals(blankShiftRecord(rec)).totalCollections).toEqual({});
+  });
+});
+
+describe("الليلة الكام من الإقامة", () => {
+  const b = { checkin: "2026-11-20", checkout: "2026-11-23" };
+  it("أول يوم 1:3 وتاني يوم 2:3 وآخر ليلة 3:3", () => {
+    const strip = (s) => s.replace(/[⁦-⁩]/g, "");
+    expect(strip(nightOf(b, "2026-11-20"))).toBe("1:3");
+    expect(strip(nightOf(b, "2026-11-21"))).toBe("2:3");
+    expect(strip(nightOf(b, "2026-11-22"))).toBe("3:3");
   });
 });

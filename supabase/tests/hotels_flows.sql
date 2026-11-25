@@ -211,3 +211,8 @@ select t.chk('AC1 اتقفل لوحده', (select calma_auto_close_stale_shifts(
 reset role;
 select t.chk('AC1 مقفول وأرقامه متحسبة', (select closed and closed_by = 'إقفال تلقائي' and calma_num(closing_cash ->> 'EGP') = 120 from shift_records where hotel_id = 1 and date = hotel_today() - 3 and shift_key = 'morning'));
 select t.chk('AC1 الشيفت الشغال دلوقتي مااتقفلش', exists (select 1 from shift_records where hotel_id = 1 and date >= hotel_today() - 1 and closed = false));
+-- حماية سعر الصرف في اليومية: مقابل غلط مرفوض
+select t.reject('FX1 صف بسعر صرف مقابله غلط مرفوض', t.maint_sql($q$update shift_records set rows = rows || '[{"room": 601, "bookingId": "x", "collectionAmt": 108, "collectionCurrency": "EGP", "fxRate": 54, "fxBookingCurrency": "USD", "fxCovered": 50}]'::jsonb
+  where hotel_id = 1 and date = hotel_today() and shift_key = 'evening'$q$), 'مش مطابق');
+select t.pass('FX1 صف بسعر صرف مقابله صح', t.maint_sql($q$update shift_records set rows = rows || '[{"room": 601, "bookingId": "x", "collectionAmt": 108, "collectionCurrency": "EGP", "fxRate": 54, "fxBookingCurrency": "USD", "fxCovered": 2}]'::jsonb
+  where hotel_id = 1 and date = hotel_today() and shift_key = 'evening'$q$));
