@@ -6,12 +6,12 @@ import { devDeleteShift, payLinesError, ensureLineRates } from "../data/payments
 import { CafeteriaSection } from "./CafeteriaPanel";
 import { OwnerReport } from "./OwnerReport";
 import { listStaffCafeteria } from "../data/staffCafeteria";
-import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, blankShiftRecord, validatePaymentDetailsFor, cleanPaymentDetailsFor } from "../domain/money";
+import { emptyPaymentDetails, COMMON_CURRENCIES, CURRENCY_LABEL, PAYMENT_METHODS, methodOptionsFor, EXPENSE_CATEGORIES, fmt, money, currencyKeysOf, freshShiftRecord, computeShiftTotals, rebaseShiftRecord, emptyLedgerRow, HOTEL_ROW_LABEL, methodTransactions, missingPaymentDetails, blankShiftRecord, validatePaymentDetailsFor } from "../domain/money";
 import { SHIFTS } from "../domain/constants";
 import { useHotel } from "../lib/hotelContext";
 import { todayStr, addDays, arabicWeekday, arabicDateLong, defaultShiftForNow, shiftDayNow, prevShiftOf, isShiftActiveNow, managerCanCorrect } from "../domain/dates";
 import { PaymentDetailsInline } from "./shared";
-import { resolveMyShift, getShiftRecordsInRange, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection, splitLedgerPaymentRow, editLedgerPaymentRow } from "../data/shifts";
+import { resolveMyShift, getShiftRecordsInRange, getShiftRecord, getShiftRecordStrict, createShiftRecord, updateShiftRecordIfUnchanged, getClaimsForDate, claimShiftRow, reopenShiftRecord, getMyClaims, setShiftHelpers, listShiftStaff, applyCorrection, splitLedgerPaymentRow, removeLedgerPaymentRow } from "../data/shifts";
 
 // العملات مثبّتة في قائمة اختيار بس (مش نص حر) - نفس الخمسة المعتمدة في
 // كل مكان تاني في النظام (COMMON_CURRENCIES في domain/money.js).
@@ -277,7 +277,7 @@ function ShiftClaimPicker({ date, claims, onClaim }) {
   );
 }
 
-export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, showToast, dataVersion }) {
+export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, showToast, dataVersion, onRefresh }) {
   const { hotels, hotel, hotelId } = useHotel();
   const [mode, setMode] = useState(perms.editLedger ? "live" : "history");
   const [claims, setClaims] = useState(null);
@@ -541,13 +541,12 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
       await flushNow();
       const entry = { date: record.date, shiftKey: record.shiftKey, hotelId: record.hotelId, list: "rows", idx, row };
       const total = lines.reduce((t, l) => t + (Number(l.amount) || 0), 0);
-      const l0 = lines[0] || {};
-      const res = total > 0 ? await splitLedgerPaymentRow(entry, lines, bk)
-        : await editLedgerPaymentRow(entry, { collectionAmt: 0, collectionMethod: l0.method || row.collectionMethod, paymentDetails: cleanPaymentDetailsFor(l0.method || row.collectionMethod, l0.details) }, { guestName: bk.guestName });
+      const res = total > 0 ? await splitLedgerPaymentRow(entry, lines, bk) : await removeLedgerPaymentRow(entry);   // صفر = الصف بيتشال خالص
       if (res.error) { showToast(res.error); await reloadRecord(); return false; }
       const txt = lines.filter((l) => Number(l.amount) > 0).map((l) => `${fmt(Number(l.amount))} ${l.currency} ${l.method}`).join(" + ") || "صفر (اتشالت)";
       onLog(`تعديل دفعة من اليومية - ${bk.guestName} (غرفة ${row.room}): ${fmt(row.collectionAmt)} ${row.collectionCurrency} ${row.collectionMethod} ← ${txt}`);
       await reloadRecord();
+      if (onRefresh) await onRefresh();          // كارت الغرفة ولوحة الغرف بيبانوا بالمدفوع الجديد على طول (اتشالت فلوس = رجع عليه)
       showToast(`اتعدّلت الدفعة لـ ${txt} - المدفوع على الحجز اتظبط معاها`);
       return true;
     });

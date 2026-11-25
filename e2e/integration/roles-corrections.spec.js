@@ -238,6 +238,36 @@ test("سعر العملة من جنب الدفعة: حجز دولار مالوش
   expect(Number((await booking(env, b)).amount_paid)).toBe(66);
 });
 
+test("تعديل الدفعة لصفر: الصف بيتشال من اليومية خالص، والكارت بيبان إن عليه فلوس تاني، والدفعة الجديدة صف جديد", async ({ page, env }) => {
+  await users(env);
+  const day = shiftDay(), key = myShiftKey();
+  const b = await env.seedBooking({ room: 610, guest: "Zero Edit", start: 0, nights: 1, price: 300, paid: 300, currency: "EGP", anchor: "shift" });
+  await env.seedShift("mona", { day, key, closed: false, handover: {}, collections: [{ room: 610, amount: 300, currency: "EGP", bookingId: b }] });
+  await page.goto("/");
+  await login(page, "mona");
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
+  await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
+  await page.getByTestId("edit-pay-0-amount-0").fill("0");
+  await page.getByTestId("edit-payment-save").click();
+  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(0);
+  const rows = (await rec(env, day, key)).rows;
+  expect(rows.filter((x) => x.bookingId === b)).toHaveLength(0);          // الصف اتشال خالص
+  expect(rows.filter((x) => x.room === 610)).toHaveLength(1);              // صف الغرفة رجع فاضي
+  await page.keyboard.press("Escape");
+  await goTab(page, "لوحة الغرف");
+  await openRoom(page, 610);
+  await expect(page.getByTestId("pay-panel")).toBeVisible();               // رجع عليه فلوس
+  await page.getByTestId("pay-panel").getByTestId("pay-amount").fill("300");
+  await page.getByTestId("pay-panel").getByTestId("pay-record").click();
+  await expect(toast(page)).toContainText("تم تسجيل");
+  const again = (await rec(env, day, key)).rows.filter((x) => x.bookingId === b);
+  expect(again).toHaveLength(1);
+  expect(Number(again[0].collectionAmt)).toBe(300);
+});
+
 test("فورم الحجز: خانة سعر العملة بالمصري بتتحفظ على الحجز", async ({ page, env }) => {
   await users(env);
   const b = await env.seedBooking({ room: 607, guest: "Rate Form", start: 0, nights: 1, price: 40, paid: 0, currency: "USD", anchor: "shift" });

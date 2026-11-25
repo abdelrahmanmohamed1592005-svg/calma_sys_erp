@@ -37,6 +37,13 @@ export function bookingsForDay(bookings, room, date) {
   return live.filter((b) => roomStart(b) <= date && date < b.checkout);
 }
 
+/* الجيست في الليلة الكام من إقامته يوم الورقة: "2:3" = الليلة التانية من ٣ */
+export function nightOf(b, date) {
+  const total = Math.max(1, nightsBetween(b.checkin, b.checkout));
+  const n = Math.min(total, Math.max(1, nightsBetween(b.checkin, date) + 1));
+  return ltr(`${n}:${total}`);
+}
+
 /* دفع كام ليلة: المدفوع (بعد ما يسدّد الكافيتيريا) ÷ متوسط سعر الليلة. المدفوع أونلاين محسوب مدفوع. */
 export function paidNights(b) {
   const nights = Math.max(1, nightsBetween(b.checkin, b.checkout));
@@ -77,7 +84,7 @@ function paidLines(b, payments) {
 export function buildRoomsSheet({ rooms, bookings, date, paymentsIndex, hotelName }) {
   const columns = [
     { key: "room", label: "رقم الغرفة", w: 1.2 }, { key: "guest", label: "رقم النزيل", w: 1.3 }, { key: "price", label: "السعر × المدة", w: 1.25 },
-    { key: "in", label: "دخول", w: 0.7 }, { key: "out", label: "خروج", w: 0.7 }, { key: "services", label: "خدمات", w: 1.25 },
+    { key: "in", label: "دخول", w: 0.7 }, { key: "out", label: "خروج", w: 0.7 }, { key: "night", label: "الليلة", w: 0.6 }, { key: "services", label: "خدمات", w: 1.25 },
     { key: "total", label: "إجمالي", w: 1.15 }, { key: "paid", label: "مدفوع", w: 1.5 }, { key: "nights", label: "ليالي مدفوعة", w: 0.95 },
     { key: "due", label: "متبقي", w: 1.15 }, { key: "source", label: "التسكين", w: 1.2 },
   ];
@@ -106,6 +113,7 @@ export function buildRoomsSheet({ rooms, bookings, date, paymentsIndex, hotelNam
           guest: [codes.join(" · "), b.guestName].filter(Boolean),
           price: [ltr(`${fmt(b.priceNight)} × ${nights}`), online ? "خالص (أونلاين)" : amt(b.totalRoom, b.currency)],
           in: [dayMonth(b.checkin)], out: [dayMonth(b.checkout)],
+          night: [nightOf(b, date)],
           services: servicesLines(b),
           total: [amt(bookingGrandTotal(b), b.currency), ...Object.entries(other).map(([c, v]) => amt(v, c))],
           paid: paidLines(b, paymentsIndex?.get?.(b.id)),

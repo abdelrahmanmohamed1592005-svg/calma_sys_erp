@@ -7,7 +7,7 @@ import { sourceOptionsFor, BOOKING_STATUSES, roomLabel, SHIFTS } from "../domain
 import { findOverlappingBookings, planDuplicateResolution, repricedTotalRoom, earlyLeavePatch, normalizeGuestCodes, duplicateGuestCode, findGuestCodeHits, guestCodeEntries, findGuestCodeConflict, nextGuestNumber } from "../domain/bookingLogic";
 import { useShiftGate } from "../hooks/useShiftGate";
 import { useHotel } from "../lib/hotelContext";
-import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, splitLedgerPaymentRow } from "../data/shifts";
+import { getPaymentsIndex, getBookingLedgerRows, editLedgerPaymentRow, splitLedgerPaymentRow, removeLedgerPaymentRow } from "../data/shifts";
 import { changeBookingCurrency, setBookingPriorPaid, devDeleteBooking, recordVisaFee, devRestoreBooking, payLinesError, recordAnyPayment, ensureLineRates } from "../data/payments";
 import { purgeBookingFromLedgers } from "../data/shifts";
 import { searchBookings, getBookingsOverlapping, bookingsWindowStart } from "../data/bookings";
@@ -115,7 +115,8 @@ function EditPayments({ booking, scope, me, onDone, showToast, onLog }) {
     const rated = await ensureLineRates(booking, lines);
     if (rated.error) { showToast(rated.error); return; }
     let res;
-    if (e.list === "rows" && !e.row.visaFee && total > 0) res = await splitLedgerPaymentRow(e, lines, rated.booking);
+    if (!(total > 0)) res = await removeLedgerPaymentRow(e);      // صفر = الدفعة بتتشال من اليومية خالص
+    else if (e.list === "rows" && !e.row.visaFee) res = await splitLedgerPaymentRow(e, lines, rated.booking);
     else {
       // صف رسوم فيزا / كافيتيريا، أو الدفعة كلها اتشالت (صفر): تعديل المبلغ والوسيلة في نفس الصف
       const l = lines[0] || lineOf(e.row);
