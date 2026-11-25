@@ -200,7 +200,8 @@ export async function splitLedgerPaymentRow(entry, lines, booking) {
     // دفعة قديمة بسعر صرف وبنفس عملتها: بتفضل بسعرها القديم (تغيير سعر العملة على الحجز مابيمسّش القديم)
     const keepOld = cur.fxRate > 0 && cur.fxBookingCurrency === bc && l.currency === cur.collectionCurrency ? Number(cur.fxRate) : null;
     const rate = l.currency !== bc && !(booking.otherCharges || {})[l.currency] ? keepOld || bookingFxRate(booking, l.currency) : null;
-    if (rate) Object.assign(row, { fxRate: Math.round(rate * 1e6) / 1e6, fxBookingCurrency: bc, fxCovered: Math.round((amt / rate) * 100) / 100 });
+    // السعر بيتخزّن بدقة كاملة والمقابل بيتحسب من نفس السعر المتخزّن (سعر صغير زي 1/54 كان بيتقرّب فالمقابل يبعد عن المبلغ ÷ السعر)
+    if (rate) { const fr = Math.round(rate * 1e10) / 1e10; Object.assign(row, { fxRate: fr, fxBookingCurrency: bc, fxCovered: Math.round((amt / fr) * 100) / 100 }); }
     // أول جزء بنفس عملة الدفعة بيحتفظ ببيانها الأصلي (المبلغ بس بيتعدّل)، والأجزاء التانية بيان جديد
     row.collectionDesc = rate
       ? `تحصيل${who} (+${amt} ${l.currency} = ${row.fxCovered} ${bc} بسعر الحجز)`

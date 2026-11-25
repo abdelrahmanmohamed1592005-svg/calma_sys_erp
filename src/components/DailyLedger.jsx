@@ -638,7 +638,7 @@ export function DailyLedger({ rooms, bookings, profiles, perms, profile, onLog, 
   // الموظف يقدر يكمل في شيفت اتفتح تاني بس لو الشيفت لسه في وقته (أو في هامش الأوفر تايم)؛ غير كده بيتقفل تلقائيًا عند فتح اليومية
   function staffCanContinue(date) { return date >= addDays(shiftDayNow(), -1); }
 
-  const canCorrect = (rec) => !!rec && (perms.correctLedger === "any" || (perms.correctLedger === "today" && managerCanCorrect(rec.date, rec.shiftKey)));   // مدير الشيفت: شيفتات يومه + الليلي اللي قبله
+  const canCorrect = (rec) => !!rec && (perms.correctLedger === "any" || (perms.correctLedger === "today" && managerCanCorrect(rec.date, rec.shiftKey)) || (perms.correctLedger === "day" && rec.date >= shiftDayNow()));   // الموظف: شيفتات النهارده (حتى المقفولة)   // مدير الشيفت: شيفتات يومه + الليلي اللي قبله
   function corrUpdateRow(idx, patch) {
     setCorr((c) => ({ ...c, rows: c.rows.map((r, i) => {
       if (i !== idx) return r;
