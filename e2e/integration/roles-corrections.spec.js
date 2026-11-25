@@ -295,6 +295,42 @@ test("موظف الشيفت بيعدّل دفعة في شيفت قبله الن�
   expect(denied.status).toBeGreaterThanOrEqual(400);
 });
 
+test("دفع بعملتين مش مصري: حجز دولار والجيست دفع جزء يورو - سعر الدولار واليورو بالمصري بيتكتبوا مرة واحدة والتحويل بيعدّي على الجنيه", async ({ page, env }) => {
+  await users(env);
+  const day = shiftDay(), key = myShiftKey();
+  // حجز 100 دولار، دفع 60 دولار
+  const b = await env.seedBooking({ room: 612, guest: "Two Foreign", start: 0, nights: 2, price: 50, paid: 60, currency: "USD", anchor: "shift" });
+  await env.seedShift("ahmed", { day, key, closed: false, handover: {}, collections: [{ room: 612, amount: 60, currency: "USD", bookingId: b }] });
+  await page.goto("/");
+  await login(page, "ahmed");
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
+  await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
+  // الدفعة اتقسمت: 60 دولار + 37 يورو (الدولار بـ 50 واليورو بـ 54 = 37 × 54 ÷ 50 = 39.96 دولار)
+  await page.getByTestId("edit-pay-0-add").click();
+  await page.getByTestId("edit-pay-0-amount-1").fill("37");
+  await page.getByTestId("edit-pay-0-currency-1").selectOption("EUR");
+  await page.getByTestId("edit-pay-0-1-rate-USD").fill("50");
+  await page.getByTestId("edit-pay-0-1-rate-EUR").fill("54");
+  await page.getByTestId("edit-payment-save").click();
+  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
+  expect((await env.q("select fx_rates from bookings where id = $1", [b]))[0].fx_rates).toEqual({ USD: 50, EUR: 54 });
+  expect(Number((await booking(env, b)).amount_paid)).toBe(99.96);
+  const eur = (await rec(env, day, key)).rows.find((x) => x.bookingId === b && x.collectionCurrency === "EUR");
+  expect(eur).toMatchObject({ collectionAmt: 37, fxCovered: 39.96, fxBookingCurrency: "USD" });   // الخزينة 37 يورو فعلي
+  // الباقي (0.04 دولار) بالجنيه من كارت الغرفة - السعر متحدد خلاص فمفيش خانة سعر
+  await page.keyboard.press("Escape");
+  await goTab(page, "لوحة الغرف");
+  await openRoom(page, 612);
+  const panel = page.getByTestId("pay-panel");
+  await panel.getByTestId("pay-currency").selectOption("EGP");
+  await expect(panel.getByTestId("pay-rate-USD")).toHaveCount(0);
+  await panel.getByTestId("pay-record").click();                       // فاضي = كامل المتبقي بالجنيه (0.04 × 50 = 2 جنيه)
+  await expect(toast(page)).toContainText("تم تسجيل 2 EGP");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(100);
+});
+
 test("فورم الحجز: خانة سعر العملة بالمصري بتتحفظ على الحجز", async ({ page, env }) => {
   await users(env);
   const b = await env.seedBooking({ room: 607, guest: "Rate Form", start: 0, nights: 1, price: 40, paid: 0, currency: "USD", anchor: "shift" });
