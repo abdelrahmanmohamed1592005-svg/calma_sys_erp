@@ -2404,6 +2404,7 @@ begin
     if (el ->> 'room') = p_room::text and (el ->> 'bookingId') = p_booking::text
        and not (amt = 0 and coalesce(el ->> 'collectionDesc', '') = '')
        and el ->> 'collectionMethod' = p_method and coalesce(el ->> 'collectionCurrency', '') = p_cur
+       and btrim(coalesce(el ->> 'fxBookingCurrency', '')) = '' and coalesce(el ->> 'visaFee', '') <> 'true'   -- صف بسعر صرف أو رسوم فيزا ليه حسابه لوحده: مابيتدمجش فيه
        and calma_details_key(p_method, el -> 'paymentDetails') = k then idx := i; exit; end if;
   end loop;
   if idx is null then
@@ -2436,6 +2437,7 @@ begin
     el := p_rows -> i;
     rk := case when coalesce(el ->> 'kind', 'guest') = 'staff' then coalesce(el ->> 'consumerKey', '') else coalesce(el ->> 'bookingId', '') end;
     if coalesce(el ->> 'kind', 'guest') = p_kind and rk = p_key and el ->> 'collectionMethod' = p_method and coalesce(el ->> 'collectionCurrency', '') = p_cur
+       and btrim(coalesce(el ->> 'fxBookingCurrency', '')) = ''      -- صف بسعر صرف ليه مقابله لوحده: مابيتدمجش فيه
        and calma_details_key(p_method, el -> 'paymentDetails') = k then idx := i; exit; end if;
   end loop;
   if idx is null then
@@ -5435,8 +5437,10 @@ begin
   if not found then raise exception 'الحجز مش موجود'; end if;
   if calma_num(b.fx_rates ->> cur) = v then return b.fx_rates; end if;
   perform set_config('calma.pay_rpc', '1', true);
+  perform set_config('calma.correct_rpc', '1', true);      -- مدير الشيفت/المطوّر بيحدد السعر حتى من غير ما ياخد شيفت في الفندق ده
   update bookings set fx_rates = coalesce(fx_rates, '{}'::jsonb) || jsonb_build_object(cur, v) where id = p_booking;
   perform set_config('calma.pay_rpc', '', true);
+  perform set_config('calma.correct_rpc', '', true);
   insert into activity_log(action, hotel_id) values ('سعر ' || cur || ' بالمصري على حجز ' || coalesce(b.guest_name, '') || ' (غرفة ' || b.room || '): ' || trim_scale(v) || ' جنيه', b.hotel_id);
   return (select fx_rates from bookings where id = p_booking);
 end;
