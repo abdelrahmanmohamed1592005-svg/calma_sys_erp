@@ -268,6 +268,33 @@ test("تعديل الدفعة لصفر: الصف بيتشال من اليومي�
   expect(Number(again[0].collectionAmt)).toBe(300);
 });
 
+test("موظف الشيفت بيعدّل دفعة في شيفت قبله النهارده اتقفل (نفس اليوم) - واليوم اللي فات لأ", async ({ page, env }) => {
+  await users(env);
+  const day = shiftDay(), key = myShiftKey();
+  const prevKey = key === "morning" ? "evening" : "morning";          // شيفت تاني في نفس يوم الشيفت
+  const b = await env.seedBooking({ room: 611, guest: "Same Day", start: 0, nights: 2, price: 100, paid: 150, currency: "EGP", anchor: "shift" });
+  await env.seedShift("sara", { day, key: prevKey, closed: true, handover: {}, closingCash: { EGP: 150 }, collections: [{ room: 611, amount: 150, currency: "EGP", bookingId: b }] });
+  await page.goto("/");
+  await login(page, "ahmed");
+  await claimShift(page);
+  await goTab(page, "الحجوزات");
+  await page.getByTestId("edit-price").first().click();
+  await openPaySections(page);
+  await page.getByTestId("form-edit-payments").getByTestId("edit-payments-open").click();
+  await page.getByTestId("edit-pay-0-amount-0").fill("200");
+  await page.getByTestId("edit-payment-save").click();
+  await expect(toast(page)).toContainText("اتعدّلت الدفعة");
+  expect(Number((await booking(env, b)).amount_paid)).toBe(200);
+  const r = await rec(env, day, prevKey);
+  expect(r.closed).toBe(true);
+  expect(Number(r.closing_cash.EGP)).toBe(200);                         // أرقام الشيفت المقفول اتحسبت
+  // يوم فات: مرفوض من القاعدة
+  const old = cairoDate(-3);
+  await env.seedShift("sara", { day: old, key: "morning", closed: true, handover: {}, closingCash: { EGP: 0 } });
+  const denied = await env.api("ahmed", "POST", "/rest/v1/rpc/correct_shift_record", { p_hotel: 1, p_date: old, p_key: "morning", p_expected: null, p_record: { shift_notes: "x" } });
+  expect(denied.status).toBeGreaterThanOrEqual(400);
+});
+
 test("فورم الحجز: خانة سعر العملة بالمصري بتتحفظ على الحجز", async ({ page, env }) => {
   await users(env);
   const b = await env.seedBooking({ room: 607, guest: "Rate Form", start: 0, nights: 1, price: 40, paid: 0, currency: "USD", anchor: "shift" });
