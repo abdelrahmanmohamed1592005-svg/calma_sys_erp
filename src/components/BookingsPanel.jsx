@@ -889,7 +889,7 @@ export function BookingsPanel({ jumpQuery, onJumpDone, rooms, bookings: loadedBo
                   {cancelled && <span className="cx-pill" style={{ background: "var(--rust)", color: "#fff", marginInlineStart: 6 }}>حجز ملغي</span>}
                   {b.paymentDetails?.onlinePaid && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#7A5FB5", marginInlineStart: 6 }}>مدفوع أونلاين</span>}
                   {b.leftEarly && <span className="cx-pill" style={{ background: "#FBE9DA", color: "var(--rust)", marginInlineStart: 6 }}>غادر مبكرًا</span>}
-                  {b.duplicatePlacement && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6 }}>تسكين مكرر</span>}
+                  {b.duplicatePlacement && b.checkin === todayStr() && <span className="cx-pill" style={{ background: "#EDE8F5", color: "#6B4FA0", marginInlineStart: 6 }}>تسكين مكرر</span>}
                   {b.code && <span dir="ltr" data-testid="booking-code-chip" style={{ fontFamily: "monospace", fontSize: 13, color: "var(--muted)", marginInlineStart: 8 }}>{b.code}</span>}
                 </div>
                 <div className="cx-meta" style={{ marginTop: 4 }}>

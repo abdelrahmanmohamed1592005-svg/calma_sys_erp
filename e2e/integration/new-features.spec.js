@@ -84,6 +84,21 @@ test.describe("التسكين المكرر في لوحة الغرف واليوم
     await expect(page.getByTestId("departed-card")).toContainText("Old Guest");
   });
 
+  test("علامة 'تسكين مكرر' بتظهر يوم التسكين بس - من تاني يوم بتختفي", async ({ page, env }) => {
+    await users(env);
+    const id = await env.seedBooking({ room: 613, guest: "Yesterday Dup", start: -1, nights: 3, price: 100 });
+    await env.q("update bookings set duplicate_placement = true where id = $1", [id]);
+    await page.goto("/");
+    await login(page, "ahmed");
+    await goTab(page, "لوحة الغرف");
+    const tile = boardTile(page, 613);
+    await expect(tile).toContainText("Yesterday Dup");
+    await expect(tile).not.toContainText("تسكين مكرر");
+    await tile.click();
+    await expect(roomCard(page)).toContainText("Yesterday Dup");
+    await expect(roomCard(page)).not.toContainText("تسكين مكرر");
+  });
+
   test("حتى لو الحالة اليدوية 'غادر مبكرًا' لسه موجودة (حجز اتسكّن بعدها من جهاز تاني)، النزيل الجديد هو اللي بيبان", async ({ page, env }) => {
     await users(env);
     await env.seedBooking({ room: 612, guest: "Gone", start: -1, nights: 1, price: 100, leftEarly: true });
